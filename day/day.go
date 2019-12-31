@@ -8,8 +8,8 @@ import (
 	"github.com/pkg/errors"
 )
 
-// DayTemplate used to translate templates with date info
-type DayTemplate struct {
+// Template used to translate templates with date info
+type Template struct {
 	YYYYMMDD    string
 	YYYYMMDDEOD string
 	YYYY        string
@@ -24,11 +24,11 @@ type DayTemplate struct {
 }
 
 // NewTemplate makes day parser for given date
-func NewTemplate(ts time.Time) *DayTemplate {
+func NewTemplate(ts time.Time) *Template {
 
 	tsMidnight := toMidnight(ts)
 
-	return &DayTemplate{
+	return &Template{
 		YYYYMMDD: tsMidnight.Format("20060102"),
 		YYYY:     tsMidnight.Format("2006"),
 		YYYYMM:   tsMidnight.Format("200601"),
@@ -43,7 +43,7 @@ func NewTemplate(ts time.Time) *DayTemplate {
 }
 
 // Parse translate template to final string
-func (d DayTemplate) Parse(dayTemplate string) (string, error) {
+func (d Template) Parse(dayTemplate string) (string, error) {
 	b1 := bytes.Buffer{}
 	err := template.Must(template.New("ymd").Parse(dayTemplate)).Execute(&b1, d)
 	if err != nil {

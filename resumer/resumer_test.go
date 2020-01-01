@@ -9,7 +9,7 @@ import (
 )
 
 func TestResumer_OnStart(t *testing.T) {
-	os.RemoveAll("/tmp/resumer.test")
+	_ = os.RemoveAll("/tmp/resumer.test")
 	r := New("/tmp/resumer.test", true)
 
 	s, err := r.OnStart("cmd 1 2 blah")
@@ -22,7 +22,7 @@ func TestResumer_OnStart(t *testing.T) {
 }
 
 func TestResumer_OnFinish(t *testing.T) {
-	os.RemoveAll("/tmp/resumer.test")
+	_ = os.RemoveAll("/tmp/resumer.test")
 	r := New("/tmp/resumer.test", true)
 
 	s, err := r.OnStart("cmd 1 2 blah")
@@ -36,7 +36,7 @@ func TestResumer_OnFinish(t *testing.T) {
 
 func TestResumer_List(t *testing.T) {
 
-	os.RemoveAll("/tmp/resumer.test")
+	_ = os.RemoveAll("/tmp/resumer.test")
 	r := New("/tmp/resumer.test", true)
 
 	_, e := r.OnStart("cmd1 1 2 blah")

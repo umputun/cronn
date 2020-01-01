@@ -36,6 +36,10 @@ func main() {
 	fmt.Printf("cronn %s\n", revision)
 	setupLogs(strings.EqualFold(os.Getenv("DEBUG"), "true") || strings.EqualFold(os.Getenv("DEBUG"), "yes"))
 
+	if len(os.Args) < 3 {
+		log.Fatalf("[CRON] expects at least 2 arguments, got %d (%q)", len(os.Args), strings.Join(os.Args[1:], ","))
+	}
+
 	defer func() {
 		if x := recover(); x != nil {
 			log.Printf("[WARN] run time panic:\n%v", x)
@@ -43,13 +47,9 @@ func main() {
 		}
 	}()
 
-	if len(os.Args) < 3 {
-		log.Fatalf("[CRON] expects at least 2 arguments, got %d (%q)", len(os.Args), strings.Join(os.Args[1:], ","))
-	}
-
 	croner, err := create()
 	if err != nil {
-		log.Fatalf("[ERROR] failed to create cron, %v", err)
+		log.Fatalf("[ERROR] failed to create cron, %v", err) // nolint
 	}
 	signals() // handle SIGQUIT
 
@@ -84,8 +84,8 @@ func create() (cr *cron.Cron, err error) {
 	spec := os.Args[1]
 	command := strings.Join(os.Args[2:], " ")
 	req := cronReq{rmr: rmr, spec: spec, command: command}
-	if err = addCron(c, req); err != nil {
-		return nil, err
+	if e := addCron(c, req); e != nil {
+		return nil, e
 	}
 
 	return c, err
@@ -190,7 +190,7 @@ func stop(c *cron.Cron) {
 
 func execute(command string) {
 	log.Printf("[CRON] executing: %q", command)
-	cmd := exec.Command("sh", "-c", command)
+	cmd := exec.Command("sh", "-c", command) // nolint gosec
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

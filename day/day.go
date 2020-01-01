@@ -1,3 +1,4 @@
+// Package day implements parsing of date-related templates
 package day
 
 import (
@@ -8,6 +9,9 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Parser for command line containing template elements from tmpl, like {{.YYYYMMDD}}
+// replaces all occurrences of such templates. Handles business day detection for templates
+// including "EOD" (i.e. YYYYMMDDEOD).
 type Parser struct {
 	timeZone       *time.Location
 	tmpl           tmpl
@@ -16,14 +20,17 @@ type Parser struct {
 	holidayChecker HolidayChecker
 }
 
+// HolidayChecker is a single-method interface returning status of the day
 type HolidayChecker interface {
 	IsHoliday(day time.Time) bool
 }
 
+// HolidayCheckerFunc is an adapter to allow the use of ordinary functions as HolidayChecker.
 type HolidayCheckerFunc func(day time.Time) bool
 
+// IsHoliday checks if the day is a holiday
 func (h HolidayCheckerFunc) IsHoliday(day time.Time) bool {
-	return h.IsHoliday(day)
+	return h(day)
 }
 
 // tmpl used to translate templates with date info
@@ -135,7 +142,7 @@ func EndOfDay(hour int) Option {
 	}
 }
 
-// SkipWeekdays sets a list of wekedays to skip in detection of the current, next and prev. business days
+// SkipWeekDays sets a list of weekdays to skip in detection of the current, next and prev. business days
 func SkipWeekDays(days ...time.Weekday) Option {
 	return func(l *Parser) {
 		l.skipWeekDays = days

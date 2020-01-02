@@ -1,5 +1,8 @@
 # cronn - cli cron replacement and scheduler container
 
+[![Build Status](https://github.com/umputun/cronn/workflows/build/badge.svg)](https://github.com/umputun/cronn/actions)
+
+
 ## Use of `cronn` utility
  
 - `cronn "30 23 * * 1-5" command arg1 arg2 ...`

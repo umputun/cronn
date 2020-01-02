@@ -42,4 +42,5 @@ jobs:
         env:
           COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-
+      - name: build image
+        run: docker build --build-arg CI=github .

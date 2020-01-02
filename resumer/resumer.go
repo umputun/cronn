@@ -4,12 +4,13 @@ package resumer
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	log "github.com/go-pkgz/lgr"
 )
 
 // Resumer keeps track of executed commands in .cronn files
@@ -43,7 +44,7 @@ func (r *Resumer) OnStart(cmd string) (string, error) {
 
 // OnFinish removes cronn fileÒ
 func (r *Resumer) OnFinish(fname string) error {
-	log.Printf("[DEBUG] detete resumer file %s", fname)
+	log.Printf("[DEBUG] delete resumer file %s", fname)
 	return os.Remove(fname)
 }
 
@@ -86,4 +87,8 @@ func (r *Resumer) List() (res []Cmd) {
 		res = append(res, resEntry)
 	}
 	return res
+}
+
+func (r *Resumer) String() string {
+	return fmt.Sprintf("enabled:%v, location:%s", r.enabled, r.location)
 }

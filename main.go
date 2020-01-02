@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -27,14 +28,18 @@ type Resumer interface {
 	OnStart(cmd string) (string, error)
 	OnFinish(fname string) error
 	List() (res []resumer.Cmd)
+	String() string
 }
 
 // accepts "* * * * *" cmd args...
 // or -f crontab
-// ENV: DEBUG, CRONN_RESUME, CRONN_UPDATE
+// ENV: CRONN_RESUME, CRONN_UPDATE, CRONN_LOG, DEBUG
 func main() {
 	fmt.Printf("cronn %s\n", revision)
-	setupLogs(strings.EqualFold(os.Getenv("DEBUG"), "true") || strings.EqualFold(os.Getenv("DEBUG"), "yes"))
+
+	logEnabled := strings.EqualFold(os.Getenv("CRONN_LOG"), "true") || strings.EqualFold(os.Getenv("CRONN_LOG"), "yes")
+	logDbg := strings.EqualFold(os.Getenv("DEBUG"), "true") || strings.EqualFold(os.Getenv("DEBUG"), "yes")
+	setupLogs(logEnabled, logDbg)
 
 	if len(os.Args) < 3 {
 		log.Fatalf("[CRON] expects at least 2 arguments, got %d (%q)", len(os.Args), strings.Join(os.Args[1:], ","))
@@ -113,7 +118,7 @@ type cronReq struct {
 
 // addCron makes new cron job from cronReq and adds to cron
 func addCron(c *cron.Cron, r cronReq) error {
-	log.Printf("[CRON] new cron: %+v", r)
+	log.Printf("[CRON] new cron, command %q, resumer %q", r.command, r.rmr)
 	sched, e := cron.ParseStandard(r.spec)
 	if e != nil {
 		return e
@@ -201,7 +206,12 @@ func execute(command string) {
 	}
 }
 
-func setupLogs(dbg bool) {
+func setupLogs(enabled, dbg bool) {
+	if !enabled {
+		log.Setup(log.Out(ioutil.Discard), log.Err(ioutil.Discard))
+		return
+	}
+
 	if dbg {
 		log.Setup(log.Debug, log.Msec, log.CallerFunc, log.CallerPkg, log.CallerFile)
 		return

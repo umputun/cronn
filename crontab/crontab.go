@@ -4,12 +4,12 @@ package crontab
 import (
 	"context"
 	"io/ioutil"
-	"log"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 
+	log "github.com/go-pkgz/lgr"
 	"github.com/pkg/errors"
 )
 

@@ -3,9 +3,21 @@
 [![Build Status](https://github.com/umputun/cronn/workflows/build/badge.svg)](https://github.com/umputun/cronn/actions)
 
 
-## Use of `cronn` utility
+## Use cases
+
+- Run any job with an easy to use cli scheduler
+- Schedule tasks in containers (`cronn` can be used as CMD or ENTRYPOINT)
+- Use `umputun/cronn` as a base image
+
+The main reason to use this thing is super-paranoid nature of regular cron(d).
+This replacement `cronn` supposed to run under regular user and won't loose env and won't jail job.
+ Another good reason - support of day-templates and especially "last business day EOD" - `{{.YYYYMMDDEOD}}`
+
+
+## Usage
  
 - `cronn "30 23 * * 1-5" command arg1 arg2 ...`
+- `cronn "@every 5s" "ls -la"`
 - `cronn -f crontab`
 
 Scheduling can be defined as:
@@ -18,19 +30,19 @@ If `-f` defined it gets **standard crontab** formatted file only.
 Cronn also understands day templates:
 
 - `{{.YYYYMMDD}}` - current day in local TZ
-- `{{.YYYYMMDDEOD}}` - current EOD day in local TZ. If hour < 17 (5pm) will use prev. day
 - `{{.YYYY}}` - current year
 - `{{.YYYYMM}}` - year and month
 - `{{.ISODATE}` - day-time (local TZ) formatted as `2006-01-02T00:00:00.000Z`
+- `{{.YYYYMMDDEOD}}` - current EOD day in local TZ. If hour < 17:00 (default) will use prev. day
 
 Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
-cronn executes a command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print current date every 
+cronn executes a command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight. 
 
  
 ## Optional modes:
 
-- Debug mode. Produces more debug info. OFF by default. Controlled by env `DEBUG` (`yes` ot `true` to turn it on)
+- Debug mode. Produces more debug info. Off by default. Controlled by env `DEBUG` (`yes` or `true` to turn it on)
 - Auto-resume mode. Executes terminated task(s) on startup, controlled by env `CRONN_RESUME`
 - Auto-update mode. Checks for changes in crontab file (`-f` mode only) and reloads updated jobs. Controlled by env `CRONN_UPDATE`
 
@@ -59,15 +71,6 @@ weekday on midnight.
     -rw-r--r--   1 umputun  staff  2067 Dec 11 18:24 main.go
     2016/12/11 18:29:12 [CRON]  next: 2016-12-11T18:29:17-06:00
     ```
-
-## Use cases
-
-- Run any jobs with easy cli scheduler
-- Schedule tasks in containers (can be used as CMD)
-
-The main reason to use this thing is super-paranoid nature of regular cron(d).
-This replacement `cronn` supposed to run under regular user and won't loose env and won't jail job.
- Another good reason - support of day-templates and especially "last business day EOD" - `{{.YYYYMMDDEOD}}`
 
 ## Things to know
 

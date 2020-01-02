@@ -1,0 +1,3 @@
+*/5 * * * * ls -la /srv
+*/2 1-18 * * * export
+* * * * 1-5 echo {{.YYYYMMDD}}

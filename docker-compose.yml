@@ -1,0 +1,24 @@
+version: "2"
+
+services:
+  cronn:
+    build: .
+    image: umputun/cronn
+    container_name: cronn
+    hostname: cronn
+    restart: always
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    environment:
+      - MHOST
+      - DEBUG=false
+      - CRONN_LOG=true
+      - CRONN_RESUME=true
+      - CRONN_UPDATE=true
+    volumes:
+      - ./crontab.example:/srv/crontab

@@ -24,5 +24,5 @@ RUN chmod +x /srv/cronn
 
 WORKDIR /srv
 
-CMD ["/srv/cronn"]
+CMD ["/srv/cronn", "-f", "/srv/crontab"]
 ENTRYPOINT ["/init.sh"]

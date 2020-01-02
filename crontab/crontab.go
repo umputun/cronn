@@ -66,6 +66,9 @@ func (p Parser) parse(line string) (result JobSpec, err error) {
 	return JobSpec{Spec: strings.Join(elems[:5], " "), Command: strings.Join(elems[5:], " ")}, nil
 }
 
+// Changes gets updates channel. Each time crontab file updated and modification time changed
+// it will get parsed and the full list of jobs will be sent to the channel. Update checked periodically
+// and postponed for short time to prevent changes on every small intermediate save.
 func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 	ch := make(chan []JobSpec)
 

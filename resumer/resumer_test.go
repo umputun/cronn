@@ -16,7 +16,7 @@ func TestResumer_OnStart(t *testing.T) {
 	assert.Nil(t, err)
 	t.Log(s)
 
-	data, err := ioutil.ReadFile(s)
+	data, err := ioutil.ReadFile(s) // nolint gosec
 	assert.Nil(t, err)
 	assert.Equal(t, "cmd 1 2 blah", string(data))
 }
@@ -30,7 +30,7 @@ func TestResumer_OnFinish(t *testing.T) {
 	err = r.OnFinish(s)
 
 	assert.Nil(t, err)
-	_, err = ioutil.ReadFile(s)
+	_, err = ioutil.ReadFile(s) // nolint gosec
 	assert.NotNil(t, err)
 }
 

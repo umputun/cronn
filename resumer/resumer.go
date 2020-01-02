@@ -76,7 +76,7 @@ func (r *Resumer) List() (res []Cmd) {
 			}
 			continue
 		}
-		data, err := ioutil.ReadFile(fileName)
+		data, err := ioutil.ReadFile(fileName) // nolint gosec
 		if err != nil {
 			log.Printf("[WARN] failed to read resume file %s, %s", fileName, err)
 			continue

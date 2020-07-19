@@ -15,7 +15,7 @@ import (
 	log "github.com/go-pkgz/lgr"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
-	"github.com/umputun/cronn/day"
+	"github.com/umputun/cronn/service"
 
 	"github.com/umputun/cronn/crontab"
 	"github.com/umputun/cronn/resumer"
@@ -126,7 +126,7 @@ func addCron(c *cron.Cron, r cronReq) error {
 
 	c.Schedule(sched, cron.FuncJob(func() {
 
-		cmd, err := day.NewTemplate(time.Now()).Parse(r.command)
+		cmd, err := service.NewTemplate(time.Now()).Parse(r.command)
 		if err != nil {
 			log.Printf("[CRON] failed to schedule %s, %v", r.command, err)
 			return

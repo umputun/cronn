@@ -1,5 +1,4 @@
-// Package day implements parsing of date-related templates
-package day
+package service
 
 import (
 	"bytes"
@@ -9,10 +8,10 @@ import (
 	"github.com/pkg/errors"
 )
 
-// Parser for command line containing template elements from tmpl, like {{.YYYYMMDD}}
+// DayParser for command line containing template elements from tmpl, like {{.YYYYMMDD}}
 // replaces all occurrences of such templates. Handles business day detection for templates
 // including "EOD" (i.e. YYYYMMDDEOD).
-type Parser struct {
+type DayParser struct {
 	timeZone       *time.Location
 	tmpl           tmpl
 	eodHour        int
@@ -41,20 +40,32 @@ type tmpl struct {
 	YYYYMM      string
 	YYMMDD      string
 	ISODATE     string
-	UNIX        int64
-	UNIXMSEC    int64
 	MM          string
 	DD          string
 	YY          string
+
+	WYYYYMMDD    string
+	WYYYYMMDDEOD string
+	WYYYY        string
+	WYYYYMM      string
+	WYYMMDD      string
+	WISODATE     string
+	WMM          string
+	WDD          string
+	WYY          string
+
+	UNIX     int64
+	UNIXMSEC int64
 }
 
-// NewTemplate makes day parser for given date
-func NewTemplate(ts time.Time, options ...Option) *Parser {
+// NewDayTemplate makes day parser for given date
+func NewDayTemplate(ts time.Time, options ...Option) *DayParser {
 
-	res := &Parser{
+	res := &DayParser{
 		timeZone:       time.Local,
 		eodHour:        17,
-		holidayChecker: HolidayCheckerFunc(func(day time.Time) bool { return false }),
+		skipWeekDays:   []time.Weekday{time.Saturday, time.Sunday},
+		holidayChecker: HolidayCheckerFunc(func(day time.Time) bool { return false }), // inactive by default
 	}
 
 	for _, opt := range options {
@@ -69,6 +80,7 @@ func NewTemplate(ts time.Time, options ...Option) *Parser {
 	}
 
 	tsMidnight := res.toMidnight(ts)
+	tswMidnight := res.weekdayBackward(res.toMidnight(ts))
 
 	res.tmpl = tmpl{
 		YYYYMMDD:    tsMidnight.Format("20060102"),
@@ -80,15 +92,25 @@ func NewTemplate(ts time.Time, options ...Option) *Parser {
 		YY:          tsMidnight.Format("06"),
 		MM:          tsMidnight.Format("01"),
 		DD:          tsMidnight.Format("02"),
-		UNIX:        ts.Unix(),
-		UNIXMSEC:    ts.UnixNano() / 1000000,
+
+		WYYYYMMDD: tswMidnight.Format("20060102"),
+		WYYYY:     tswMidnight.Format("2006"),
+		WYYYYMM:   tswMidnight.Format("200601"),
+		WYYMMDD:   tswMidnight.Format("060102"),
+		WISODATE:  tswMidnight.Format("2006-01-02T00:00:00.000Z"),
+		WYY:       tswMidnight.Format("06"),
+		WMM:       tswMidnight.Format("01"),
+		WDD:       tswMidnight.Format("02"),
+
+		UNIX:     ts.Unix(),
+		UNIXMSEC: ts.UnixNano() / 1000000,
 	}
 
 	return res
 }
 
 // Parse translate template to final string
-func (p Parser) Parse(dayTemplate string) (string, error) {
+func (p DayParser) Parse(dayTemplate string) (string, error) {
 	b1 := bytes.Buffer{}
 	err := template.Must(template.New("ymd").Parse(dayTemplate)).Execute(&b1, p.tmpl)
 	if err != nil {
@@ -98,13 +120,13 @@ func (p Parser) Parse(dayTemplate string) (string, error) {
 }
 
 // toMidnight get midnight time in local tz for given time
-func (p Parser) toMidnight(tm time.Time) time.Time {
-	yy, mm, dd := tm.In(time.Local).Date()
-	return time.Date(yy, mm, dd, 0, 0, 0, 0, time.Local)
+func (p DayParser) toMidnight(tm time.Time) time.Time {
+	yy, mm, dd := tm.In(p.timeZone).Date()
+	return time.Date(yy, mm, dd, 0, 0, 0, 0, p.timeZone)
 }
 
 // WeekdayBackward if day is weekend, get prev business day
-func (p Parser) weekdayBackward(day time.Time) time.Time {
+func (p DayParser) weekdayBackward(day time.Time) time.Time {
 
 	isBusinessDay := func(day time.Time) bool {
 		if p.holidayChecker.IsHoliday(day) {
@@ -126,32 +148,34 @@ func (p Parser) weekdayBackward(day time.Time) time.Time {
 }
 
 // Option func type
-type Option func(l *Parser)
+type Option func(l *DayParser)
 
 // TimeZone sets timezone used for all time parsings
 func TimeZone(tz *time.Location) Option {
-	return func(l *Parser) {
+	return func(l *DayParser) {
 		l.timeZone = tz
 	}
 }
 
 // EndOfDay sets threshold time defining end of the business day
 func EndOfDay(hour int) Option {
-	return func(l *Parser) {
+	return func(l *DayParser) {
 		l.eodHour = hour
 	}
 }
 
 // SkipWeekDays sets a list of weekdays to skip in detection of the current, next and prev. business days
 func SkipWeekDays(days ...time.Weekday) Option {
-	return func(l *Parser) {
-		l.skipWeekDays = days
+	return func(l *DayParser) {
+		if days != nil {
+			l.skipWeekDays = days
+		}
 	}
 }
 
-// Holiday sets a checker detecting if a current day is holiday. Used for business days related logic.
+// Holiday sets a checker detecting if the current day is a holiday. Used for business days related logic.
 func Holiday(checker HolidayChecker) Option {
-	return func(l *Parser) {
+	return func(l *DayParser) {
 		l.holidayChecker = checker
 	}
 }

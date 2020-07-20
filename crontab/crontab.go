@@ -31,7 +31,7 @@ func New(file string, updInterval time.Duration) *Parser {
 	return &Parser{file: file, updInterval: updInterval}
 }
 
-// List parses crontab
+// List parses crontab and returns lit of jobs
 func (p Parser) List() (result []JobSpec, err error) {
 	bs, err := ioutil.ReadFile(p.file)
 	if err != nil {

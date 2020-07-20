@@ -1,3 +1,4 @@
+// Package service provides top level scheduler. Combined all elements (cron, resumer and crontab updater) together
 package service
 
 import (
@@ -37,6 +38,7 @@ type CrontabParser interface {
 	Changes(ctx context.Context) (<-chan []crontab.JobSpec, error)
 }
 
+// Cron interface defines basic robfig/cron methods used by service
 type Cron interface {
 	Start()
 	Stop() context.Context
@@ -49,13 +51,18 @@ type cronReq struct {
 	spec, command string
 }
 
+// Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
+	s.resumeInterrupted()
+
 	if s.UpdatesEnabled {
 		log.Printf("[CRON] updater activated for %s", s.CrontabParser.String())
 		go s.reload(ctx) // start background updater
 	}
-	s.loadFromFileParser()
-	s.CrontabParser.List()
+	if err := s.loadFromFileParser(); err != nil {
+		log.Printf("[WARN] can't load crontab file, %v", err)
+		return
+	}
 	s.Start()
 	<-ctx.Done()
 	<-s.Stop().Done()
@@ -145,8 +152,8 @@ func (s *Scheduler) reload(ctx context.Context) {
 	}
 }
 
-func (s *Scheduler) resumeInterrupted(rmr Resumer) {
-	cmds := rmr.List()
+func (s *Scheduler) resumeInterrupted() {
+	cmds := s.Resumer.List()
 	if len(cmds) > 0 {
 		log.Printf("[CRON] interrupted commands detected - %+v", cmds)
 	}
@@ -154,7 +161,7 @@ func (s *Scheduler) resumeInterrupted(rmr Resumer) {
 	go func() {
 		for _, cmd := range cmds {
 			s.execute(cmd.Command)
-			if err := rmr.OnFinish(cmd.Fname); err != nil {
+			if err := s.Resumer.OnFinish(cmd.Fname); err != nil {
 				log.Printf("[WARN] failed to finish resumer for %s, %s", cmd.Fname, err)
 			}
 		}

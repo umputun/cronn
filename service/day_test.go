@@ -57,8 +57,8 @@ func TestDayParser_weekdayBackward(t *testing.T) {
 	}{
 		{nil, time.Date(2016, 11, 1, 0, 0, 0, 0, nytz), time.Date(2016, 11, 1, 0, 0, 0, 0, nytz)}, // weekday
 		{nil, time.Date(2016, 11, 9, 0, 0, 0, 0, nytz), time.Date(2016, 11, 9, 0, 0, 0, 0, nytz)}, // weekday
-		{nil, time.Date(2017, 0, 30, 0, 0, 0, 0, nytz), time.Date(2017, 4, 28, 0, 0, 0, 0, nytz)}, // sun
-		{nil, time.Date(2017, 0, 29, 0, 0, 0, 0, nytz), time.Date(2017, 4, 28, 0, 0, 0, 0, nytz)}, // sat
+		{nil, time.Date(2017, 4, 30, 0, 0, 0, 0, nytz), time.Date(2017, 4, 28, 0, 0, 0, 0, nytz)}, // sun
+		{nil, time.Date(2017, 4, 29, 0, 0, 0, 0, nytz), time.Date(2017, 4, 28, 0, 0, 0, 0, nytz)}, // sat
 
 		{[]time.Weekday{time.Saturday}, time.Date(2017, 4, 30, 0, 0, 0, 0, nytz), time.Date(2017, 4, 30, 0, 0, 0, 0, nytz)}, // sun
 		{[]time.Weekday{time.Saturday}, time.Date(2017, 4, 29, 0, 0, 0, 0, nytz), time.Date(2017, 4, 28, 0, 0, 0, 0, nytz)}, // sat

@@ -5,20 +5,21 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
+
 	"github.com/umputun/cronn/crontab"
-	"github.com/umputun/cronn/day"
 	"github.com/umputun/cronn/resumer"
 )
 
+// Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
 type Scheduler struct {
 	*cron.Cron
-	resumer        Resumer
-	updatesEnabled bool
+	Resumer        Resumer
+	CrontabParser  CrontabParser
+	UpdatesEnabled bool
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -29,58 +30,56 @@ type Resumer interface {
 	String() string
 }
 
+// CrontabParser interface loads the list of jobs and provides updates channel if the corresponding crontab file updated
+type CrontabParser interface {
+	String() string
+	List() (result []crontab.JobSpec, err error)
+	Changes(ctx context.Context) (<-chan []crontab.JobSpec, error)
+}
+
+type Cron interface {
+	Start()
+	Stop() context.Context
+	Entries() []cron.Entry
+	Schedule(schedule cron.Schedule, cmd cron.Job) cron.EntryID
+	Remove(id cron.EntryID)
+}
+
 type cronReq struct {
-	rmr           Resumer
 	spec, command string
 }
 
-func New(resumer Resumer, updates bool, args []string) (*Scheduler, error){
-		res := Scheduler{Cron: cron.New(), resumer: resumer, updatesEnabled: updates}
-
-		if args[1] == "-f" {
-			ctab := crontab.New(os.Args[2], 10*time.Second)
-			err = loadFromFileParser(c, ctab, rmr)
-			if updates {
-				// start background updater
-				log.Printf("[CRON] updater activated for %s", ctab.String())
-				go reload(context.TODO(), c, ctab, rmr)
-			}
-			return c, err
-		}
-
-		spec := os.Args[1]
-		command := strings.Join(os.Args[2:], " ")
-		req := cronReq{rmr: rmr, spec: spec, command: command}
-		if e := addCron(c, req); e != nil {
-			return nil, e
-		}
-
-		return &res, err
+func (s *Scheduler) Do(ctx context.Context) {
+	if s.UpdatesEnabled {
+		log.Printf("[CRON] updater activated for %s", s.CrontabParser.String())
+		go s.reload(ctx) // start background updater
+	}
+	s.loadFromFileParser()
+	s.CrontabParser.List()
+	s.Start()
+	<-ctx.Done()
+	<-s.Stop().Done()
 }
 
-func (s *Scheduler) Do(ctx context.Context)  error){
-
-}
-
-// addCron makes new cron job from cronReq and adds to cron
-func (s *Scheduler) addCron(r cronReq) error {
-	log.Printf("[CRON] new cron, command %q, resumer %q", r.command, r.rmr)
+// schedule makes new cron job from cronReq and adds to cron
+func (s *Scheduler) schedule(r cronReq) error {
+	log.Printf("[CRON] new cron, command %q", r.command)
 	sched, e := cron.ParseStandard(r.spec)
 	if e != nil {
 		return errors.Wrapf(e, "can't parse %s", r.spec)
 	}
 
 	id := s.Schedule(sched, cron.FuncJob(func() {
-		cmd, err := day.NewTemplate(time.Now()).Parse(r.command)
+		cmd, err := NewDayTemplate(time.Now()).Parse(r.command)
 		if err != nil {
 			log.Printf("[CRON] failed to schedule %s, %v", r.command, err)
 			return
 		}
 
-		rfile, rerr := r.rmr.OnStart(cmd)
+		rfile, rerr := s.Resumer.OnStart(cmd)
 		s.execute(cmd)
 		if rerr == nil {
-			if e := r.rmr.OnFinish(rfile); e != nil {
+			if e := s.Resumer.OnFinish(rfile); e != nil {
 				log.Printf("[CRON] failed to finish resumer for %s, %s", rfile, e)
 			}
 		}
@@ -91,7 +90,26 @@ func (s *Scheduler) addCron(r cronReq) error {
 	return nil
 }
 
-func  (s *Scheduler) execute(command string) {
+func (s *Scheduler) loadFromFileParser() error {
+	for _, entry := range s.Entries() {
+		s.Remove(entry.ID)
+	}
+
+	jss, err := s.CrontabParser.List()
+	if err != nil {
+		return errors.Wrapf(err, "failed to load file %s", s.CrontabParser.String())
+	}
+
+	for _, js := range jss {
+		req := cronReq{spec: js.Spec, command: js.Command}
+		if err = s.schedule(req); err != nil {
+			return errors.Wrapf(err, "can't add %s, %s", js.Spec, js.Command)
+		}
+	}
+	return nil
+}
+
+func (s *Scheduler) execute(command string) {
 	log.Printf("[CRON] executing: %q", command)
 	cmd := exec.Command("sh", "-c", command) // nolint gosec
 
@@ -102,4 +120,43 @@ func  (s *Scheduler) execute(command string) {
 	} else {
 		log.Printf("[CRON] completed %q", command)
 	}
+}
+
+// reload runs blocking loop reacting on updates in crontab file and reloading jobs
+func (s *Scheduler) reload(ctx context.Context) {
+	ch, err := s.CrontabParser.Changes(ctx)
+	if err != nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case jobs, ok := <-ch:
+			if !ok {
+				return
+			}
+			log.Printf("[CRON] jobs update detected, total %d jobs scheduled", len(jobs))
+			if err = s.loadFromFileParser(); err != nil {
+				log.Printf("[CRON] failed to update jobs, %v", err)
+			}
+		}
+	}
+}
+
+func (s *Scheduler) resumeInterrupted(rmr Resumer) {
+	cmds := rmr.List()
+	if len(cmds) > 0 {
+		log.Printf("[CRON] interrupted commands detected - %+v", cmds)
+	}
+
+	go func() {
+		for _, cmd := range cmds {
+			s.execute(cmd.Command)
+			if err := rmr.OnFinish(cmd.Fname); err != nil {
+				log.Printf("[WARN] failed to finish resumer for %s, %s", cmd.Fname, err)
+			}
+		}
+	}()
 }

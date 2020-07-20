@@ -28,8 +28,10 @@ type Cmd struct {
 
 // New makes resumer for given location. Enabled affects List only
 func New(location string, enabled bool) *Resumer {
-	if err := os.MkdirAll(location, 0700); err != nil {
-		log.Printf("[DEBUG] can't make %s, %s", location, err)
+	if enabled {
+		if err := os.MkdirAll(location, 0700); err != nil {
+			log.Printf("[DEBUG] can't make %s, %s", location, err)
+		}
 	}
 	return &Resumer{location: location, enabled: enabled}
 }

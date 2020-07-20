@@ -15,9 +15,13 @@ import (
 	"github.com/umputun/cronn/resumer"
 )
 
+//go:generate mockery -name Resumer -case snake
+//go:generate mockery -name CrontabParser -case snake
+//go:generate mockery -name Cron -case snake
+
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
 type Scheduler struct {
-	*cron.Cron
+	Cron
 	Resumer        Resumer
 	CrontabParser  CrontabParser
 	UpdatesEnabled bool

@@ -30,16 +30,17 @@ var opts struct {
 	Dbg          bool   `long:"dbg" env:"CRONN_DEBUG" description:"debug mode"`
 
 	Notify struct {
-		Enabled     bool          `long:"enabled" env:"ENABLED" description:"enable email notifications"`
-		Host        string        `long:"host" env:"HOST" description:"SMTP host"`
-		Port        int           `long:"port" env:"PORT" description:"SMTP port"`
-		Username    string        `long:"username" env:"USERNAME" description:"SMTP user name"`
-		Password    string        `long:"password" env:"PASSWORD" description:"SMTP password"`
-		TLS         bool          `long:"tls" env:"TLS" description:"enable TLS"`
-		TimeOut     time.Duration `long:"timeout" env:"TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
-		From        string        `long:"from" env:"FROM" description:"SMTP from email"`
-		To          []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
-		MaxLogLines int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
+		EnabledError      bool          `long:"enabled-error" env:"ENABLED_ERROR" description:"enable email notifications on errors"`
+		EnabledCompletion bool          `long:"enabled-complete" env:"ENABLED_COMPLETE" description:"enable completion notifications"`
+		Host              string        `long:"host" env:"HOST" description:"SMTP host"`
+		Port              int           `long:"port" env:"PORT" description:"SMTP port"`
+		Username          string        `long:"username" env:"USERNAME" description:"SMTP user name"`
+		Password          string        `long:"password" env:"PASSWORD" description:"SMTP password"`
+		TLS               bool          `long:"tls" env:"TLS" description:"enable TLS"`
+		TimeOut           time.Duration `long:"timeout" env:"TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
+		From              string        `long:"from" env:"FROM" description:"SMTP from email"`
+		To                []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
+		MaxLogLines       int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
 	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
 }
 
@@ -76,7 +77,7 @@ func main() {
 }
 
 func makeNotifier() *notify.Email {
-	if !opts.Notify.Enabled {
+	if !opts.Notify.EnabledError && !opts.Notify.EnabledCompletion {
 		return nil
 	}
 	from := opts.Notify.From
@@ -93,6 +94,8 @@ func makeNotifier() *notify.Email {
 		SMTPPassword: opts.Notify.Password,
 		TimeOut:      opts.Notify.TimeOut,
 		ContentType:  "text/html",
+		OnError:      opts.Notify.EnabledError,
+		OnCompletion: opts.Notify.EnabledCompletion,
 	})
 }
 

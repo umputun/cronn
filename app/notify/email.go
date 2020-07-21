@@ -34,6 +34,9 @@ type EmailParams struct {
 	SMTPUserName string // user name
 	SMTPPassword string // password
 	TimeOut      time.Duration
+
+	OnError      bool
+	OnCompletion bool
 }
 
 // SMTPClient interface defines subset of net/smtp used by email client
@@ -117,6 +120,10 @@ func (em *Email) Send(subj, text string) error {
 	}
 	return nil
 }
+
+func (em *Email) IsOnError() bool { return em.OnError }
+
+func (em *Email) IsOnCompletion() bool { return em.OnCompletion }
 
 func (em *Email) client() (c *smtp.Client, err error) {
 	srvAddress := fmt.Sprintf("%s:%d", em.Host, em.Port)

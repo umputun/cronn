@@ -65,6 +65,8 @@ type Cron interface {
 // Notifier interface defines notification delivery on failed executions
 type Notifier interface {
 	Send(subj, text string) error
+	IsOnError() bool
+	IsOnCompletion() bool
 }
 
 type cronReq struct {
@@ -135,11 +137,24 @@ func (s *Scheduler) notify(r cronReq, errMsg string) error {
 	if s.Notifier == nil {
 		return nil
 	}
-	msg, err := notify.MakeErrorHTML(r.spec, r.command, errMsg)
-	if err != nil {
-		return errors.Wrap(err, "can't make html email")
+
+	if errMsg != "" && s.Notifier.IsOnError() {
+		msg, err := notify.MakeErrorHTML(r.spec, r.command, errMsg)
+		if err != nil {
+			return errors.Wrap(err, "can't make html email")
+		}
+		return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.command, s.HostName), msg)
 	}
-	return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.command, s.HostName), msg)
+
+	if errMsg == "" && s.Notifier.IsOnCompletion() {
+		msg, err := notify.MakeCompletionHTML(r.spec, r.command, errMsg)
+		if err != nil {
+			return errors.Wrap(err, "can't make html email")
+		}
+		return s.Notifier.Send(fmt.Sprintf("completed %q on %s", r.command, s.HostName), msg)
+	}
+
+	return nil
 }
 
 func (s *Scheduler) loadFromFileParser() error {

@@ -3,13 +3,17 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
+	"github.com/umputun/cronn/service/notify"
 
 	"github.com/umputun/cronn/crontab"
 	"github.com/umputun/cronn/resumer"
@@ -25,6 +29,9 @@ type Scheduler struct {
 	Resumer        Resumer
 	CrontabParser  CrontabParser
 	UpdatesEnabled bool
+	JitterEnabled  bool
+	Notifier       Notifier
+	HostName       string
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -49,6 +56,11 @@ type Cron interface {
 	Entries() []cron.Entry
 	Schedule(schedule cron.Schedule, cmd cron.Job) cron.EntryID
 	Remove(id cron.EntryID)
+}
+
+// Notifier interface defines notification delivery on failed executions
+type Notifier interface {
+	Send(subj, text string) error
 }
 
 type cronReq struct {
@@ -88,7 +100,17 @@ func (s *Scheduler) schedule(r cronReq) error {
 		}
 
 		rfile, rerr := s.Resumer.OnStart(cmd)
-		s.execute(cmd)
+
+		if err = s.execute(cmd); err != nil {
+			log.Printf("[CRON] %s", err.Error())
+			if e := s.notify(r, err.Error()); e != nil {
+				log.Printf("[CRON] failed to notify, %v", e)
+				return
+			}
+		} else {
+			log.Printf("[CRON] completed %v", cmd)
+		}
+
 		if rerr == nil {
 			if e := s.Resumer.OnFinish(rfile); e != nil {
 				log.Printf("[CRON] failed to finish resumer for %s, %s", rfile, e)
@@ -99,6 +121,17 @@ func (s *Scheduler) schedule(r cronReq) error {
 
 	log.Printf("[CRON] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.command, id)
 	return nil
+}
+
+func (s *Scheduler) notify(r cronReq, errMsg string) error {
+	if s.Notifier == nil {
+		return nil
+	}
+	msg, err := notify.MakeErrorHTML(r.spec, r.command, errMsg)
+	if err != nil {
+		return errors.Wrap(err, "can't make html email")
+	}
+	return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.command, s.HostName), msg)
 }
 
 func (s *Scheduler) loadFromFileParser() error {
@@ -120,17 +153,23 @@ func (s *Scheduler) loadFromFileParser() error {
 	return nil
 }
 
-func (s *Scheduler) execute(command string) {
+func (s *Scheduler) execute(command string) error {
 	log.Printf("[CRON] executing: %q", command)
+	if s.JitterEnabled {
+		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) // jitter up to 10s
+	}
+
 	cmd := exec.Command("sh", "-c", command) // nolint gosec
 
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	serr := NewErrorWriter(100)
+	logWithErr := io.MultiWriter(os.Stdout, serr)
+	cmd.Stdout = logWithErr
+	cmd.Stderr = logWithErr
 	if err := cmd.Run(); err != nil {
-		log.Printf("[CRON] failed %q, %v", command, err)
-	} else {
-		log.Printf("[CRON] completed %q", command)
+		serr.SerError(errors.Wrapf(err, "failed to execute %s", command))
+		return serr
 	}
+	return nil
 }
 
 // reload runs blocking loop reacting on updates in crontab file and reloading jobs

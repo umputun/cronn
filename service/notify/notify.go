@@ -1,3 +1,4 @@
+// Package notify providers error delivery via email
 package notify
 
 import (

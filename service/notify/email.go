@@ -1,5 +1,4 @@
 // Package notify provides email sender
-
 package notify
 
 import (
@@ -55,13 +54,14 @@ func NewEmailClient(p EmailParams) *Email {
 // Send email with given text and subject
 // If SMTPClient defined in Email struct it will be used, if not - new smtp.Client on each send.
 // Always closes client on completion or failure.
+//nolint gocyclo
 func (em *Email) Send(subj, text string) error {
 	log.Printf("[DEBUG] send %q to %+v", subj, em.To)
 	client := em.SMTPClient
 	if client == nil { // if client not set make new net/smtp
 		c, err := em.client()
 		if err != nil {
-			return errors.Wrap(err, "failed to make smtp client")
+			return errors.Wrap(err, "failed to makre smtp client")
 		}
 		client = c
 	}

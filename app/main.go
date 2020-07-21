@@ -15,9 +15,9 @@ import (
 	"github.com/umputun/go-flags"
 
 	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/notify"
 	"github.com/umputun/cronn/app/resumer"
 	"github.com/umputun/cronn/app/service"
-	"github.com/umputun/cronn/app/service/notify"
 )
 
 var opts struct {
@@ -27,19 +27,20 @@ var opts struct {
 	JitterEnable bool   `short:"j" long:"jitter" env:"CRONN_JITTER" description:"up to 10s jitter"`
 	LogEnabled   bool   `long:"log" env:"CRONN_LOG" description:"enable logging"`
 	HostName     string `long:"host" env:"CRONN_HOST" description:"host name"`
+	Dbg          bool   `long:"dbg" env:"CRONN_DEBUG" description:"debug mode"`
 
-	Email struct {
-		Enabled  bool          `long:"enabled" env:"ENABLED" description:"enable email notifications"`
-		Host     string        `long:"host" env:"HOST" description:"SMTP host"`
-		Port     int           `long:"port" env:"PORT" description:"SMTP port"`
-		Username string        `long:"username" env:"USERNAME" description:"SMTP user name"`
-		Password string        `long:"password" env:"PASSWORD" description:"SMTP password"`
-		TLS      bool          `long:"tls" env:"TLS" description:"enable TLS"`
-		TimeOut  time.Duration `long:"timeout" env:"TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
-		From     string        `long:"from" env:"FROM" description:"SMTP from email"`
-		To       []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
-	} `group:"smtp" namespace:"smtp" env-namespace:"CRONN_SMTP"`
-	Dbg bool `long:"dbg" env:"CRONN_DEBUG" description:"debug mode"`
+	Notify struct {
+		Enabled     bool          `long:"enabled" env:"ENABLED" description:"enable email notifications"`
+		Host        string        `long:"host" env:"HOST" description:"SMTP host"`
+		Port        int           `long:"port" env:"PORT" description:"SMTP port"`
+		Username    string        `long:"username" env:"USERNAME" description:"SMTP user name"`
+		Password    string        `long:"password" env:"PASSWORD" description:"SMTP password"`
+		TLS         bool          `long:"tls" env:"TLS" description:"enable TLS"`
+		TimeOut     time.Duration `long:"timeout" env:"TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
+		From        string        `long:"from" env:"FROM" description:"SMTP from email"`
+		To          []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
+		MaxLogLines int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
+	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
 }
 
 var revision = "unknown"
@@ -68,28 +69,29 @@ func main() {
 		JitterEnabled:  opts.JitterEnable,
 		Notifier:       makeNotifier(),
 		HostName:       makeHostName(),
+		MaxLogLines:    opts.Notify.MaxLogLines,
 	}
 	signals(cancel) // handle SIGQUIT and SIGTERM
 	cronService.Do(ctx)
 }
 
-func makeNotifier() service.Notifier {
-	if !opts.Email.Enabled {
+func makeNotifier() *notify.Email {
+	if !opts.Notify.Enabled {
 		return nil
 	}
-	from := opts.Email.From
+	from := opts.Notify.From
 	if from == "" {
 		from = "cronn@" + makeHostName()
 	}
 	return notify.NewEmailClient(notify.EmailParams{
-		Host:         opts.Email.Host,
-		Port:         opts.Email.Port,
+		Host:         opts.Notify.Host,
+		Port:         opts.Notify.Port,
 		From:         from,
-		To:           opts.Email.To,
-		TLS:          opts.Email.TLS,
-		SMTPUserName: opts.Email.Username,
-		SMTPPassword: opts.Email.Password,
-		TimeOut:      opts.Email.TimeOut,
+		To:           opts.Notify.To,
+		TLS:          opts.Notify.TLS,
+		SMTPUserName: opts.Notify.Username,
+		SMTPPassword: opts.Notify.Password,
+		TimeOut:      opts.Notify.TimeOut,
 		ContentType:  "text/html",
 	})
 }

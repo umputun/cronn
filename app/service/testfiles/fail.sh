@@ -1,0 +1,16 @@
+#!/bin/sh
+echo TestScheduler_executeFailed 1
+echo TestScheduler_executeFailed 2
+echo TestScheduler_executeFailed 3
+echo TestScheduler_executeFailed 4
+echo TestScheduler_executeFailed 5
+echo TestScheduler_executeFailed 6
+echo TestScheduler_executeFailed 7
+echo TestScheduler_executeFailed 8
+echo TestScheduler_executeFailed 9
+echo TestScheduler_executeFailed 10
+echo TestScheduler_executeFailed 11
+echo TestScheduler_executeFailed 12
+echo TestScheduler_executeFailed 13
+echo TestScheduler_executeFailed 14
+exit 1

@@ -4,13 +4,15 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestResumer_OnStart(t *testing.T) {
-	_ = os.RemoveAll("/tmp/resumer.test")
 	r := New("/tmp/resumer.test", true)
+	defer os.RemoveAll("/tmp/resumer.test")
 
 	s, err := r.OnStart("cmd 1 2 blah")
 	assert.Nil(t, err)
@@ -22,8 +24,8 @@ func TestResumer_OnStart(t *testing.T) {
 }
 
 func TestResumer_OnFinish(t *testing.T) {
-	_ = os.RemoveAll("/tmp/resumer.test")
 	r := New("/tmp/resumer.test", true)
+	defer os.RemoveAll("/tmp/resumer.test")
 
 	s, err := r.OnStart("cmd 1 2 blah")
 	assert.Nil(t, err)
@@ -35,9 +37,8 @@ func TestResumer_OnFinish(t *testing.T) {
 }
 
 func TestResumer_List(t *testing.T) {
-
-	_ = os.RemoveAll("/tmp/resumer.test")
 	r := New("/tmp/resumer.test", true)
+	defer os.RemoveAll("/tmp/resumer.test")
 
 	_, e := r.OnStart("cmd1 1 2 blah")
 	assert.Nil(t, e)
@@ -46,6 +47,20 @@ func TestResumer_List(t *testing.T) {
 	_, e = r.OnStart("cmd3 blah")
 	assert.Nil(t, e)
 
+	err := ioutil.WriteFile("/tmp/resumer.test/old.cronn", []byte("something"), 0600)
+	require.NoError(t, err)
+	defer os.Remove("/tmp/resumer.test/old.cronn")
+
 	res := r.List()
+	assert.Equal(t, 4, len(res))
+
+	err = os.Chtimes("/tmp/resumer.test/old.cronn",
+		time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
+	res = r.List()
 	assert.Equal(t, 3, len(res))
+
+	r.enabled = false
+	res = r.List()
+	assert.Equal(t, 0, len(res))
+
 }

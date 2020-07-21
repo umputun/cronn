@@ -15,13 +15,14 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/notify"
 	"github.com/umputun/cronn/app/resumer"
-	"github.com/umputun/cronn/app/service/notify"
 )
 
 //go:generate mockery -name Resumer -case snake
 //go:generate mockery -name CrontabParser -case snake
 //go:generate mockery -name Cron -case snake
+//go:generate mockery -name Notifier -case snake
 
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
 type Scheduler struct {
@@ -32,6 +33,9 @@ type Scheduler struct {
 	JitterEnabled  bool
 	Notifier       Notifier
 	HostName       string
+	MaxLogLines    int
+
+	stdout io.Writer
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -69,6 +73,9 @@ type cronReq struct {
 
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
+	if s.stdout == nil {
+		s.stdout = os.Stdout
+	}
 	s.resumeInterrupted()
 
 	if s.UpdatesEnabled {
@@ -81,6 +88,7 @@ func (s *Scheduler) Do(ctx context.Context) {
 	}
 	s.Start()
 	<-ctx.Done()
+	log.Print("[DEBUG] terminate")
 	<-s.Stop().Done()
 }
 
@@ -101,7 +109,7 @@ func (s *Scheduler) schedule(r cronReq) error {
 
 		rfile, rerr := s.Resumer.OnStart(cmd)
 
-		if err = s.execute(cmd); err != nil {
+		if err = s.execute(cmd, s.stdout); err != nil {
 			log.Printf("[CRON] %s", err.Error())
 			if e := s.notify(r, err.Error()); e != nil {
 				log.Printf("[CRON] failed to notify, %v", e)
@@ -153,7 +161,7 @@ func (s *Scheduler) loadFromFileParser() error {
 	return nil
 }
 
-func (s *Scheduler) execute(command string) error {
+func (s *Scheduler) execute(command string, logWriter io.Writer) error {
 	log.Printf("[CRON] executing: %q", command)
 	if s.JitterEnabled {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) // jitter up to 10s
@@ -161,8 +169,8 @@ func (s *Scheduler) execute(command string) error {
 
 	cmd := exec.Command("sh", "-c", command) // nolint gosec
 
-	serr := NewErrorWriter(100)
-	logWithErr := io.MultiWriter(os.Stdout, serr)
+	serr := NewErrorWriter(s.MaxLogLines)
+	logWithErr := io.MultiWriter(logWriter, serr)
 	cmd.Stdout = logWithErr
 	cmd.Stderr = logWithErr
 	if err := cmd.Run(); err != nil {
@@ -203,7 +211,7 @@ func (s *Scheduler) resumeInterrupted() {
 
 	go func() {
 		for _, cmd := range cmds {
-			if err := s.execute(cmd.Command); err != nil {
+			if err := s.execute(cmd.Command, os.Stdout); err != nil {
 				r := cronReq{spec: "auto-resume", command: cmd.Command}
 				if e := s.notify(r, err.Error()); e != nil {
 					log.Printf("[CRON] failed to notify, %v", e)

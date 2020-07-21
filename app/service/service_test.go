@@ -7,8 +7,8 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/mock"
-	"github.com/umputun/cronn/crontab"
-	"github.com/umputun/cronn/service/mocks"
+	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/service/mocks"
 )
 
 func TestScheduler_Do(t *testing.T) {

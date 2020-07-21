@@ -203,7 +203,13 @@ func (s *Scheduler) resumeInterrupted() {
 
 	go func() {
 		for _, cmd := range cmds {
-			s.execute(cmd.Command)
+			if err := s.execute(cmd.Command); err != nil {
+				r := cronReq{spec: "auto-resume", command: cmd.Command}
+				if e := s.notify(r, err.Error()); e != nil {
+					log.Printf("[CRON] failed to notify, %v", e)
+					continue
+				}
+			}
 			if err := s.Resumer.OnFinish(cmd.Fname); err != nil {
 				log.Printf("[WARN] failed to finish resumer for %s, %s", cmd.Fname, err)
 			}

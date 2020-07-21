@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// ShellError implements error and collect log messages
-// Not thread safe
+// ErrorWriter implements error and collect log messages. Not thread safe
 type ErrorWriter struct {
 	maxErrLogLines int
 	err            error

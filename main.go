@@ -12,6 +12,7 @@ import (
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/robfig/cron/v3"
+	"github.com/umputun/cronn/service/notify"
 	"github.com/umputun/go-flags"
 
 	"github.com/umputun/cronn/crontab"
@@ -23,8 +24,22 @@ var opts struct {
 	CrontabFile  string `short:"f" long:"config" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
 	Resume       string `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
 	UpdateEnable bool   `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
+	JitterEnable bool   `short:"j" long:"jitter" env:"CRONN_JITTER" description:"up to 10s jitter"`
 	LogEnabled   bool   `long:"log" env:"CRONN_LOG" description:"enable logging"`
-	Dbg          bool   `long:"dbg" env:"CRONN_DEBUG" description:"debug mode"`
+	HostName     string `long:"host" env:"CRONN_HOST" description:"host name"`
+
+	Email struct {
+		Enabled  bool          `long:"enabled" env:"ENABLED" description:"enable email notifications"`
+		Host     string        `long:"host" env:"HOST" description:"SMTP host"`
+		Port     int           `long:"port" env:"PORT" description:"SMTP port"`
+		Username string        `long:"username" env:"USERNAME" description:"SMTP user name"`
+		Password string        `long:"password" env:"PASSWORD" description:"SMTP password"`
+		TLS      bool          `long:"tls" env:"TLS" description:"enable TLS"`
+		TimeOut  time.Duration `long:"timeout" env:"TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
+		From     string        `long:"from" env:"FROM" description:"SMTP from email"`
+		To       []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
+	} `group:"smtp" namespace:"smtp" env-namespace:"CRONN_SMTP"`
+	Dbg bool `long:"dbg" env:"CRONN_DEBUG" description:"debug mode"`
 }
 
 var revision = "unknown"
@@ -50,9 +65,44 @@ func main() {
 		Resumer:        resumer.New(opts.Resume, opts.Resume != ""),
 		CrontabParser:  crontab.New(opts.CrontabFile, 10*time.Second),
 		UpdatesEnabled: opts.UpdateEnable,
+		JitterEnabled:  opts.JitterEnable,
+		Notifier:       makeNotifier(),
+		HostName:       makeHostName(),
 	}
 	signals(cancel) // handle SIGQUIT and SIGTERM
 	cronService.Do(ctx)
+}
+
+func makeNotifier() service.Notifier {
+	if !opts.Email.Enabled {
+		return nil
+	}
+	from := opts.Email.From
+	if from == "" {
+		from = "cronn@" + makeHostName()
+	}
+	return notify.NewEmailClient(notify.EmailParams{
+		Host:         opts.Email.Host,
+		Port:         opts.Email.Port,
+		From:         from,
+		To:           opts.Email.To,
+		TLS:          opts.Email.TLS,
+		SMTPUserName: opts.Email.Username,
+		SMTPPassword: opts.Email.Password,
+		TimeOut:      opts.Email.TimeOut,
+		ContentType:  "text/html",
+	})
+}
+
+func makeHostName() string {
+	if opts.HostName != "" {
+		return opts.HostName
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return host
 }
 
 func setupLogs(enabled, dbg bool) {

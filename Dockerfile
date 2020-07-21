@@ -14,7 +14,7 @@ RUN \
     echo "runs outside of CI" && version=$(/script/git-rev.sh); \
     else version=${GIT_BRANCH}-${GITHUB_SHA:0:7}-$(date +%Y%m%dT%H:%M:%S); fi && \
     echo "version=$version" && \
-    go build -o cronn -ldflags "-X main.revision=${version} -s -w"
+    cd app && go build -o /build/cronn/cronn -ldflags "-X main.revision=${version} -s -w"
 
 
 FROM umputun/baseimage:app-latest

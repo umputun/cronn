@@ -12,12 +12,12 @@ import (
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/robfig/cron/v3"
-	"github.com/umputun/cronn/service/notify"
 	"github.com/umputun/go-flags"
 
-	"github.com/umputun/cronn/crontab"
-	"github.com/umputun/cronn/resumer"
-	"github.com/umputun/cronn/service"
+	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/resumer"
+	"github.com/umputun/cronn/app/service"
+	"github.com/umputun/cronn/app/service/notify"
 )
 
 var opts struct {

@@ -13,10 +13,10 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
-	"github.com/umputun/cronn/service/notify"
 
-	"github.com/umputun/cronn/crontab"
-	"github.com/umputun/cronn/resumer"
+	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/resumer"
+	"github.com/umputun/cronn/app/service/notify"
 )
 
 //go:generate mockery -name Resumer -case snake

@@ -5,12 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"os"
 	"os/exec"
+	"reflect"
 	"time"
 
+	log "github.com/go-pkgz/lgr"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 
@@ -69,10 +70,6 @@ type Notifier interface {
 	IsOnCompletion() bool
 }
 
-type cronReq struct {
-	spec, command string
-}
-
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
 	if s.stdout == nil {
@@ -94,23 +91,23 @@ func (s *Scheduler) Do(ctx context.Context) {
 	<-s.Stop().Done()
 }
 
-// schedule makes new cron job from cronReq and adds to cron
-func (s *Scheduler) schedule(r cronReq) error {
-	log.Printf("[CRON] new cron, command %q", r.command)
-	sched, e := cron.ParseStandard(r.spec)
+// schedule makes new cron job from crontab.JobSpec and adds to cron
+func (s *Scheduler) schedule(r crontab.JobSpec) error {
+	log.Printf("[CRON] new cron, command %q", r.Command)
+	sched, e := cron.ParseStandard(r.Spec)
 	if e != nil {
-		return errors.Wrapf(e, "can't parse %s", r.spec)
+		return errors.Wrapf(e, "can't parse %s", r.Spec)
 	}
 
 	id := s.Schedule(sched, s.jobFunc(r, sched))
-	log.Printf("[CRON] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.command, id)
+	log.Printf("[CRON] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.Command, id)
 	return nil
 }
 
-func (s *Scheduler) jobFunc(r cronReq, sched cron.Schedule) cron.FuncJob {
+func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob {
 
-	runJob := func(r cronReq) error {
-		cmd, err := NewDayTemplate(time.Now()).Parse(r.command)
+	runJob := func(r crontab.JobSpec) error {
+		cmd, err := NewDayTemplate(time.Now()).Parse(r.Command)
 		if err != nil {
 			return err
 		}
@@ -133,15 +130,14 @@ func (s *Scheduler) jobFunc(r cronReq, sched cron.Schedule) cron.FuncJob {
 	}
 
 	return func() {
-		log.Printf("[CRON] executing: %q", r.command)
+		log.Printf("[CRON] executing: %q", r.Command)
 		if err := runJob(r); err != nil {
-			log.Printf("[CRON] job failed: %s, %v", r.command, err)
+			log.Printf("[CRON] job failed: %s, %v", r.Command, err)
 		} else {
-			log.Printf("[CRON] completed %v", r.command)
+			log.Printf("[CRON] completed %v", r.Command)
 		}
-		log.Printf("[CRON] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.command)
+		log.Printf("[CRON] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.Command)
 	}
-
 }
 
 func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
@@ -162,25 +158,26 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 	return nil
 }
 
-func (s *Scheduler) notify(r cronReq, errMsg string) error {
-	if s.Notifier == nil {
+func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
+
+	if s.Notifier == nil || reflect.ValueOf(s.Notifier).IsNil() {
 		return nil
 	}
 
 	if errMsg != "" && s.Notifier.IsOnError() {
-		msg, err := notify.MakeErrorHTML(r.spec, r.command, errMsg)
+		msg, err := notify.MakeErrorHTML(r.Spec, r.Command, errMsg)
 		if err != nil {
 			return errors.Wrap(err, "can't make html email")
 		}
-		return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.command, s.HostName), msg)
+		return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.Command, s.HostName), msg)
 	}
 
 	if errMsg == "" && s.Notifier.IsOnCompletion() {
-		msg, err := notify.MakeCompletionHTML(r.spec, r.command, errMsg)
+		msg, err := notify.MakeCompletionHTML(r.Spec, r.Command, errMsg)
 		if err != nil {
 			return errors.Wrap(err, "can't make html email")
 		}
-		return s.Notifier.Send(fmt.Sprintf("completed %q on %s", r.command, s.HostName), msg)
+		return s.Notifier.Send(fmt.Sprintf("completed %q on %s", r.Command, s.HostName), msg)
 	}
 
 	return nil
@@ -197,7 +194,7 @@ func (s *Scheduler) loadFromFileParser() error {
 	}
 
 	for _, js := range jss {
-		req := cronReq{spec: js.Spec, command: js.Command}
+		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command}
 		if err = s.schedule(req); err != nil {
 			return errors.Wrapf(err, "can't add %s, %s", js.Spec, js.Command)
 		}
@@ -237,7 +234,7 @@ func (s *Scheduler) resumeInterrupted() {
 	go func() {
 		for _, cmd := range cmds {
 			if err := s.executeCommand(cmd.Command, os.Stdout); err != nil {
-				r := cronReq{spec: "auto-resume", command: cmd.Command}
+				r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 				if e := s.notify(r, err.Error()); e != nil {
 					log.Printf("[CRON] failed to notify, %v", e)
 					continue

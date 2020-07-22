@@ -21,7 +21,8 @@ import (
 )
 
 var opts struct {
-	CrontabFile  string `short:"f" long:"config" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
+	CrontabFile  string `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
+	Command      string `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
 	Resume       string `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
 	UpdateEnable bool   `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
 	JitterEnable bool   `short:"j" long:"jitter" env:"CRONN_JITTER" description:"up to 10s jitter"`
@@ -62,10 +63,18 @@ func main() {
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	var crontabParser service.CrontabParser
+	if opts.Command != "" {
+		crontabParser = crontab.Single{Line: opts.Command}
+	} else {
+		crontabParser = crontab.New(opts.CrontabFile, 10*time.Second)
+	}
+
 	cronService := service.Scheduler{
 		Cron:           cron.New(),
 		Resumer:        resumer.New(opts.Resume, opts.Resume != ""),
-		CrontabParser:  crontab.New(opts.CrontabFile, 10*time.Second),
+		CrontabParser:  crontabParser,
 		UpdatesEnabled: opts.UpdateEnable,
 		JitterEnabled:  opts.JitterEnable,
 		Notifier:       makeNotifier(),
@@ -77,13 +86,16 @@ func main() {
 }
 
 func makeNotifier() *notify.Email {
+
 	if !opts.Notify.EnabledError && !opts.Notify.EnabledCompletion {
 		return nil
 	}
+
 	from := opts.Notify.From
 	if from == "" {
 		from = "cronn@" + makeHostName()
 	}
+
 	return notify.NewEmailClient(notify.EmailParams{
 		Host:         opts.Notify.Host,
 		Port:         opts.Notify.Port,

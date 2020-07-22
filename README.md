@@ -5,25 +5,30 @@
 
 ## Use cases
 
-- Run any job with an easy to use cli scheduler
+- Run any job with easy to use cli scheduler
 - Schedule tasks in containers (`cronn` can be used as CMD or ENTRYPOINT)
 - Use `umputun/cronn` as a base image
 
-The main reason to use this thing is super-paranoid nature of regular cron(d).
-This replacement `cronn` supposed to run under regular user and won't loose env and won't jail job.
- Another good reason - support of day-templates and especially "last business day EOD" - `{{.YYYYMMDDEOD}}`
+In addition `cronn` provides:
 
+- Runs as an ordinary process or the entry point of container
+- Supports wide range of date templates 
+- Optional email notification on failed or/and passed jobs
+- Optional jitter adding a random delay prior to execution of the job
+- Automatic restart of jobs in cronn (or container) failed unexpectedly
+- Reload crontab file on changes
+- Optional repeater for failed jobs
 
-## Usage
+## Basic usage
  
-- `cronn "30 23 * * 1-5" command arg1 arg2 ...`
-- `cronn "@every 5s" "ls -la"`
+- `cronn -c "30 23 * * 1-5 command arg1 arg2 ..."`
+- `cronn -c "@every 5s ls -la"`
 - `cronn -f crontab`
 
 Scheduling can be defined as:
 
-- standard crontab syntax `minute, hour, day-of-month, month, day-of-week`
-- @ syntax, like `@every 5m`, `@midnight`  and so on.
+- standard 5-parts crontab syntax `minute, hour, day-of-month, month, day-of-week`
+- @ syntax, like `@every 5m`, `@midnight` and so on.
 
 If `-f` defined it gets **standard crontab** formatted file only. 
 
@@ -39,6 +44,30 @@ Templates can be passed in command line or crontab file and will be evaluated an
 cronn executes a command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight. 
 
+## Application Options
+
+```
+     -f, --config=                  crontab file (default: crontab) [$CRONN_FILE]
+     -r, --resume=                  auto-resume location [$CRONN_RESUME]
+     -u, --update                   auto-update mode [$CRONN_UPDATE]
+     -j, --jitter                   up to 10s jitter [$CRONN_JITTER]
+         --log                      enable logging [$CRONN_LOG]
+         --host=                    host name [$CRONN_HOST]
+         --dbg                      debug mode [$CRONN_DEBUG]
+   
+   notify:
+         --notify.enabled-error     enable email notifications on errors [$CRONN_NOTIFY_ENABLED_ERROR]
+         --notify.enabled-complete  enable completion notifications [$CRONN_NOTIFY_ENABLED_COMPLETE]
+         --notify.host=             SMTP host [$CRONN_NOTIFY_HOST]
+         --notify.port=             SMTP port [$CRONN_NOTIFY_PORT]
+         --notify.username=         SMTP user name [$CRONN_NOTIFY_USERNAME]
+         --notify.password=         SMTP password [$CRONN_NOTIFY_PASSWORD]
+         --notify.tls               enable TLS [$CRONN_NOTIFY_TLS]
+         --notify.timeout=          SMTP TCP connection timeout (default: 10s) [$CRONN_NOTIFY_TIMEOUT]
+         --notify.from=             SMTP from email [$CRONN_NOTIFY_FROM]
+         --notify.to=               SMTP to email(s) [$CRONN_NOTIFY_TO]
+         --notify.max-log=          max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
+```
  
 ## Optional modes:
 
@@ -48,10 +77,12 @@ weekday on midnight.
 
 ### Auto-Resume details
 
-- each task creates a flag file named as `<ts>-<seq>.cronn` in `./resume` and removes this flag on completion.
+- each task creates a flag file named as `<ts>-<seq>.cronn` in `$CRONN_RESUME` and removes this flag on completion.
 - flag file's content is the command line for running task.
-- usually it is not necessary to map `./resume` to host's FS as we don't want it to survive container recreation. However, tt will survive container's restart.
+- usually it is not necessary to map `$CRONN_RESUME` to host's FS as we don't want it to survive container recreation. 
+However, it will survive container's restart.
 - at the start time `cronn` will discover all flag files and will execute them sequentially in case if multiple flag files discovered. Note: it won't block usual, scheduled tasks and it is possible to have initial (auto-resume) task running in parallel with regular tasks.
+- old resume files (>=24h) ignored 
 
 
 ## Examples

@@ -1,4 +1,5 @@
 // Package crontab deals with the standard 5-elements crontab input from a file
+// also supports @descriptors like
 package crontab
 
 import (
@@ -39,7 +40,7 @@ func (p Parser) List() (result []JobSpec, err error) {
 	}
 	lines := strings.Split(string(bs), "\n")
 	for _, l := range lines {
-		if js, err := p.parse(l); err == nil {
+		if js, err := Parse(l); err == nil {
 			result = append(result, js)
 		}
 	}
@@ -48,22 +49,6 @@ func (p Parser) List() (result []JobSpec, err error) {
 
 func (p Parser) String() string {
 	return p.file
-}
-
-func (p Parser) parse(line string) (result JobSpec, err error) {
-	if strings.HasPrefix(strings.TrimSpace(line), "#") {
-		return JobSpec{}, errors.New("comment line " + line)
-	}
-	reWhtSpaces := regexp.MustCompile(`[\s\p{Zs}]{2,}`)
-	l := strings.TrimSpace(line)
-	l = strings.Replace(l, "\t", " ", -1)
-	singleSpace := reWhtSpaces.ReplaceAllString(l, " ")
-	elems := strings.Split(singleSpace, " ")
-	if len(elems) < 6 {
-		return JobSpec{}, errors.New("not enough elements in " + line)
-	}
-
-	return JobSpec{Spec: strings.Join(elems[:5], " "), Command: strings.Join(elems[5:], " ")}, nil
 }
 
 // Changes gets updates channel. Each time crontab file updated and modification time changed
@@ -118,4 +103,36 @@ func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 	}()
 
 	return ch, nil
+}
+
+// Parse spec+command and return JobSpec
+func Parse(line string) (result JobSpec, err error) {
+	if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		return JobSpec{}, errors.New("comment line " + line)
+	}
+	reWhtSpaces := regexp.MustCompile(`[\s\p{Zs}]{2,}`)
+	l := strings.TrimSpace(line)
+	l = strings.Replace(l, "\t", " ", -1)
+	singleSpace := reWhtSpaces.ReplaceAllString(l, " ")
+	elems := strings.Split(singleSpace, " ")
+
+	if len(elems) < 2 {
+		return JobSpec{}, errors.New("not enough elements in " + line)
+	}
+
+	// @every 2h5m
+	if elems[0] == "@every" && len(elems) >= 3 {
+		return JobSpec{Spec: strings.Join(elems[:2], " "), Command: strings.Join(elems[2:], " ")}, nil
+	}
+
+	// @midnight
+	if strings.HasPrefix(elems[0], "@") {
+		return JobSpec{Spec: elems[0], Command: strings.Join(elems[1:], " ")}, nil
+	}
+
+	if len(elems) < 6 {
+		return JobSpec{}, errors.New("not enough elements in " + line)
+	}
+	// * * * * *
+	return JobSpec{Spec: strings.Join(elems[:5], " "), Command: strings.Join(elems[5:], " ")}, nil
 }

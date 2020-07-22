@@ -38,6 +38,9 @@ func New(location string, enabled bool) *Resumer {
 
 // OnStart makes a file for started cmd as dt-seq.cronn
 func (r *Resumer) OnStart(cmd string) (string, error) {
+	if !r.enabled {
+		return "", nil
+	}
 	seq := atomic.AddUint64(&r.seq, 1)
 	fname := fmt.Sprintf("%s/%d-%d.cronn", r.location, time.Now().UnixNano(), seq)
 	log.Printf("[DEBUG] create resumer file %s", fname)
@@ -46,6 +49,9 @@ func (r *Resumer) OnStart(cmd string) (string, error) {
 
 // OnFinish removes cronn fileÒ
 func (r *Resumer) OnFinish(fname string) error {
+	if !r.enabled {
+		return nil
+	}
 	log.Printf("[DEBUG] delete resumer file %s", fname)
 	return os.Remove(fname)
 }

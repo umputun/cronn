@@ -6,13 +6,13 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"mime/quotedprintable"
 	"net"
 	"net/smtp"
 	"strings"
 	"time"
 
+	log "github.com/go-pkgz/lgr"
 	"github.com/pkg/errors"
 )
 

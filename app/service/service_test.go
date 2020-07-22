@@ -115,7 +115,7 @@ func TestScheduler_jobFunc(t *testing.T) {
 	resmr.On("OnStart", "echo 123").Return("resume.file", nil).Once()
 	resmr.On("OnFinish", "resume.file").Return(nil).Once()
 
-	svc.jobFunc(cronReq{spec: "@startup", command: "echo 123"}, scheduleMock).Run()
+	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "echo 123"}, scheduleMock).Run()
 	assert.Equal(t, "123\n", wr.String())
 }
 
@@ -132,7 +132,7 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	resmr.On("OnStart", "no-such-thing").Return("resume.file", nil).Once()
 	resmr.On("OnFinish", "resume.file").Return(nil).Once()
 
-	svc.jobFunc(cronReq{spec: "@startup", command: "no-such-thing"}, scheduleMock).Run()
+	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, scheduleMock).Run()
 	assert.Contains(t, wr.String(), "not found")
 	notif.AssertExpectations(t)
 }
@@ -150,7 +150,7 @@ func TestScheduler_notify(t *testing.T) {
 	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
 	notif.On("IsOnError").Return(true)
 	svc := Scheduler{MaxLogLines: 10, Notifier: notif}
-	err := svc.notify(cronReq{spec: "@startup", command: "no-such-thing"}, "message")
+	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "message")
 	require.NoError(t, err)
 	notif.AssertExpectations(t)
 

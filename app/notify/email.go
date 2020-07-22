@@ -121,8 +121,10 @@ func (em *Email) Send(subj, text string) error {
 	return nil
 }
 
+// IsOnError status enabling on-error notification
 func (em *Email) IsOnError() bool { return em.OnError }
 
+// IsOnCompletion status enabling on-passed notification
 func (em *Email) IsOnCompletion() bool { return em.OnCompletion }
 
 func (em *Email) client() (c *smtp.Client, err error) {

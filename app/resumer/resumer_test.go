@@ -47,14 +47,14 @@ func TestResumer_List(t *testing.T) {
 	_, e = r.OnStart("cmd3 blah")
 	assert.Nil(t, e)
 
-	err := ioutil.WriteFile("/tmp/resumer.test/old.cronn", []byte("something"), 0600)
+	err := ioutil.WriteFile("/tmp/resumer.test/old.cronn", []byte("something"), 0600) //nolint
 	require.NoError(t, err)
 	defer os.Remove("/tmp/resumer.test/old.cronn")
 
 	res := r.List()
 	assert.Equal(t, 4, len(res))
 
-	err = os.Chtimes("/tmp/resumer.test/old.cronn",
+	_ = os.Chtimes("/tmp/resumer.test/old.cronn",
 		time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
 	res = r.List()
 	assert.Equal(t, 3, len(res))

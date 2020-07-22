@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-pkgz/repeater"
+	"github.com/go-pkgz/repeater/strategy"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -79,7 +81,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 }
 
 func TestScheduler_execute(t *testing.T) {
-	svc := Scheduler{}
+	svc := Scheduler{Repeater: repeater.New(&strategy.Once{})}
 	wr := bytes.NewBuffer(nil)
 	err := svc.executeCommand("echo 123", wr)
 	require.NoError(t, err)
@@ -87,7 +89,7 @@ func TestScheduler_execute(t *testing.T) {
 }
 
 func TestScheduler_executeFailedNotFound(t *testing.T) {
-	svc := Scheduler{}
+	svc := Scheduler{Repeater: repeater.New(&strategy.Once{})}
 	wr := bytes.NewBuffer(nil)
 	err := svc.executeCommand("no-such-command", wr)
 	require.Error(t, err)
@@ -95,7 +97,7 @@ func TestScheduler_executeFailedNotFound(t *testing.T) {
 }
 
 func TestScheduler_executeFailedExitCode(t *testing.T) {
-	svc := Scheduler{MaxLogLines: 10}
+	svc := Scheduler{MaxLogLines: 10, Repeater: repeater.New(&strategy.Once{})}
 	wr := bytes.NewBuffer(nil)
 	err := svc.executeCommand("testfiles/fail.sh", wr)
 	require.Error(t, err)
@@ -109,7 +111,7 @@ func TestScheduler_jobFunc(t *testing.T) {
 	resmr := &mocks.Resumer{}
 	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
 	wr := bytes.NewBuffer(nil)
-	svc := Scheduler{MaxLogLines: 10, stdout: wr, Resumer: resmr}
+	svc := Scheduler{MaxLogLines: 10, stdout: wr, Resumer: resmr, Repeater: repeater.New(&strategy.Once{})}
 
 	resmr.On("List").Return(nil).Once()
 	resmr.On("OnStart", "echo 123").Return("resume.file", nil).Once()
@@ -126,7 +128,7 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	notif.On("IsOnError").Return(true)
 	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
 	wr := bytes.NewBuffer(nil)
-	svc := Scheduler{MaxLogLines: 10, stdout: wr, Resumer: resmr, Notifier: notif}
+	svc := Scheduler{MaxLogLines: 10, stdout: wr, Resumer: resmr, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
 
 	resmr.On("List").Return(nil).Once()
 	resmr.On("OnStart", "no-such-thing").Return("resume.file", nil).Once()
@@ -149,7 +151,7 @@ func TestScheduler_notify(t *testing.T) {
 	notif := &mocks.Notifier{}
 	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
 	notif.On("IsOnError").Return(true)
-	svc := Scheduler{MaxLogLines: 10, Notifier: notif}
+	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
 	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "message")
 	require.NoError(t, err)
 	notif.AssertExpectations(t)

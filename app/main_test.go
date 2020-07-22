@@ -9,10 +9,10 @@ import (
 )
 
 func Test_makeHostName(t *testing.T) {
-	opts.HostName = "test"
+	opts.Notify.HostName = "test"
 	assert.Equal(t, "test", makeHostName())
 
-	opts.HostName = ""
+	opts.Notify.HostName = ""
 	exp, err := os.Hostname()
 	require.NoError(t, err)
 	assert.Equal(t, exp, makeHostName())

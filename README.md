@@ -11,11 +11,11 @@
 
 In addition `cronn` provides:
 
-- Booth single-job scheduler and more traditional crontab file with multiple jobs
-- Runs as an ordinary process or the entry point of container
+- Both single-job scheduler and more traditional crontab file with multiple jobs
+- Runs as an ordinary process or the entry point of a container
 - Supports wide range of date templates 
 - Optional email notification on failed or/and passed jobs
-- Optional jitter adding a random delay prior to execution of the job
+- Optional jitter adding a random delay prior to execution of a job
 - Automatic restart of jobs in cronn (or container) failed unexpectedly
 - Reload crontab file on changes
 - Optional repeater for failed jobs
@@ -29,7 +29,7 @@ In addition `cronn` provides:
 Scheduling can be defined as:
 
 - standard 5-parts crontab syntax `minute, hour, day-of-month, month, day-of-week`
-- @ syntax (descriptors), like `@every 5m`, `@midnight`, `@daily`, `@yearly`, `@annually`, `@monthly`, `@weekly` and `@hourly`.
+- @syntax (descriptors), like `@every 5m`, `@midnight`, `@daily`, `@yearly`, `@annually`, `@monthly`, `@weekly` and `@hourly`.
 
 Cronn also understands various day templates evaluated at the time of job's execution:
 
@@ -41,8 +41,8 @@ Cronn also understands various day templates evaluated at the time of job's exec
 - `{{.UNIXMSEC}}` - unix timestamp (in milliseconds)
 
 
-Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
-cronn executes a command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
+Templates can be passed in the command line or crontab file and will be evaluated and replaced at the moment 
+cronn executes the command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight. 
 
 ## Application Options
@@ -82,24 +82,25 @@ Help Options:
  
 ## Optional modes:
 
-- Logging mode. Produces logs, prefixed by "[CRONN]". Off by default.
-- Debug mode. Produces more debug info. Off by default.
-- Auto-resume mode. Executes terminated task(s) on startup.
-- Auto-update mode. Checks for changes in crontab file (`-f` mode only) and reloads updated jobs.
+- Logging mode
+- Debug mode: produces more debug info
+- Auto-resume mode: executes terminated task(s) on startup.
+- Auto-update mode: checks for changes in crontab file (`-f` mode only) and reloads updated jobs.
 
 ### Auto-Resume details
 
 - each task creates a flag file named as `<ts>-<seq>.cronn` in `$CRONN_RESUME` directory and removes this flag on completion.
-- flag file's content is the command line for running job.
-- at the start time `cronn` will discover all flag files and will execute them sequentially in case if multiple flag files discovered. Note: it won't block usual, scheduled tasks and it is possible to have initial (auto-resume) task running in parallel with regular tasks.
+- flag file's content is the command line for the running job.
+- at the start time `cronn` will discover all flag files and will execute them sequentially in case if multiple flag files discovered. 
+Note: it won't block usual, scheduled tasks and it is possible to have initial (auto-resume) task running in parallel with regular tasks.
 - old resume files (>=24h) ignored 
-- usually it is not necessary to map `$CRONN_RESUME` to host's FS as we don't want it to survive container recreation. 
+- usually it is not necessary to map `$CRONN_RESUME` location to host's FS as we don't want it to survive container recreation. 
 However, it will survive container's restart.
 
 ### Repeater
 
 Optional repeater retries failed job multiple times. It uses backoff strategy with an exponential interval. 
-Duration interval goes in steps with `last * math.Pow(factor, attempt)`. Optional jitter randomizes intervals a little bit.
+Duration interval goes in steps with `last * math.Pow(factor, attempt)` increments. Optional jitter randomizes intervals a little bit.
 Factor = 1 effectively makes this strategy fixed with `duration` delay.
 
 ## Things to know

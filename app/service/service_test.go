@@ -91,7 +91,7 @@ func TestScheduler_executeFailedNotFound(t *testing.T) {
 	wr := bytes.NewBuffer(nil)
 	err := svc.executeCommand("no-such-command", wr)
 	require.Error(t, err)
-	assert.Contains(t, string(wr.Bytes()), "no-such-command: command not found")
+	assert.Contains(t, string(wr.Bytes()), "not found")
 }
 
 func TestScheduler_executeFailedExitCode(t *testing.T) {
@@ -133,7 +133,7 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	resmr.On("OnFinish", "resume.file").Return(nil).Once()
 
 	svc.jobFunc(cronReq{spec: "@startup", command: "no-such-thing"}, scheduleMock).Run()
-	assert.Contains(t, string(wr.Bytes()), "no-such-thing: command not found")
+	assert.Contains(t, string(wr.Bytes()), "not found")
 	notif.AssertExpectations(t)
 }
 

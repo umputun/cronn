@@ -11,6 +11,8 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"github.com/go-pkgz/repeater"
+	"github.com/go-pkgz/repeater/strategy"
 	"github.com/robfig/cron/v3"
 	"github.com/umputun/go-flags"
 
@@ -27,21 +29,28 @@ var opts struct {
 	UpdateEnable bool   `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
 	JitterEnable bool   `short:"j" long:"jitter" env:"CRONN_JITTER" description:"up to 10s jitter"`
 	LogEnabled   bool   `long:"log" env:"CRONN_LOG" description:"enable logging"`
-	HostName     string `long:"host" env:"CRONN_HOST" description:"host name"`
 	Dbg          bool   `long:"dbg" env:"CRONN_DEBUG" description:"debug mode"`
+
+	Repeater struct {
+		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
+		Duration time.Duration `long:"duration" env:"DURATION" default:"1s" description:"initial duration"`
+		Factor   float64       `long:"factor" env:"FACTOR" default:"3" description:"backoff factor"`
+		Jitter   bool          `long:"jitter" env:"JITTER" description:"jitter"`
+	} `group:"repeater" namespace:"repeater" env-namespace:"CRONN_REPEATER"`
 
 	Notify struct {
 		EnabledError      bool          `long:"enabled-error" env:"ENABLED_ERROR" description:"enable email notifications on errors"`
 		EnabledCompletion bool          `long:"enabled-complete" env:"ENABLED_COMPLETE" description:"enable completion notifications"`
-		Host              string        `long:"host" env:"HOST" description:"SMTP host"`
-		Port              int           `long:"port" env:"PORT" description:"SMTP port"`
-		Username          string        `long:"username" env:"USERNAME" description:"SMTP user name"`
-		Password          string        `long:"password" env:"PASSWORD" description:"SMTP password"`
-		TLS               bool          `long:"tls" env:"TLS" description:"enable TLS"`
-		TimeOut           time.Duration `long:"timeout" env:"TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
+		SMTPHost          string        `long:"smtp-host" env:"SMTP_HOST" description:"SMTP host"`
+		SMTPPort          int           `long:"smtp-port" env:"SMTP_PORT" description:"SMTP port"`
+		SMTPUsername      string        `long:"smtp-username" env:"SMTP_USERNAME" description:"SMTP user name"`
+		SMTPPassword      string        `long:"smtp-password" env:"SMTP_PASSWORD" description:"SMTP password"`
+		SMTPTLS           bool          `long:"smtp-tls" env:"SMTP_TLS" description:"enable SMTP TLS"`
+		SMTPTimeOut       time.Duration `long:"smtp-timeout" env:"SMTP_TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
 		From              string        `long:"from" env:"FROM" description:"SMTP from email"`
 		To                []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
 		MaxLogLines       int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
+		HostName          string        `long:"host" env:"HOSTNAME" description:"host name running cronn"`
 	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
 }
 
@@ -71,12 +80,16 @@ func main() {
 		crontabParser = crontab.New(opts.CrontabFile, 10*time.Second)
 	}
 
+	rptr := repeater.New(&strategy.Backoff{Repeats: opts.Repeater.Attempts, Duration: opts.Repeater.Duration,
+		Factor: opts.Repeater.Factor, Jitter: opts.Repeater.Jitter})
+
 	cronService := service.Scheduler{
 		Cron:           cron.New(),
 		Resumer:        resumer.New(opts.Resume, opts.Resume != ""),
 		CrontabParser:  crontabParser,
 		UpdatesEnabled: opts.UpdateEnable,
 		JitterEnabled:  opts.JitterEnable,
+		Repeater:       rptr,
 		Notifier:       makeNotifier(),
 		HostName:       makeHostName(),
 		MaxLogLines:    opts.Notify.MaxLogLines,
@@ -97,14 +110,14 @@ func makeNotifier() *notify.Email {
 	}
 
 	return notify.NewEmailClient(notify.EmailParams{
-		Host:         opts.Notify.Host,
-		Port:         opts.Notify.Port,
+		Host:         opts.Notify.SMTPHost,
+		Port:         opts.Notify.SMTPPort,
 		From:         from,
 		To:           opts.Notify.To,
-		TLS:          opts.Notify.TLS,
-		SMTPUserName: opts.Notify.Username,
-		SMTPPassword: opts.Notify.Password,
-		TimeOut:      opts.Notify.TimeOut,
+		TLS:          opts.Notify.SMTPTLS,
+		SMTPUserName: opts.Notify.SMTPUsername,
+		SMTPPassword: opts.Notify.SMTPPassword,
+		TimeOut:      opts.Notify.SMTPTimeOut,
 		ContentType:  "text/html",
 		OnError:      opts.Notify.EnabledError,
 		OnCompletion: opts.Notify.EnabledCompletion,
@@ -112,8 +125,8 @@ func makeNotifier() *notify.Email {
 }
 
 func makeHostName() string {
-	if opts.HostName != "" {
-		return opts.HostName
+	if opts.Notify.HostName != "" {
+		return opts.Notify.HostName
 	}
 	host, err := os.Hostname()
 	if err != nil {

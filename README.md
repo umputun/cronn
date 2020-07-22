@@ -11,6 +11,7 @@
 
 In addition `cronn` provides:
 
+- Booth single-job scheduler and more traditional crontab file with multiple jobs
 - Runs as an ordinary process or the entry point of container
 - Supports wide range of date templates 
 - Optional email notification on failed or/and passed jobs
@@ -28,17 +29,17 @@ In addition `cronn` provides:
 Scheduling can be defined as:
 
 - standard 5-parts crontab syntax `minute, hour, day-of-month, month, day-of-week`
-- @ syntax, like `@every 5m`, `@midnight` and so on.
+- @ syntax (descriptors), like `@every 5m`, `@midnight`, `@daily`, `@yearly`, `@annually`, `@monthly`, `@weekly` and `@hourly`.
 
-If `-f` defined it gets **standard crontab** formatted file only. 
-
-Cronn also understands day templates:
+Cronn also understands various day templates evaluated at the time of job's execution:
 
 - `{{.YYYYMMDD}}` - current day in local TZ
 - `{{.YYYY}}` - current year
 - `{{.YYYYMM}}` - year and month
 - `{{.ISODATE}` - day-time (local TZ) formatted as `2006-01-02T00:00:00.000Z`
-- `{{.YYYYMMDDEOD}}` - current EOD day in local TZ. If hour < 17:00 (default) will use prev. day
+- `{{.UNIX}}` - unix timestamp (in seconds)
+- `{{.UNIXMSEC}}` - unix timestamp (in milliseconds)
+
 
 Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
 cronn executes a command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
@@ -47,64 +48,67 @@ weekday on midnight.
 ## Application Options
 
 ```
-     -f, --config=                  crontab file (default: crontab) [$CRONN_FILE]
-     -r, --resume=                  auto-resume location [$CRONN_RESUME]
-     -u, --update                   auto-update mode [$CRONN_UPDATE]
-     -j, --jitter                   up to 10s jitter [$CRONN_JITTER]
-         --log                      enable logging [$CRONN_LOG]
-         --host=                    host name [$CRONN_HOST]
-         --dbg                      debug mode [$CRONN_DEBUG]
-   
-   notify:
-         --notify.enabled-error     enable email notifications on errors [$CRONN_NOTIFY_ENABLED_ERROR]
-         --notify.enabled-complete  enable completion notifications [$CRONN_NOTIFY_ENABLED_COMPLETE]
-         --notify.host=             SMTP host [$CRONN_NOTIFY_HOST]
-         --notify.port=             SMTP port [$CRONN_NOTIFY_PORT]
-         --notify.username=         SMTP user name [$CRONN_NOTIFY_USERNAME]
-         --notify.password=         SMTP password [$CRONN_NOTIFY_PASSWORD]
-         --notify.tls               enable TLS [$CRONN_NOTIFY_TLS]
-         --notify.timeout=          SMTP TCP connection timeout (default: 10s) [$CRONN_NOTIFY_TIMEOUT]
-         --notify.from=             SMTP from email [$CRONN_NOTIFY_FROM]
-         --notify.to=               SMTP to email(s) [$CRONN_NOTIFY_TO]
-         --notify.max-log=          max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
+  -f, --file=                    crontab file (default: crontab) [$CRONN_FILE]
+  -c, --command=                 crontab single command [$CRONN_COMMAND]
+  -r, --resume=                  auto-resume location [$CRONN_RESUME]
+  -u, --update                   auto-update mode [$CRONN_UPDATE]
+  -j, --jitter                   up to 10s jitter [$CRONN_JITTER]
+      --log                      enable logging [$CRONN_LOG]
+      --dbg                      debug mode [$CRONN_DEBUG]
+
+repeater:
+      --repeater.attempts=       how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]
+      --repeater.duration=       initial duration (default: 1s) [$CRONN_REPEATER_DURATION]
+      --repeater.factor=         backoff factor (default: 3) [$CRONN_REPEATER_FACTOR]
+      --repeater.jitter          jitter [$CRONN_REPEATER_JITTER]
+
+notify:
+      --notify.enabled-error     enable email notifications on errors [$CRONN_NOTIFY_ENABLED_ERROR]
+      --notify.enabled-complete  enable completion notifications [$CRONN_NOTIFY_ENABLED_COMPLETE]
+      --notify.smtp-host=        SMTP host [$CRONN_NOTIFY_SMTP_HOST]
+      --notify.smtp-port=        SMTP port [$CRONN_NOTIFY_SMTP_PORT]
+      --notify.smtp-username=    SMTP user name [$CRONN_NOTIFY_SMTP_USERNAME]
+      --notify.smtp-password=    SMTP password [$CRONN_NOTIFY_SMTP_PASSWORD]
+      --notify.smtp-tls          enable SMTP TLS [$CRONN_NOTIFY_SMTP_TLS]
+      --notify.smtp-timeout=     SMTP TCP connection timeout (default: 10s) [$CRONN_NOTIFY_SMTP_TIMEOUT]
+      --notify.from=             SMTP from email [$CRONN_NOTIFY_FROM]
+      --notify.to=               SMTP to email(s) [$CRONN_NOTIFY_TO]
+      --notify.max-log=          max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
+      --notify.host=             host name running cronn [$CRONN_NOTIFY_HOSTNAME]
+
+Help Options:
+  -h, --help                     Show this help message
 ```
  
 ## Optional modes:
 
-- Debug mode. Produces more debug info. Off by default. Controlled by env `DEBUG` (`yes` or `true` to turn it on)
-- Auto-resume mode. Executes terminated task(s) on startup, controlled by env `CRONN_RESUME`
-- Auto-update mode. Checks for changes in crontab file (`-f` mode only) and reloads updated jobs. Controlled by env `CRONN_UPDATE`
+- Logging mode. Produces logs, prefixed by "[CRONN]". Off by default.
+- Debug mode. Produces more debug info. Off by default.
+- Auto-resume mode. Executes terminated task(s) on startup.
+- Auto-update mode. Checks for changes in crontab file (`-f` mode only) and reloads updated jobs.
 
 ### Auto-Resume details
 
-- each task creates a flag file named as `<ts>-<seq>.cronn` in `$CRONN_RESUME` and removes this flag on completion.
-- flag file's content is the command line for running task.
-- usually it is not necessary to map `$CRONN_RESUME` to host's FS as we don't want it to survive container recreation. 
-However, it will survive container's restart.
+- each task creates a flag file named as `<ts>-<seq>.cronn` in `$CRONN_RESUME` directory and removes this flag on completion.
+- flag file's content is the command line for running job.
 - at the start time `cronn` will discover all flag files and will execute them sequentially in case if multiple flag files discovered. Note: it won't block usual, scheduled tasks and it is possible to have initial (auto-resume) task running in parallel with regular tasks.
 - old resume files (>=24h) ignored 
+- usually it is not necessary to map `$CRONN_RESUME` to host's FS as we don't want it to survive container recreation. 
+However, it will survive container's restart.
 
+### Repeater
 
-## Examples
-
-### command line usage
-
-    ```
-    > cronn "@every 5s" "ls -la"
-
-    2016/12/11 18:29:07 [CRON]  new cron: @every 5s
-    2016/12/11 18:29:07 [CRON]  next: 2016-12-11T18:29:12-06:00
-    2016/12/11 18:29:07 [CRON]  start cron service
-    2016/12/11 18:29:12 [CRON]  executing: ls -la
-    total 8
-    drwxr-xr-x   3 umputun  staff   102 Dec 11 17:16 .
-    drwxr-xr-x  10 umputun  staff   340 Dec 11 18:10 ..
-    -rw-r--r--   1 umputun  staff  2067 Dec 11 18:24 main.go
-    2016/12/11 18:29:12 [CRON]  next: 2016-12-11T18:29:17-06:00
-    ```
+Optional repeater retries failed job multiple times. It uses backoff strategy with an exponential interval. 
+Duration interval goes in steps with `last * math.Pow(factor, attempt)`. Optional jitter randomizes intervals a little bit.
+Factor = 1 effectively makes this strategy fixed with `duration` delay.
 
 ## Things to know
 
-1. @syntax won't work in `-f` mode, but regular (full, 5-parts) "30 23 * * 1-5" only
-2. CTRL-C won't kill `cronn` process right away but will wait till job(s) completion
-3. each job runs as `sh -p cmd args` to allow use of env and all other shell-related goodies
+1. CTRL-C won't kill `cronn` process right away but will wait till job(s) completion
+2. each job runs as `sh -c cmd args...` to allow use of env and all other shell-related goodies
+
+## Credits
+
+- [robfig/cron](github.com/robfig/cron/v3) for parsing and scheduling.
+- [pkg/errors](github.com/pkg/errors) for errors wrapping and reporting.
+- [jessevdk/go-flags](github.com/jessevdk/go-flags) for cli parameters parser.

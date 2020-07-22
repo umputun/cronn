@@ -46,7 +46,7 @@ func MakeErrorHTML(spec, command, errorLog string) (string, error) {
 	</head>
 		
 	<body>
-		<p>Cronn task failed on <span class="bold">{{.Host}}</span> at {{.TS.Format "2006-01-02T15:04:05Z07:00"}}</p>
+		<p>Cronn task failed on <span class="bold">{{.SMTPHost}}</span> at {{.TS.Format "2006-01-02T15:04:05Z07:00"}}</p>
 		<ul>
 			<li>Command: <span class="bold">{{.Command}}</span></li>
 			<li>Spec: <span class="bold">{{.Spec}}</span></li>
@@ -106,7 +106,7 @@ func MakeCompletionHTML(spec, command, errorLog string) (string, error) {
 	</head>
 		
 	<body>
-		<p>Cronn task completed on <span class="bold">{{.Host}}</span> at {{.TS.Format "2006-01-02T15:04:05Z07:00"}}</p>
+		<p>Cronn task completed on <span class="bold">{{.SMTPHost}}</span> at {{.TS.Format "2006-01-02T15:04:05Z07:00"}}</p>
 		<ul>
 			<li>Command: <span class="bold">{{.Command}}</span></li>
 			<li>Spec: <span class="bold">{{.Spec}}</span></li>

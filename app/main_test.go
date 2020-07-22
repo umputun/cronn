@@ -19,10 +19,10 @@ func Test_makeHostName(t *testing.T) {
 }
 
 func Test_makeNotifier(t *testing.T) {
-	opts.Notify.Enabled = false
+	opts.Notify.EnabledCompletion, opts.Notify.EnabledError = false, false
 	assert.Nil(t, makeNotifier())
 
-	opts.Notify.Enabled = true
+	opts.Notify.EnabledCompletion = true
 	notif := makeNotifier()
 	require.NotNil(t, notif)
 	assert.Equal(t, "cronn@"+makeHostName(), notif.From)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"github.com/go-pkgz/repeater"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 
@@ -35,8 +36,8 @@ type Scheduler struct {
 	Notifier       Notifier
 	HostName       string
 	MaxLogLines    int
-
-	stdout io.Writer
+	Repeater       *repeater.Repeater
+	stdout         io.Writer
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -145,17 +146,20 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) // jitter up to 10s
 	}
 
-	cmd := exec.Command("sh", "-c", command) // nolint gosec
+	err := s.Repeater.Do(context.Background(), func() error {
+		cmd := exec.Command("sh", "-c", command) // nolint gosec
+		serr := NewErrorWriter(s.MaxLogLines)
+		logWithErr := io.MultiWriter(logWriter, serr)
+		cmd.Stdout = logWithErr
+		cmd.Stderr = logWithErr
+		if e := cmd.Run(); e != nil {
+			serr.SerError(errors.Wrapf(e, "failed to executeCommand %s", command))
+			return serr
+		}
+		return nil
+	})
 
-	serr := NewErrorWriter(s.MaxLogLines)
-	logWithErr := io.MultiWriter(logWriter, serr)
-	cmd.Stdout = logWithErr
-	cmd.Stderr = logWithErr
-	if err := cmd.Run(); err != nil {
-		serr.SerError(errors.Wrapf(err, "failed to executeCommand %s", command))
-		return serr
-	}
-	return nil
+	return err
 }
 
 func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {

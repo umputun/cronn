@@ -20,11 +20,14 @@ func TestParse(t *testing.T) {
 		{"* * 1 2 3 ls -la blah", JobSpec{Spec: "* * 1 2 3", Command: "ls -la blah"}, false},
 		{"*/5  * 1   2 3    ls -la  blah  ", JobSpec{Spec: "*/5 * 1 2 3", Command: "ls -la blah"}, false},
 		{"* * 1 2 ", JobSpec{}, true},
+		{"*", JobSpec{}, true},
+		{"@reboot echo", JobSpec{Spec: "@reboot", Command: "echo"}, false},
+		{"@midnight echo 123", JobSpec{Spec: "@midnight", Command: "echo 123"}, false},
+		{"@every 2h30m echo 123", JobSpec{Spec: "@every 2h30m", Command: "echo 123"}, false},
 	}
 
-	ctab := Parser{}
 	for _, tt := range tbl {
-		r, err := ctab.parse(tt.inp)
+		r, err := Parse(tt.inp)
 		if tt.wasError {
 			assert.NotNil(t, err, tt.inp)
 		} else {

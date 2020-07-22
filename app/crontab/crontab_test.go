@@ -52,8 +52,8 @@ func TestParser_Changes(t *testing.T) {
 	tmp, err := ioutil.TempFile("", "crontab")
 	require.NoError(t, err)
 	defer func() {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 	}()
 
 	_, err = tmp.WriteString("1 * * * * ls\n")

@@ -98,18 +98,6 @@ func MakeCompletionHTML(spec, command, errorLog string) (string, error) {
 				margin-top: -0.5em;
 				margin-left: -0.5em;
 			}
-			pre {
-				padding: 0.6em;
-				font-size: 0.7em;
-				background-color: #E8E2A0;
-				font-family: "Menlo";
-				overflow-x: auto;
-				white-space: pre-wrap;
-				white-space: -moz-pre-wrap;
-				white-space: -pre-wrap;
-				white-space: -o-pre-wrap;
-				word-wrap: break-word;
-			}
 			.bold {
 				color: #882828;
 				font-weight: 900;

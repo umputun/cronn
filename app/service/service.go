@@ -140,7 +140,6 @@ func (s *Scheduler) jobFunc(r cronReq, sched cron.Schedule) cron.FuncJob {
 			log.Printf("[CRON] completed %v", r.command)
 		}
 		log.Printf("[CRON] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.command)
-		return
 	}
 
 }

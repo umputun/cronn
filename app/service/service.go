@@ -79,7 +79,7 @@ func (s *Scheduler) Do(ctx context.Context) {
 	s.resumeInterrupted()
 
 	if s.UpdatesEnabled {
-		log.Printf("[CRON] updater activated for %s", s.CrontabParser.String())
+		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
 		go s.reload(ctx) // start background updater
 	}
 	if err := s.loadFromFileParser(); err != nil {
@@ -94,14 +94,14 @@ func (s *Scheduler) Do(ctx context.Context) {
 
 // schedule makes new cron job from crontab.JobSpec and adds to cron
 func (s *Scheduler) schedule(r crontab.JobSpec) error {
-	log.Printf("[CRON] new cron, command %q", r.Command)
+	log.Printf("[INFO] new cron, command %q", r.Command)
 	sched, e := cron.ParseStandard(r.Spec)
 	if e != nil {
 		return errors.Wrapf(e, "can't parse %s", r.Spec)
 	}
 
 	id := s.Schedule(sched, s.jobFunc(r, sched))
-	log.Printf("[CRON] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.Command, id)
+	log.Printf("[INFO] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.Command, id)
 	return nil
 }
 
@@ -131,13 +131,13 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 	}
 
 	return func() {
-		log.Printf("[CRON] executing: %q", r.Command)
+		log.Printf("[INFO] executing: %q", r.Command)
 		if err := runJob(r); err != nil {
-			log.Printf("[CRON] job failed: %s, %v", r.Command, err)
+			log.Printf("[WARN] job failed: %s, %v", r.Command, err)
 		} else {
-			log.Printf("[CRON] completed %v", r.Command)
+			log.Printf("[INFO] completed %v", r.Command)
 		}
-		log.Printf("[CRON] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.Command)
+		log.Printf("[INFO] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.Command)
 	}
 }
 
@@ -221,9 +221,9 @@ func (s *Scheduler) reload(ctx context.Context) {
 			if !ok {
 				return
 			}
-			log.Printf("[CRON] jobs update detected, total %d jobs scheduled", len(jobs))
+			log.Printf("[DEBUG] jobs update detected, total %d jobs scheduled", len(jobs))
 			if err = s.loadFromFileParser(); err != nil {
-				log.Printf("[CRON] failed to update jobs, %v", err)
+				log.Printf("[WARN] failed to update jobs, %v", err)
 			}
 		}
 	}
@@ -232,7 +232,7 @@ func (s *Scheduler) reload(ctx context.Context) {
 func (s *Scheduler) resumeInterrupted() {
 	cmds := s.Resumer.List()
 	if len(cmds) > 0 {
-		log.Printf("[CRON] interrupted commands detected - %+v", cmds)
+		log.Printf("[INFO] interrupted commands detected - %+v", cmds)
 	}
 
 	go func() {
@@ -240,7 +240,7 @@ func (s *Scheduler) resumeInterrupted() {
 			if err := s.executeCommand(cmd.Command, os.Stdout); err != nil {
 				r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 				if e := s.notify(r, err.Error()); e != nil {
-					log.Printf("[CRON] failed to notify, %v", e)
+					log.Printf("[WARN] failed to notify, %v", e)
 					continue
 				}
 			}

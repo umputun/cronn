@@ -15,8 +15,6 @@ services:
         max-file: "5"
 
     environment:
-      - MHOST
-      - DEBUG=false
       - CRONN_LOG=true
       - CRONN_RESUME=true
       - CRONN_UPDATE=true

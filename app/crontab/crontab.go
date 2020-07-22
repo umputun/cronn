@@ -28,7 +28,7 @@ type JobSpec struct {
 
 // New creates Parser for file, but not parsing yet
 func New(file string, updInterval time.Duration) *Parser {
-	log.Printf("[CRON] crontab file %s, update every %v", file, updInterval)
+	log.Printf("[INFO] crontab file %s, update every %v", file, updInterval)
 	return &Parser{file: file, updInterval: updInterval}
 }
 

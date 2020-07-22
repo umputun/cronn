@@ -102,34 +102,64 @@ func (s *Scheduler) schedule(r cronReq) error {
 		return errors.Wrapf(e, "can't parse %s", r.spec)
 	}
 
-	id := s.Schedule(sched, cron.FuncJob(func() {
+	id := s.Schedule(sched, s.jobFunc(r, sched))
+	log.Printf("[CRON] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.command, id)
+	return nil
+}
+
+func (s *Scheduler) jobFunc(r cronReq, sched cron.Schedule) cron.FuncJob {
+
+	runJob := func(r cronReq) error {
 		cmd, err := NewDayTemplate(time.Now()).Parse(r.command)
 		if err != nil {
-			log.Printf("[CRON] failed to schedule %s, %v", r.command, err)
-			return
+			return err
 		}
 
 		rfile, rerr := s.Resumer.OnStart(cmd)
 
-		if err = s.execute(cmd, s.stdout); err != nil {
-			log.Printf("[CRON] %s", err.Error())
+		if err = s.executeCommand(cmd, s.stdout); err != nil {
 			if e := s.notify(r, err.Error()); e != nil {
-				log.Printf("[CRON] failed to notify, %v", e)
-				return
+				return errors.Wrap(err, "failed to notify")
 			}
-		} else {
-			log.Printf("[CRON] completed %v", cmd)
+			return err
 		}
 
 		if rerr == nil {
-			if e := s.Resumer.OnFinish(rfile); e != nil {
-				log.Printf("[CRON] failed to finish resumer for %s, %s", rfile, e)
+			if err = s.Resumer.OnFinish(rfile); err != nil {
+				return errors.Wrapf(err, "failed to finish resumer for %s", rfile)
 			}
 		}
-		log.Printf("[CRON] next: %s, %q", s.Entries()[0].Schedule.Next(time.Now()).Format(time.RFC3339), r.command)
-	}))
+		return errors.Wrapf(rerr, "failed to initiate resumer for %+v", cmd)
+	}
 
-	log.Printf("[CRON] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.command, id)
+	return func() {
+		log.Printf("[CRON] executing: %q", r.command)
+		if err := runJob(r); err != nil {
+			log.Printf("[CRON] job failed: %s, %v", r.command, err)
+		} else {
+			log.Printf("[CRON] completed %v", r.command)
+		}
+		log.Printf("[CRON] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.command)
+		return
+	}
+
+}
+
+func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
+	if s.JitterEnabled {
+		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) // jitter up to 10s
+	}
+
+	cmd := exec.Command("sh", "-c", command) // nolint gosec
+
+	serr := NewErrorWriter(s.MaxLogLines)
+	logWithErr := io.MultiWriter(logWriter, serr)
+	cmd.Stdout = logWithErr
+	cmd.Stderr = logWithErr
+	if err := cmd.Run(); err != nil {
+		serr.SerError(errors.Wrapf(err, "failed to executeCommand %s", command))
+		return serr
+	}
 	return nil
 }
 
@@ -176,25 +206,6 @@ func (s *Scheduler) loadFromFileParser() error {
 	return nil
 }
 
-func (s *Scheduler) execute(command string, logWriter io.Writer) error {
-	log.Printf("[CRON] executing: %q", command)
-	if s.JitterEnabled {
-		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) // jitter up to 10s
-	}
-
-	cmd := exec.Command("sh", "-c", command) // nolint gosec
-
-	serr := NewErrorWriter(s.MaxLogLines)
-	logWithErr := io.MultiWriter(logWriter, serr)
-	cmd.Stdout = logWithErr
-	cmd.Stderr = logWithErr
-	if err := cmd.Run(); err != nil {
-		serr.SerError(errors.Wrapf(err, "failed to execute %s", command))
-		return serr
-	}
-	return nil
-}
-
 // reload runs blocking loop reacting on updates in crontab file and reloading jobs
 func (s *Scheduler) reload(ctx context.Context) {
 	ch, err := s.CrontabParser.Changes(ctx)
@@ -226,7 +237,7 @@ func (s *Scheduler) resumeInterrupted() {
 
 	go func() {
 		for _, cmd := range cmds {
-			if err := s.execute(cmd.Command, os.Stdout); err != nil {
+			if err := s.executeCommand(cmd.Command, os.Stdout); err != nil {
 				r := cronReq{spec: "auto-resume", command: cmd.Command}
 				if e := s.notify(r, err.Error()); e != nil {
 					log.Printf("[CRON] failed to notify, %v", e)

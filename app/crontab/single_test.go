@@ -1,13 +1,14 @@
 package crontab
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSingle_List(t *testing.T) {
+func TestSingle(t *testing.T) {
 	s := Single{Line: "*/2 10 * * 1-5 blah foo"}
 	res, err := s.List()
 	require.NoError(t, err)
@@ -16,5 +17,11 @@ func TestSingle_List(t *testing.T) {
 
 	s = Single{Line: "bad"}
 	_, err = s.List()
+	assert.Error(t, err)
+
+	assert.Equal(t, "bad", s.String())
+
+	ch, err := s.Changes(context.TODO())
+	assert.Nil(t, ch)
 	assert.Error(t, err)
 }

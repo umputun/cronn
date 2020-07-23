@@ -147,7 +147,7 @@ func (s *scheduleMock) Next(time.Time) time.Time {
 	return s.next
 }
 
-func TestScheduler_notify(t *testing.T) {
+func TestScheduler_notifyOnError(t *testing.T) {
 	notif := &mocks.Notifier{}
 	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
 	notif.On("IsOnError").Return(true)
@@ -156,4 +156,94 @@ func TestScheduler_notify(t *testing.T) {
 	require.NoError(t, err)
 	notif.AssertExpectations(t)
 
+}
+
+func TestScheduler_notifyOnCompletion(t *testing.T) {
+	notif := &mocks.Notifier{}
+	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
+	notif.On("IsOnCompletion").Return(true)
+	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
+	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "")
+	require.NoError(t, err)
+	notif.AssertExpectations(t)
+}
+
+func TestScheduler_DoWithReload(t *testing.T) {
+
+	cr := &mocks.Cron{}
+	resmr := &mocks.Resumer{}
+	parser := &mocks.CrontabParser{}
+	svc := Scheduler{
+		Cron:           cr,
+		Resumer:        resmr,
+		CrontabParser:  parser,
+		UpdatesEnabled: true,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	resmr.On("List").Return(nil).Once()
+	cr.On("Entries").Return([]cron.Entry{{}, {}, {}}).Times(2)
+	cr.On("Remove", mock.Anything).Times(6)
+	cr.On("Start").Once()
+	cr.On("Stop").Return(ctx).Once()
+
+	parser.On("String").Return("parser")
+	parser.On("List").Return([]crontab.JobSpec{
+		{Spec: "1 * * * *", Command: "test1"},
+		{Spec: "2 * * * *", Command: "test2"},
+	}, nil).Once()
+
+	parser.On("List").Return([]crontab.JobSpec{
+		{Spec: "11 * * * *", Command: "test1"},
+	}, nil).Once()
+
+	upCh := func() <-chan []crontab.JobSpec {
+		ch := make(chan []crontab.JobSpec, 1)
+		ch <- []crontab.JobSpec{{Command: "cmd", Spec: "@reboot"}}
+		close(ch)
+		return ch
+	}()
+
+	parser.On("Changes", mock.Anything).Return(upCh, nil).Once()
+
+	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(1)).Times(2)
+	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(2)).Once()
+
+	svc.Do(ctx)
+
+	cr.AssertExpectations(t)
+	resmr.AssertExpectations(t)
+	parser.AssertExpectations(t)
+}
+
+func TestScheduler_DoWithResume(t *testing.T) {
+	cr := &mocks.Cron{}
+	resmr := &mocks.Resumer{}
+	parser := &mocks.CrontabParser{}
+	svc := Scheduler{
+		Cron:           cr,
+		Resumer:        resmr,
+		CrontabParser:  parser,
+		UpdatesEnabled: false,
+		Repeater:       repeater.New(&strategy.Once{}),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	resmr.On("List").Return([]resumer.Cmd{{Command: "cmd1", Fname: "f1"}, {Command: "cmd2", Fname: "f2"}}).Once()
+	cr.On("Entries").Return([]cron.Entry{}).Times(1)
+	parser.On("List").Return([]crontab.JobSpec{}, nil).Once()
+
+	cr.On("Start").Once()
+	cr.On("Stop").Return(ctx).Once()
+
+	resmr.On("OnFinish", "f1").Return(nil).Once()
+	resmr.On("OnFinish", "f2").Return(nil).Once()
+
+	svc.Do(ctx)
+
+	cr.AssertExpectations(t)
+	resmr.AssertExpectations(t)
+	parser.AssertExpectations(t)
 }

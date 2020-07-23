@@ -1,0 +1,14 @@
+[Unit]
+Description=Cronn service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=<set your user here>
+ExecStart=/opt/cronn/cronn -f /opt/cronn/crontab -u
+
+[Install]
+WantedBy=multi-user.target

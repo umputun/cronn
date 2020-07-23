@@ -83,7 +83,7 @@ func MakeErrorHTML(spec, command, errorLog string) (string, error) {
 }
 
 // MakeCompletionHTML creates html completion string to be send
-func MakeCompletionHTML(spec, command, errorLog string) (string, error) {
+func MakeCompletionHTML(spec, command string) (string, error) {
 	tmpl := `<!DOCTYPE html>
 <html>
 	<head>
@@ -125,7 +125,6 @@ func MakeCompletionHTML(spec, command, errorLog string) (string, error) {
 		Spec:    spec,
 		Command: command,
 		TS:      time.Now(),
-		Error:   errorLog,
 		Host:    os.Getenv("MHOST"),
 	}
 

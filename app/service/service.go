@@ -177,7 +177,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 	}
 
 	if errMsg == "" && s.Notifier.IsOnCompletion() {
-		msg, err := notify.MakeCompletionHTML(r.Spec, r.Command, errMsg)
+		msg, err := notify.MakeCompletionHTML(r.Spec, r.Command)
 		if err != nil {
 			return errors.Wrap(err, "can't make html email")
 		}

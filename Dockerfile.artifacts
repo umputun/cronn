@@ -1,31 +1,17 @@
-FROM umputun/baseimage:buildgo-latest as build
+FROM goreleaser/goreleaser as build
 
 WORKDIR /build
 ADD . /build
 
-RUN \
-    version=$(/script/git-rev.sh); \
-    echo "version=$version" && \
-    export GOFLAGS="-mod=vendor" && \
-    echo "linux-amd64" && GOOS=linux GOARCH=amd64 go build -o cronn.linux-amd64 -ldflags "-X main.revision=${version} -s -w" ./app && \
-    echo "linux-386" && GOOS=linux GOARCH=386 go build -o cronn.linux-386 -ldflags "-X main.revision=${version} -s -w" ./app && \
-    echo "linux-arm" && GOOS=linux GOARCH=arm go build -o cronn.linux-arm -ldflags "-X main.revision=${version} -s -w" ./app && \
-    echo "linux-arm64" && GOOS=linux GOARCH=arm64 go build -o cronn.linux-arm64 -ldflags "-X main.revision=${version} -s -w" ./app && \
-    echo "windows-amd64" && GOOS=windows GOARCH=amd64 go build -o cronn.windows-amd64.exe -ldflags "-X main.revision=${version} -s -w" ./app && \
-    echo "darwin-amd64" && GOOS=darwin GOARCH=amd64 go build -o cronn.darwin-amd64 -ldflags "-X main.revision=${version} -s -w" ./app && \
-    echo "freebsd-amd64" && GOOS=freebsd GOARCH=amd64 go build -o cronn.freebsd-amd64 -ldflags "-X main.revision=${version} -s -w" ./app
-
-RUN \
-    apk add --no-cache --update zip && \
-    tar cvzf cronn.linux-amd64.tar.gz cronn.linux-amd64 LICENSE README.md && \
-    tar cvzf cronn.linux-386.tar.gz cronn.linux-386 LICENSE README.md && \
-    tar cvzf cronn.linux-arm.tar.gz cronn.linux-arm LICENSE README.md && \
-    tar cvzf cronn.linux-arm64.tar.gz cronn.linux-arm64 LICENSE README.md && \
-    tar cvzf cronn.darwin-amd64.tar.gz cronn.darwin-amd64 LICENSE README.md && \
-    tar cvzf cronn.freebsd-amd64.tar.gz cronn.freebsd-amd64 LICENSE README.md && \
-    zip cronn.windows-amd64.zip cronn.windows-amd64.exe LICENSE README.md
+RUN goreleaser --snapshot --skip-publish --rm-dist
 
 FROM alpine
-COPY --from=build /build/cronn.* /artifacts/
-RUN ls -la /artifacts/*
+COPY --from=build /build/dist/ /dist/
+RUN \
+    mkdir -p /artifacts && \
+    cp /dist/*.gz /artifacts/ && \
+    cp /dist/*.zip /artifacts/ && \
+    cp /dist/*.txt /artifacts/ && \
+    ls -la /artifacts/*
+
 CMD ["sleep", "100"]

@@ -70,8 +70,8 @@ func TestParser_Changes(t *testing.T) {
 	assert.Len(t, jobs, 2)
 
 	time.AfterFunc(time.Millisecond*500, func() {
-		_, err = tmp.WriteString("3 * * * * ls\n")
-		require.NoError(t, err)
+		_, e := tmp.WriteString("3 * * * * ls\n")
+		require.NoError(t, e)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
@@ -84,5 +84,4 @@ func TestParser_Changes(t *testing.T) {
 	jobs, err = ctab.List()
 	require.NoError(t, err)
 	assert.Len(t, jobs, 3)
-
 }

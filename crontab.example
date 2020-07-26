@@ -1,4 +1,4 @@
-*/5 * * * * ls -la .
-*/2 1-18 * * * export
-*/1 * * * * echo {{.YYYYMMDD}}
-*/1 * * * * something blah bad
+# */5 * * * * ls -la .
+# */2 1-18 * * * export
+# */1 * * * * echo {{.YYYYMMDD}}
+# @every 1h15m something blah bad

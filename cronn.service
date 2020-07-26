@@ -7,8 +7,8 @@ StartLimitIntervalSec=0
 Type=simple
 Restart=always
 RestartSec=1
-User=<set your user here>
-ExecStart=/opt/cronn/cronn -f /opt/cronn/crontab -u
+User=root
+ExecStart=/usr/bin/cronn -f /etc/cronntab -u
 
 [Install]
 WantedBy=multi-user.target

@@ -37,7 +37,7 @@ type Scheduler struct {
 	HostName       string
 	MaxLogLines    int
 	Repeater       *repeater.Repeater
-	stdout         io.Writer
+	Stdout         io.Writer
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -73,8 +73,8 @@ type Notifier interface {
 
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
-	if s.stdout == nil {
-		s.stdout = os.Stdout
+	if s.Stdout == nil {
+		s.Stdout = os.Stdout
 	}
 	s.resumeInterrupted()
 
@@ -115,7 +115,7 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 
 		rfile, rerr := s.Resumer.OnStart(cmd)
 
-		if err = s.executeCommand(cmd, s.stdout); err != nil {
+		if err = s.executeCommand(cmd, s.Stdout); err != nil {
 			if e := s.notify(r, err.Error()); e != nil {
 				return errors.Wrap(err, "failed to notify")
 			}
@@ -149,6 +149,7 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 	err := s.Repeater.Do(context.Background(), func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		serr := NewErrorWriter(s.MaxLogLines)
+
 		logWithErr := io.MultiWriter(logWriter, serr)
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
@@ -237,7 +238,7 @@ func (s *Scheduler) resumeInterrupted() {
 
 	go func() {
 		for _, cmd := range cmds {
-			if err := s.executeCommand(cmd.Command, os.Stdout); err != nil {
+			if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
 				r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 				if e := s.notify(r, err.Error()); e != nil {
 					log.Printf("[WARN] failed to notify, %v", e)

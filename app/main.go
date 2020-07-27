@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-pkgz/repeater/strategy"
 	"github.com/robfig/cron/v3"
 	"github.com/umputun/go-flags"
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/notify"
@@ -28,8 +30,6 @@ var opts struct {
 	Resume       string `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
 	UpdateEnable bool   `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
 	JitterEnable bool   `short:"j" long:"jitter" env:"CRONN_JITTER" description:"up to 10s jitter"`
-	LogEnabled   bool   `long:"log" env:"CRONN_LOG" description:"enable logging"`
-	Dbg          bool   `long:"dbg" env:"CRONN_DEBUG" description:"debug mode"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -52,6 +52,16 @@ var opts struct {
 		MaxLogLines       int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
 		HostName          string        `long:"host" env:"HOSTNAME" description:"host name running cronn"`
 	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
+
+	Log struct {
+		Enabled         bool   `long:"enabled" env:"ENABLED" description:"enable logging"`
+		Debug           bool   `long:"debug" env:"DEBUG" description:"debug mode"`
+		Filename        string `long:"filename" env:"FILENAME" description:"file to write logs to. Log to stdout if not specified"`
+		MaxSize         int    `long:"max-size" env:"MAX_SIZE" default:"100" description:"maximum size in megabytes of the log file before it gets rotated"`
+		MaxAge          int    `long:"max-age" env:"MAX_AGE" default:"0" description:"maximum number of days to retain old log files"`
+		MaxBackups      int    `long:"max-backups" env:"MAX_BACKUPS" default:"7" description:"maximum number of old log files to retain"`
+		EnabledCompress bool   `long:"enabled-compress" env:"ENABLED_COMPRESS" description:"determines if the rotated log files should be compressed using gzip"`
+	} `group:"log" namespace:"log" env-namespace:"CRONN_LOG"`
 }
 
 var revision = "unknown"
@@ -62,7 +72,7 @@ func main() {
 	if _, err := flags.Parse(&opts); err != nil {
 		os.Exit(2)
 	}
-	setupLogs(opts.LogEnabled, opts.Dbg)
+	stdout := setupLogs()
 
 	defer func() {
 		if x := recover(); x != nil {
@@ -93,6 +103,7 @@ func main() {
 		Notifier:       makeNotifier(),
 		HostName:       makeHostName(),
 		MaxLogLines:    opts.Notify.MaxLogLines,
+		Stdout:         stdout,
 	}
 	signals(cancel) // handle SIGQUIT and SIGTERM
 	cronService.Do(ctx)
@@ -135,17 +146,37 @@ func makeHostName() string {
 	return host
 }
 
-func setupLogs(enabled, dbg bool) {
-	if !enabled {
+func setupLogs() io.Writer {
+	if !opts.Log.Enabled {
 		log.Setup(log.Out(ioutil.Discard), log.Err(ioutil.Discard))
-		return
+		return os.Stdout
 	}
 
-	if dbg {
-		log.Setup(log.Debug, log.Msec, log.CallerFunc, log.CallerPkg, log.CallerFile)
-		return
-	}
 	log.Setup(log.Msec)
+
+	if opts.Log.Debug {
+		log.Setup(log.Debug, log.CallerFunc, log.CallerPkg, log.CallerFile)
+	}
+
+	if opts.Log.Filename != "" {
+		fileLogger := &lumberjack.Logger{
+			Filename:   opts.Log.Filename,
+			MaxSize:    opts.Log.MaxSize,
+			MaxBackups: opts.Log.MaxBackups,
+			MaxAge:     opts.Log.MaxAge,
+			Compress:   opts.Log.EnabledCompress,
+			LocalTime:  true, // as log files have content in local time format
+		}
+
+		log.Setup(
+			log.Out(fileLogger),
+			log.Err(fileLogger),
+		)
+
+		return fileLogger
+	}
+
+	return os.Stdout
 }
 
 func signals(cancel context.CancelFunc) {

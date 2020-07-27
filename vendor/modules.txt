@@ -25,5 +25,8 @@ github.com/stretchr/testify/require
 # github.com/umputun/go-flags v1.5.1
 ## explicit
 github.com/umputun/go-flags
+# gopkg.in/natefinch/lumberjack.v2 v2.0.0
+## explicit
+gopkg.in/natefinch/lumberjack.v2
 # gopkg.in/yaml.v2 v2.2.2
 gopkg.in/yaml.v2

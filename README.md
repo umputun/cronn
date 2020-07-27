@@ -53,8 +53,6 @@ weekday on midnight.
   -r, --resume=                  auto-resume location [$CRONN_RESUME]
   -u, --update                   auto-update mode [$CRONN_UPDATE]
   -j, --jitter                   up to 10s jitter [$CRONN_JITTER]
-      --log                      enable logging [$CRONN_LOG]
-      --dbg                      debug mode [$CRONN_DEBUG]
 
 repeater:
       --repeater.attempts=       how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]
@@ -75,6 +73,15 @@ notify:
       --notify.to=               SMTP to email(s) [$CRONN_NOTIFY_TO]
       --notify.max-log=          max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
       --notify.host=             host name running cronn [$CRONN_NOTIFY_HOSTNAME]
+
+log:
+      --log.enabled              enable logging [$CRONN_LOG_ENABLED]
+      --log.debug                debug mode [$CRONN_LOG_DEBUG]
+      --log.filename=            file to write logs to. Log to stdout if not specified [$CRONN_LOG_FILENAME]
+      --log.max-size=            maximum size in megabytes of the log file before it gets rotated (default: 100) [$CRONN_LOG_MAX_SIZE]
+      --log.max-age=             maximum number of days to retain old log files (default: 0) [$CRONN_LOG_MAX_AGE]
+      --log.max-backups=         maximum number of old log files to retain (default: 7) [$CRONN_LOG_MAX_BACKUPS]
+      --log.enabled-compress     determines if the rotated log files should be compressed using gzip [$CRONN_LOG_ENABLED_COMPRESS]
 
 Help Options:
   -h, --help                     Show this help message

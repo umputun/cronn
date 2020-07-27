@@ -150,7 +150,9 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		serr := NewErrorWriter(s.MaxLogLines)
 
-		logWithErr := io.MultiWriter(logWriter, serr)
+		prefixer := NewLogPrefixer(logWriter, command)
+
+		logWithErr := io.MultiWriter(prefixer, serr)
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
 		if e := cmd.Run(); e != nil {

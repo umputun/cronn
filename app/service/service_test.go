@@ -76,7 +76,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 
 	svc.Do(ctx)
 	t.Log(out.String())
-	assert.Contains(t, out.String(), "123\n")
+	assert.Contains(t, out.String(), "{echo 123} 123\n")
 	notif.AssertExpectations(t)
 }
 
@@ -85,7 +85,7 @@ func TestScheduler_execute(t *testing.T) {
 	wr := bytes.NewBuffer(nil)
 	err := svc.executeCommand("echo 123", wr)
 	require.NoError(t, err)
-	assert.Equal(t, "123\n", wr.String())
+	assert.Equal(t, "{echo 123} 123\n", wr.String())
 }
 
 func TestScheduler_executeFailedNotFound(t *testing.T) {
@@ -118,7 +118,7 @@ func TestScheduler_jobFunc(t *testing.T) {
 	resmr.On("OnFinish", "resume.file").Return(nil).Once()
 
 	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "echo 123"}, scheduleMock).Run()
-	assert.Equal(t, "123\n", wr.String())
+	assert.Equal(t, "{echo 123} 123\n", wr.String())
 }
 
 func TestScheduler_jobFuncFailed(t *testing.T) {

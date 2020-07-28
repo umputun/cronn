@@ -115,10 +115,11 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 			return err
 		}
 
-		if !s.DeDup.Add(cmd) {
-			return errors.Errorf("duplicated job %q ignored", cmd)
+		dedupKey := cmd + "#" + r.Spec
+		if !s.DeDup.Add(dedupKey) {
+			return errors.Errorf("duplicated job %q ignored", dedupKey)
 		}
-		defer s.DeDup.Remove(cmd)
+		defer s.DeDup.Remove(dedupKey)
 
 		rfile, rerr := s.Resumer.OnStart(cmd)
 

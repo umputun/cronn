@@ -17,26 +17,26 @@ func NewDeDup(enabled bool) *DeDup {
 	return &DeDup{active: make(map[string]time.Time), enabled: enabled}
 }
 
-// Add command to the map, fail if already in
-func (d *DeDup) Add(cmd string) bool {
+// Add key to the map, fail if already in
+func (d *DeDup) Add(key string) bool {
 	if !d.enabled {
 		return true
 	}
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	if _, found := d.active[cmd]; found {
+	if _, found := d.active[key]; found {
 		return false
 	}
-	d.active[cmd] = time.Now()
+	d.active[key] = time.Now()
 	return true
 }
 
-// Remove command from the map. Safe to call multiple times
-func (d *DeDup) Remove(cmd string) {
+// Remove key from the map. Safe to call multiple times
+func (d *DeDup) Remove(key string) {
 	if !d.enabled {
 		return
 	}
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	delete(d.active, cmd)
+	delete(d.active, key)
 }

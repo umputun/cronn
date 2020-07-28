@@ -39,18 +39,20 @@ var opts struct {
 	} `group:"repeater" namespace:"repeater" env-namespace:"CRONN_REPEATER"`
 
 	Notify struct {
-		EnabledError      bool          `long:"enabled-error" env:"ENABLED_ERROR" description:"enable email notifications on errors"`
-		EnabledCompletion bool          `long:"enabled-complete" env:"ENABLED_COMPLETE" description:"enable completion notifications"`
-		SMTPHost          string        `long:"smtp-host" env:"SMTP_HOST" description:"SMTP host"`
-		SMTPPort          int           `long:"smtp-port" env:"SMTP_PORT" description:"SMTP port"`
-		SMTPUsername      string        `long:"smtp-username" env:"SMTP_USERNAME" description:"SMTP user name"`
-		SMTPPassword      string        `long:"smtp-password" env:"SMTP_PASSWORD" description:"SMTP password"`
-		SMTPTLS           bool          `long:"smtp-tls" env:"SMTP_TLS" description:"enable SMTP TLS"`
-		SMTPTimeOut       time.Duration `long:"smtp-timeout" env:"SMTP_TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
-		From              string        `long:"from" env:"FROM" description:"SMTP from email"`
-		To                []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
-		MaxLogLines       int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
-		HostName          string        `long:"host" env:"HOSTNAME" description:"host name running cronn"`
+		EnabledError       bool          `long:"enabled-error" env:"ENABLED_ERROR" description:"enable email notifications on errors"`
+		EnabledCompletion  bool          `long:"enabled-complete" env:"ENABLED_COMPLETE" description:"enable completion notifications"`
+		ErrorTemplate      string        `long:"err-template" env:"ERR_TEMPLATE" description:"error template file"`
+		CompletionTemplate string        `long:"complete-template" env:"COMPLET_TEMPLATE" description:"completion template file"`
+		SMTPHost           string        `long:"smtp-host" env:"SMTP_HOST" description:"SMTP host"`
+		SMTPPort           int           `long:"smtp-port" env:"SMTP_PORT" description:"SMTP port"`
+		SMTPUsername       string        `long:"smtp-username" env:"SMTP_USERNAME" description:"SMTP user name"`
+		SMTPPassword       string        `long:"smtp-password" env:"SMTP_PASSWORD" description:"SMTP password"`
+		SMTPTLS            bool          `long:"smtp-tls" env:"SMTP_TLS" description:"enable SMTP TLS"`
+		SMTPTimeOut        time.Duration `long:"smtp-timeout" env:"SMTP_TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
+		From               string        `long:"from" env:"FROM" description:"SMTP from email"`
+		To                 []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
+		MaxLogLines        int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
+		HostName           string        `long:"host" env:"HOSTNAME" description:"host name running cronn"`
 	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
 
 	Log struct {
@@ -109,7 +111,7 @@ func main() {
 	cronService.Do(ctx)
 }
 
-func makeNotifier() *notify.Email {
+func makeNotifier() *notify.Service {
 
 	if !opts.Notify.EnabledError && !opts.Notify.EnabledCompletion {
 		return nil
@@ -120,7 +122,7 @@ func makeNotifier() *notify.Email {
 		from = "cronn@" + makeHostName()
 	}
 
-	return notify.NewEmailClient(notify.EmailParams{
+	email := notify.NewEmailClient(notify.EmailParams{
 		Host:         opts.Notify.SMTPHost,
 		Port:         opts.Notify.SMTPPort,
 		From:         from,
@@ -133,6 +135,7 @@ func makeNotifier() *notify.Email {
 		OnError:      opts.Notify.EnabledError,
 		OnCompletion: opts.Notify.EnabledCompletion,
 	})
+	return notify.NewService(email, opts.Notify.ErrorTemplate, opts.Notify.CompletionTemplate)
 }
 
 func makeHostName() string {

@@ -126,6 +126,8 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	notif := &mocks.Notifier{}
 	notif.On("Send", mock.Anything, mock.Anything).Return(nil)
 	notif.On("IsOnError").Return(true)
+	notif.On("MakeErrorHTML", "@startup", "no-such-thing", "failed to executeCommand no-such-thing: exit status 127\n\nsh: no-such-thing: command not found").Return("email msg", nil)
+
 	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
 	wr := bytes.NewBuffer(nil)
 	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
@@ -151,6 +153,8 @@ func TestScheduler_notifyOnError(t *testing.T) {
 	notif := &mocks.Notifier{}
 	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
 	notif.On("IsOnError").Return(true)
+	notif.On("MakeErrorHTML", "@startup", "no-such-thing", "message").Return("email msg", nil)
+
 	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
 	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "message")
 	require.NoError(t, err)
@@ -162,8 +166,10 @@ func TestScheduler_notifyOnCompletion(t *testing.T) {
 	notif := &mocks.Notifier{}
 	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
 	notif.On("IsOnCompletion").Return(true)
+	notif.On("MakeCompletionHTML", "@startup", "ls -la").Return("email msg", nil)
+
 	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
-	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "")
+	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "ls -la"}, "")
 	require.NoError(t, err)
 	notif.AssertExpectations(t)
 }

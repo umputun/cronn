@@ -17,7 +17,6 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/umputun/cronn/app/crontab"
-	"github.com/umputun/cronn/app/notify"
 	"github.com/umputun/cronn/app/resumer"
 )
 
@@ -69,6 +68,8 @@ type Notifier interface {
 	Send(subj, text string) error
 	IsOnError() bool
 	IsOnCompletion() bool
+	MakeErrorHTML(spec, command, errorLog string) (string, error)
+	MakeCompletionHTML(spec, command string) (string, error)
 }
 
 // Do runs blocking scheduler
@@ -172,7 +173,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 	}
 
 	if errMsg != "" && s.Notifier.IsOnError() {
-		msg, err := notify.MakeErrorHTML(r.Spec, r.Command, errMsg)
+		msg, err := s.Notifier.MakeErrorHTML(r.Spec, r.Command, errMsg)
 		if err != nil {
 			return errors.Wrap(err, "can't make html email")
 		}
@@ -180,7 +181,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 	}
 
 	if errMsg == "" && s.Notifier.IsOnCompletion() {
-		msg, err := notify.MakeCompletionHTML(r.Spec, r.Command)
+		msg, err := s.Notifier.MakeCompletionHTML(r.Spec, r.Command)
 		if err != nil {
 			return errors.Wrap(err, "can't make html email")
 		}

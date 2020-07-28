@@ -37,6 +37,48 @@ func (_m *Notifier) IsOnError() bool {
 	return r0
 }
 
+// MakeCompletionHTML provides a mock function with given fields: spec, command
+func (_m *Notifier) MakeCompletionHTML(spec string, command string) (string, error) {
+	ret := _m.Called(spec, command)
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func(string, string) string); ok {
+		r0 = rf(spec, command)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(string, string) error); ok {
+		r1 = rf(spec, command)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MakeErrorHTML provides a mock function with given fields: spec, command, errorLog
+func (_m *Notifier) MakeErrorHTML(spec string, command string, errorLog string) (string, error) {
+	ret := _m.Called(spec, command, errorLog)
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func(string, string, string) string); ok {
+		r0 = rf(spec, command, errorLog)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(string, string, string) error); ok {
+		r1 = rf(spec, command, errorLog)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Send provides a mock function with given fields: subj, text
 func (_m *Notifier) Send(subj string, text string) error {
 	ret := _m.Called(subj, text)

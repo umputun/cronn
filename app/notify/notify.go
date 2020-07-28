@@ -4,15 +4,95 @@ package notify
 import (
 	"bytes"
 	"html/template"
+	"io/ioutil"
 	"os"
 	"time"
 
+	log "github.com/go-pkgz/lgr"
 	"github.com/pkg/errors"
 )
 
-// MakeErrorHTML creates html error string to be send
-func MakeErrorHTML(spec, command, errorLog string) (string, error) {
-	tmpl := `<!DOCTYPE html>
+type Service struct {
+	*Email
+	errorTemplate      string
+	completionTemplate string
+}
+
+// NewService makes notification service with optional template files
+func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
+	res := Service{Email: email}
+
+	res.errorTemplate = defaultErrorTemplate
+	res.completionTemplate = defaultCompletionTemplate
+	if errTmplFile != "" {
+		data, err := ioutil.ReadFile(errTmplFile)
+		if err == nil {
+			res.errorTemplate = string(data)
+		} else {
+			log.Printf("[WARN] can't open email template file %s, %v", errTmplFile, err)
+		}
+	}
+	if complTmplFile != "" {
+		data, err := ioutil.ReadFile(complTmplFile)
+		if err == nil {
+			res.completionTemplate = string(data)
+		} else {
+			log.Printf("[WARN] can't open email template file %s, %v", complTmplFile, err)
+		}
+	}
+
+	return &res
+}
+
+func (s Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
+	data := struct {
+		Spec    string
+		Command string
+		TS      time.Time
+		Error   string
+		Host    string
+	}{
+		Spec:    spec,
+		Command: command,
+		TS:      time.Now(),
+		Error:   errorLog,
+		Host:    os.Getenv("MHOST"),
+	}
+
+	t, err := template.New("msg").Parse(s.errorTemplate)
+	if err != nil {
+		return "", errors.Wrap(err, "can't parse message template")
+	}
+	buf := bytes.Buffer{}
+	err = t.Execute(&buf, data)
+	return buf.String(), errors.Wrap(err, "failed to apply template")
+}
+
+func (s Service) MakeCompletionHTML(spec, command string) (string, error) {
+	data := struct {
+		Spec    string
+		Command string
+		TS      time.Time
+		Error   string
+		Host    string
+	}{
+		Spec:    spec,
+		Command: command,
+		TS:      time.Now(),
+		Host:    os.Getenv("MHOST"),
+	}
+
+	t, err := template.New("msg").Parse(s.completionTemplate)
+	if err != nil {
+		return "", errors.Wrap(err, "can't parse message template")
+	}
+	buf := bytes.Buffer{}
+	err = t.Execute(&buf, data)
+	return buf.String(), errors.Wrap(err, "failed to apply template")
+}
+
+var (
+	defaultErrorTemplate = `<!DOCTYPE html>
 <html>
 	<head>
 		<meta name="viewport" content="width=device-width" />
@@ -59,32 +139,7 @@ func MakeErrorHTML(spec, command, errorLog string) (string, error) {
 </html>
 `
 
-	data := struct {
-		Spec    string
-		Command string
-		TS      time.Time
-		Error   string
-		Host    string
-	}{
-		Spec:    spec,
-		Command: command,
-		TS:      time.Now(),
-		Error:   errorLog,
-		Host:    os.Getenv("MHOST"),
-	}
-
-	t, err := template.New("msg").Parse(tmpl)
-	if err != nil {
-		return "", errors.Wrap(err, "can't parse message template")
-	}
-	buf := bytes.Buffer{}
-	err = t.Execute(&buf, data)
-	return buf.String(), errors.Wrap(err, "failed to apply template")
-}
-
-// MakeCompletionHTML creates html completion string to be send
-func MakeCompletionHTML(spec, command string) (string, error) {
-	tmpl := `<!DOCTYPE html>
+	defaultCompletionTemplate = `<!DOCTYPE html>
 <html>
 	<head>
 		<meta name="viewport" content="width=device-width" />
@@ -114,25 +169,4 @@ func MakeCompletionHTML(spec, command string) (string, error) {
 	</body>
 </html>
 `
-
-	data := struct {
-		Spec    string
-		Command string
-		TS      time.Time
-		Error   string
-		Host    string
-	}{
-		Spec:    spec,
-		Command: command,
-		TS:      time.Now(),
-		Host:    os.Getenv("MHOST"),
-	}
-
-	t, err := template.New("msg").Parse(tmpl)
-	if err != nil {
-		return "", errors.Wrap(err, "can't parse message template")
-	}
-	buf := bytes.Buffer{}
-	err = t.Execute(&buf, data)
-	return buf.String(), errors.Wrap(err, "failed to apply template")
-}
+)

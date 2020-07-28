@@ -7,7 +7,7 @@ import (
 	"io"
 )
 
-const prefixCommandMaxlen = 16
+const prefixCommandMaxLen = 16
 const prefixCutCommandSuffix = "..."
 
 // LogPrefixer implements `io.writer` interface and adds prefix to each output line.
@@ -61,8 +61,8 @@ func (p *LogPrefixer) Write(data []byte) (int, error) {
 }
 
 func (p *LogPrefixer) prefixForCommand(command string) []byte {
-	if len(command) > prefixCommandMaxlen {
-		command = command[:prefixCommandMaxlen]
+	if len(command) > prefixCommandMaxLen {
+		command = command[:prefixCommandMaxLen]
 		command += prefixCutCommandSuffix
 	}
 

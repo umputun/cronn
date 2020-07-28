@@ -30,6 +30,7 @@ var opts struct {
 	Resume       string `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
 	UpdateEnable bool   `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
 	JitterEnable bool   `short:"j" long:"jitter" env:"CRONN_JITTER" description:"up to 10s jitter"`
+	DeDup        bool   `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -106,6 +107,7 @@ func main() {
 		HostName:       makeHostName(),
 		MaxLogLines:    opts.Notify.MaxLogLines,
 		Stdout:         stdout,
+		DeDup:          service.NewDeDup(opts.DeDup),
 	}
 	signals(cancel) // handle SIGQUIT and SIGTERM
 	cronService.Do(ctx)

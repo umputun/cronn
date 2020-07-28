@@ -19,6 +19,8 @@ In addition `cronn` provides:
 - Automatic restart of jobs in cronn (or container) failed unexpectedly
 - Reload crontab file on changes
 - Optional repeater for failed jobs
+- Optional de-duplication preventing the same jobs to run in parallel
+- Rotated logs
 
 ## Basic usage
  
@@ -36,12 +38,15 @@ Cronn also understands various day templates evaluated at the time of job's exec
 - `{{.YYYYMMDD}}` - current day in local TZ
 - `{{.YYYY}}` - current year
 - `{{.YYYYMM}}` - year and month
+- `{{.YY}}` - current year (short form)
+- `{{.MM}}` - current month
+- `{{.DD}}` - current day
 - `{{.ISODATE}` - day-time (local TZ) formatted as `2006-01-02T00:00:00.000Z`
 - `{{.UNIX}}` - unix timestamp (in seconds)
 - `{{.UNIXMSEC}}` - unix timestamp (in milliseconds)
 
 
-Templates can be passed in the command line or crontab file and will be evaluated and replaced at the moment 
+Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
 cronn executes the command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight. 
 
@@ -53,6 +58,7 @@ weekday on midnight.
   -r, --resume=                  auto-resume location [$CRONN_RESUME]
   -u, --update                   auto-update mode [$CRONN_UPDATE]
   -j, --jitter                   up to 10s jitter [$CRONN_JITTER]
+      --dedup                    prevent duplicated jobs [$CRONN_DEDUP]
 
 repeater:
       --repeater.attempts=       how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]

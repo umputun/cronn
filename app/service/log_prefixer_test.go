@@ -20,9 +20,8 @@ func TestLogPrefixer_Write(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 26, n)
 
-	expectedOutput :=
-		"{du /var/lib/moni...} first line of the output\n" +
-			"{du /var/lib/moni...} second line of the output\n"
+	expectedOutput := "{du /var/lib/moni...} first line of the output\n" +
+		"{du /var/lib/moni...} second line of the output\n"
 	assert.Equal(t, expectedOutput, out.String())
 }
 

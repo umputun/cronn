@@ -111,7 +111,8 @@ func TestScheduler_jobFunc(t *testing.T) {
 	resmr := &mocks.Resumer{}
 	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
 	wr := bytes.NewBuffer(nil)
-	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr, Repeater: repeater.New(&strategy.Once{})}
+	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr,
+		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true)}
 
 	resmr.On("List").Return(nil).Once()
 	resmr.On("OnStart", "echo 123").Return("resume.file", nil).Once()
@@ -132,7 +133,8 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 
 	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
 	wr := bytes.NewBuffer(nil)
-	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
+	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr, Notifier: notif,
+		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true)}
 
 	resmr.On("List").Return(nil).Once()
 	resmr.On("OnStart", "no-such-thing").Return("resume.file", nil).Once()

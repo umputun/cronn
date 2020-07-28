@@ -44,6 +44,7 @@ func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
 	return &res
 }
 
+// MakeErrorHTML creates error html body from errorTemplate
 func (s Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
 	data := struct {
 		Spec    string
@@ -68,6 +69,7 @@ func (s Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
 	return buf.String(), errors.Wrap(err, "failed to apply template")
 }
 
+// MakeErrorHTML creates error html body from completionTemplate
 func (s Service) MakeCompletionHTML(spec, command string) (string, error) {
 	data := struct {
 		Spec    string

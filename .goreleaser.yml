@@ -16,10 +16,10 @@ builds:
       - goos: freebsd
         goarch: arm64
     dir: app
-    ldflags: "-s -w -X main.revision={{.Version}}-{{.CommitDate}}"
+    ldflags: "-s -w -X main.revision={{.Tag}}-{{.ShortCommit}}-{{.CommitDate}}"
 
 archives:
-  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - name_template: "{{.ProjectName}}_{{.Tag}}_{{.Os}}_{{.Arch}}"
     replacements:
       386: i386
       amd64: x86_64
@@ -34,7 +34,7 @@ archives:
 nfpms:
   -
     package_name: cronn
-    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    file_name_template: "{{.ProjectName}}_{{.Tag}}_{{.Os}}_{{.Arch}}"
     vendor: Umputun
     homepage: https://github.com/umputun/cronn
     maintainer: Umputun <umputun@gmail.com>

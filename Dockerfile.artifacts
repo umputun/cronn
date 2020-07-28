@@ -12,6 +12,8 @@ RUN \
     cp /dist/*.gz /artifacts/ && \
     cp /dist/*.zip /artifacts/ && \
     cp /dist/*.txt /artifacts/ && \
+    cp /dist/*.rpm /artifacts/ && \
+    cp /dist/*.deb /artifacts/ && \
     ls -la /artifacts/*
 
 CMD ["sleep", "100"]

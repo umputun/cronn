@@ -126,7 +126,9 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	notif := &mocks.Notifier{}
 	notif.On("Send", mock.Anything, mock.Anything).Return(nil)
 	notif.On("IsOnError").Return(true)
-	notif.On("MakeErrorHTML", "@startup", "no-such-thing", "failed to executeCommand no-such-thing: exit status 127\n\nsh: no-such-thing: command not found").Return("email msg", nil)
+	notif.On("MakeErrorHTML", "@startup", "no-such-thing", mock.MatchedBy(func(s string) bool {
+		return strings.Contains(s, "not found")
+	})).Return("email msg", nil)
 
 	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
 	wr := bytes.NewBuffer(nil)

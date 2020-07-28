@@ -28,7 +28,7 @@ func (p *LogPrefixer) Write(data []byte) (int, error) {
 
 	var line []byte
 	var err error
-	var bytesWritten int = 0
+	var bytesWritten int
 
 	for {
 		line, err = reader.ReadBytes('\n')

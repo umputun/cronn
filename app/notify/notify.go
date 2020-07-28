@@ -12,6 +12,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Service warps email client and template management
 type Service struct {
 	*Email
 	errorTemplate      string
@@ -25,7 +26,7 @@ func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
 	res.errorTemplate = defaultErrorTemplate
 	res.completionTemplate = defaultCompletionTemplate
 	if errTmplFile != "" {
-		data, err := ioutil.ReadFile(errTmplFile)
+		data, err := ioutil.ReadFile(errTmplFile) //nolint gosec
 		if err == nil {
 			res.errorTemplate = string(data)
 		} else {
@@ -33,7 +34,7 @@ func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
 		}
 	}
 	if complTmplFile != "" {
-		data, err := ioutil.ReadFile(complTmplFile)
+		data, err := ioutil.ReadFile(complTmplFile) //nolint gosec
 		if err == nil {
 			res.completionTemplate = string(data)
 		} else {
@@ -69,7 +70,7 @@ func (s Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
 	return buf.String(), errors.Wrap(err, "failed to apply template")
 }
 
-// MakeErrorHTML creates error html body from completionTemplate
+// MakeCompletionHTML creates error html body from completionTemplate
 func (s Service) MakeCompletionHTML(spec, command string) (string, error) {
 	data := struct {
 		Spec    string

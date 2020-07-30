@@ -126,3 +126,4 @@ Factor = 1 effectively makes this strategy fixed with `duration` delay.
 - [robfig/cron](https://github.com/robfig/cron/v3) for parsing and scheduling.
 - [pkg/errors](https://github.com/pkg/errors) for errors wrapping and reporting.
 - [jessevdk/go-flags](https://github.com/jessevdk/go-flags) for cli parameters parser.
+- [lumberjack](https://gopkg.in/natefinch/lumberjack.v2) for rotated logs

@@ -38,7 +38,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestParser_List(t *testing.T) {
-	ctab := New("testfiles/crontab", time.Hour)
+	ctab := New("testfiles/crontab", time.Hour, nil)
 	jobs, err := ctab.List()
 	require.NoError(t, err)
 	assert.Len(t, jobs, 3)
@@ -46,7 +46,7 @@ func TestParser_List(t *testing.T) {
 		{Spec: "*/1 * * * *", Command: "something blah bad"}}, jobs)
 	assert.Equal(t, "testfiles/crontab", ctab.String())
 
-	ctab = New("testfiles/no-file", time.Hour)
+	ctab = New("testfiles/no-file", time.Hour, nil)
 	_, err = ctab.List()
 	assert.Error(t, err)
 }
@@ -64,7 +64,7 @@ func TestParser_Changes(t *testing.T) {
 	_, err = tmp.WriteString("2 * * * * ls\n")
 	require.NoError(t, err)
 
-	ctab := New(tmp.Name(), time.Millisecond*200)
+	ctab := New(tmp.Name(), time.Millisecond*200, nil)
 	jobs, err := ctab.List()
 	require.NoError(t, err)
 	assert.Len(t, jobs, 2)
@@ -72,6 +72,43 @@ func TestParser_Changes(t *testing.T) {
 	time.AfterFunc(time.Millisecond*500, func() {
 		_, e := tmp.WriteString("3 * * * * ls\n")
 		require.NoError(t, e)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+	defer cancel()
+	ch, err := ctab.Changes(ctx)
+	require.NoError(t, err)
+	updJobs := <-ch
+	assert.Len(t, updJobs, 3)
+	assert.Equal(t, "3 * * * *", updJobs[2].Spec)
+	jobs, err = ctab.List()
+	require.NoError(t, err)
+	assert.Len(t, jobs, 3)
+}
+
+func TestParser_ChangesHup(t *testing.T) {
+	tmp, err := ioutil.TempFile("", "crontab")
+	require.NoError(t, err)
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+
+	_, err = tmp.WriteString("1 * * * * ls\n")
+	require.NoError(t, err)
+	_, err = tmp.WriteString("2 * * * * ls\n")
+	require.NoError(t, err)
+
+	hupCh := make(chan struct{})
+	ctab := New(tmp.Name(), time.Hour, hupCh)
+	jobs, err := ctab.List()
+	require.NoError(t, err)
+	assert.Len(t, jobs, 2)
+
+	time.AfterFunc(time.Millisecond*500, func() {
+		_, e := tmp.WriteString("3 * * * * ls\n")
+		require.NoError(t, e)
+		hupCh <- struct{}{}
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)

@@ -18,6 +18,7 @@ import (
 type Parser struct {
 	file        string
 	updInterval time.Duration
+	hupCh       <-chan struct{}
 }
 
 // JobSpec for spec and cmd + params
@@ -27,9 +28,9 @@ type JobSpec struct {
 }
 
 // New creates Parser for file, but not parsing yet
-func New(file string, updInterval time.Duration) *Parser {
+func New(file string, updInterval time.Duration, hupCh <-chan struct{}) *Parser {
 	log.Printf("[INFO] crontab file %s, update every %v", file, updInterval)
-	return &Parser{file: file, updInterval: updInterval}
+	return &Parser{file: file, updInterval: updInterval, hupCh: hupCh}
 }
 
 // List parses crontab and returns lit of jobs
@@ -54,6 +55,7 @@ func (p Parser) String() string {
 // Changes gets updates channel. Each time crontab file updated and modification time changed
 // it will get parsed and the full list of jobs will be sent to the channel. Update checked periodically
 // and postponed for short time to prevent changes on every small intermediate save.
+// In addition it also performs forced reload on hupCh event.
 func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 	ch := make(chan []JobSpec)
 
@@ -79,13 +81,20 @@ func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 			case <-ctx.Done():
 				close(ch)
 				return
+			case <-p.hupCh:
+				log.Printf("[INFO] refresh requested")
+				jobs, err := p.List()
+				if err != nil {
+					log.Printf("[WARN] can't get list of jobs from %s, %v", p.file, err)
+					continue
+				}
+				ch <- jobs
 			case <-ticker.C: // react on changes every X seconds
 				m, err := mtime()
 				if err != nil {
 					log.Printf("[WARN] can't get info about %s, %v", p.file, err)
 					continue
 				}
-
 				secsSinceChange := time.Now().Second() - m.Second()
 				secsThreshold := int(p.updInterval.Seconds() / 2)
 				if m != lastMtime && secsSinceChange >= secsThreshold {

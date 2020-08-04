@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"os"
 	"os/signal"
 	"runtime"
@@ -85,12 +86,18 @@ func main() {
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	hupCh := signals(cancel) // handle SIGQUIT and SIGTERM
+
+	updateInterval := time.Duration(math.MaxInt64) // very long interval, effectively disabling automatic refresh
+	if opts.UpdateEnable {
+		updateInterval = 10 * time.Second
+	}
 
 	var crontabParser service.CrontabParser
 	if opts.Command != "" {
-		crontabParser = crontab.Single{Line: opts.Command}
+		crontabParser = crontab.NewSingle(opts.Command)
 	} else {
-		crontabParser = crontab.New(opts.CrontabFile, 10*time.Second)
+		crontabParser = crontab.New(opts.CrontabFile, updateInterval, hupCh)
 	}
 
 	rptr := repeater.New(&strategy.Backoff{Repeats: opts.Repeater.Attempts, Duration: opts.Repeater.Duration,
@@ -109,7 +116,7 @@ func main() {
 		Stdout:         stdout,
 		DeDup:          service.NewDeDup(opts.DeDup),
 	}
-	signals(cancel) // handle SIGQUIT and SIGTERM
+
 	cronService.Do(ctx)
 }
 
@@ -184,18 +191,23 @@ func setupLogs() io.Writer {
 	return os.Stdout
 }
 
-func signals(cancel context.CancelFunc) {
+func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
 	sigChan := make(chan os.Signal)
+	hupCh = make(chan struct{})
 	go func() {
 		stacktrace := make([]byte, 8192)
 		for sig := range sigChan {
-			if sig == syscall.SIGQUIT { // catch SIGQUIT and print stack traces
+			switch sig {
+			case syscall.SIGQUIT: // catch SIGQUIT and print stack traces
 				length := runtime.Stack(stacktrace, true)
 				fmt.Println(string(stacktrace[:length]))
-				continue
+			case syscall.SIGHUP: // reload crontab file on SIGHUP
+				hupCh <- struct{}{}
+			case syscall.SIGTERM: // terminate on SIGTERM
+				cancel()
 			}
-			cancel() // terminate on SIGTERM
 		}
 	}()
-	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
+	return hupCh
 }

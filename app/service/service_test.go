@@ -37,14 +37,16 @@ func TestScheduler_Do(t *testing.T) {
 	cr.On("Remove", mock.Anything).Times(3)
 	cr.On("Start").Once()
 	cr.On("Stop").Return(ctx).Once()
+
 	parser.On("List").Return([]crontab.JobSpec{
 		{Spec: "1 * * * *", Command: "test1"},
 		{Spec: "2 * * * *", Command: "test2"},
 	}, nil).Once()
+	parser.On("String").Return("something").Once()
+	parser.On("Changes", mock.Anything).Return(nil, nil).Once()
 
 	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(1)).Once()
 	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(2)).Once()
-
 	svc.Do(ctx)
 
 	cr.AssertExpectations(t)
@@ -56,7 +58,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 	t.Skip()
 	out := bytes.NewBuffer(nil)
 	cr := cron.New()
-	parser := crontab.New("testfiles/crontab", time.Minute)
+	parser := crontab.New("testfiles/crontab", time.Minute, nil)
 	res := resumer.New("/tmp", false)
 
 	notif := &mocks.Notifier{}
@@ -243,7 +245,10 @@ func TestScheduler_DoWithResume(t *testing.T) {
 
 	resmr.On("List").Return([]resumer.Cmd{{Command: "cmd1", Fname: "f1"}, {Command: "cmd2", Fname: "f2"}}).Once()
 	cr.On("Entries").Return([]cron.Entry{}).Times(1)
+
 	parser.On("List").Return([]crontab.JobSpec{}, nil).Once()
+	parser.On("String").Return("something").Once()
+	parser.On("Changes", mock.Anything).Return(nil, nil).Once()
 
 	cr.On("Start").Once()
 	cr.On("Stop").Return(ctx).Once()

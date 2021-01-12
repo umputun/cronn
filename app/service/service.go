@@ -28,16 +28,17 @@ import (
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
 type Scheduler struct {
 	Cron
-	Resumer        Resumer
-	CrontabParser  CrontabParser
-	UpdatesEnabled bool
-	JitterEnabled  bool
-	Notifier       Notifier
-	DeDup          *DeDup
-	HostName       string
-	MaxLogLines    int
-	Repeater       *repeater.Repeater
-	Stdout         io.Writer
+	Resumer         Resumer
+	CrontabParser   CrontabParser
+	UpdatesEnabled  bool
+	JitterEnabled   bool
+	Notifier        Notifier
+	DeDup           *DeDup
+	HostName        string
+	MaxLogLines     int
+	EnableLogPrefix bool
+	Repeater        *repeater.Repeater
+	Stdout          io.Writer
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -157,10 +158,11 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 	err := s.Repeater.Do(context.Background(), func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		serr := NewErrorWriter(s.MaxLogLines)
-
-		prefixer := NewLogPrefixer(logWriter, command)
-
-		logWithErr := io.MultiWriter(prefixer, serr)
+		logWithErr := io.MultiWriter(logWriter, serr)
+		if s.EnableLogPrefix {
+			prefixer := NewLogPrefixer(logWriter, command)
+			logWithErr = io.MultiWriter(prefixer, serr)
+		}
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
 		if e := cmd.Run(); e != nil {

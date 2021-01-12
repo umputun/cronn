@@ -81,11 +81,17 @@ func TestScheduler_DoIntegration(t *testing.T) {
 }
 
 func TestScheduler_execute(t *testing.T) {
-	svc := Scheduler{Repeater: repeater.New(&strategy.Once{})}
+	svc := Scheduler{Repeater: repeater.New(&strategy.Once{}), EnableLogPrefix: true}
 	wr := bytes.NewBuffer(nil)
 	err := svc.executeCommand("echo 123", wr)
 	require.NoError(t, err)
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
+
+	svc = Scheduler{Repeater: repeater.New(&strategy.Once{}), EnableLogPrefix: false}
+	wr = bytes.NewBuffer(nil)
+	err = svc.executeCommand("echo 123", wr)
+	require.NoError(t, err)
+	assert.Equal(t, "123\n", wr.String())
 }
 
 func TestScheduler_executeFailedNotFound(t *testing.T) {
@@ -112,7 +118,7 @@ func TestScheduler_jobFunc(t *testing.T) {
 	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
 	wr := bytes.NewBuffer(nil)
 	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr,
-		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true)}
+		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true), EnableLogPrefix: true}
 
 	resmr.On("List").Return(nil).Once()
 	resmr.On("OnStart", "echo 123").Return("resume.file", nil).Once()

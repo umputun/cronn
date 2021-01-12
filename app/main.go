@@ -59,6 +59,7 @@ var opts struct {
 	Log struct {
 		Enabled         bool   `long:"enabled" env:"ENABLED" description:"enable logging"`
 		Debug           bool   `long:"debug" env:"DEBUG" description:"debug mode"`
+		EnablePrefix    bool   `long:"prefix" env:"PREFIX" description:"enable log prefix with current command"`
 		Filename        string `long:"filename" env:"FILENAME" description:"file to write logs to. Log to stdout if not specified"`
 		MaxSize         int    `long:"max-size" env:"MAX_SIZE" default:"100" description:"maximum size in megabytes of the log file before it gets rotated"`
 		MaxAge          int    `long:"max-age" env:"MAX_AGE" default:"0" description:"maximum number of days to retain old log files"`
@@ -97,17 +98,18 @@ func main() {
 		Factor: opts.Repeater.Factor, Jitter: opts.Repeater.Jitter})
 
 	cronService := service.Scheduler{
-		Cron:           cron.New(),
-		Resumer:        resumer.New(opts.Resume, opts.Resume != ""),
-		CrontabParser:  crontabParser,
-		UpdatesEnabled: opts.UpdateEnable,
-		JitterEnabled:  opts.JitterEnable,
-		Repeater:       rptr,
-		Notifier:       makeNotifier(),
-		HostName:       makeHostName(),
-		MaxLogLines:    opts.Notify.MaxLogLines,
-		Stdout:         stdout,
-		DeDup:          service.NewDeDup(opts.DeDup),
+		Cron:            cron.New(),
+		Resumer:         resumer.New(opts.Resume, opts.Resume != ""),
+		CrontabParser:   crontabParser,
+		UpdatesEnabled:  opts.UpdateEnable,
+		JitterEnabled:   opts.JitterEnable,
+		Repeater:        rptr,
+		Notifier:        makeNotifier(),
+		HostName:        makeHostName(),
+		MaxLogLines:     opts.Notify.MaxLogLines,
+		EnableLogPrefix: opts.Log.EnablePrefix,
+		Stdout:          stdout,
+		DeDup:           service.NewDeDup(opts.DeDup),
 	}
 	signals(cancel) // handle SIGQUIT and SIGTERM
 	cronService.Do(ctx)

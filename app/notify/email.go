@@ -130,7 +130,7 @@ func (em *Email) IsOnCompletion() bool { return em.OnCompletion }
 func (em *Email) client() (c *smtp.Client, err error) {
 	srvAddress := fmt.Sprintf("%s:%d", em.Host, em.Port)
 	if em.TLS {
-		tlsConf := &tls.Config{
+		tlsConf := &tls.Config{ //nolint
 			InsecureSkipVerify: false,
 			ServerName:         em.Host,
 		}

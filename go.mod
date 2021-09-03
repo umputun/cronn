@@ -1,6 +1,6 @@
 module github.com/umputun/cronn
 
-go 1.16
+go 1.17
 
 require (
 	github.com/BurntSushi/toml v0.3.1 // indirect
@@ -12,4 +12,11 @@ require (
 	github.com/umputun/go-flags v1.5.1
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.2.2 // indirect
+)
+
+require (
+	github.com/davecgh/go-spew v1.1.0 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/stretchr/objx v0.1.0 // indirect
+	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c // indirect
 )

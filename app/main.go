@@ -187,7 +187,7 @@ func setupLogs() io.Writer {
 }
 
 func signals(cancel context.CancelFunc) {
-	sigChan := make(chan os.Signal)
+	sigChan := make(chan os.Signal, 1)
 	go func() {
 		stacktrace := make([]byte, 8192)
 		for sig := range sigChan {

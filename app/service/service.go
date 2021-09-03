@@ -152,7 +152,7 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 
 func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 	if s.JitterEnabled {
-		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) // jitter up to 10s
+		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) //nolint jitter up to 10s
 	}
 
 	err := s.Repeater.Do(context.Background(), func() error {

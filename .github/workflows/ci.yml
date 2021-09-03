@@ -53,6 +53,16 @@ jobs:
       - name: build image
         run: docker build --build-arg CI=github .
 
+      - name: set up QEMU
+        uses: docker/setup-qemu-action@v1
+
+      - name: set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: available platforms
+        run: echo ${{ steps.buildx.outputs.platforms }}
+
 
       - name: build and deploy master image to ghcr.io and dockerhub
         if: ${{ github.ref == 'refs/heads/master' }}

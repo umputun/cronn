@@ -50,9 +50,6 @@ jobs:
         env:
           COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: build image
-        run: docker build --build-arg CI=github .
-
       - name: set up QEMU
         uses: docker/setup-qemu-action@v1
 

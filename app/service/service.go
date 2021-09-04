@@ -31,7 +31,7 @@ type Scheduler struct {
 	Resumer         Resumer
 	CrontabParser   CrontabParser
 	UpdatesEnabled  bool
-	JitterEnabled   bool
+	Jitter          time.Duration
 	Notifier        Notifier
 	DeDup           *DeDup
 	HostName        string
@@ -151,8 +151,8 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 }
 
 func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
-	if s.JitterEnabled {
-		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) //nolint jitter up to 10s
+	if s.Jitter > 0 {
+		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
 
 	err := s.Repeater.Do(context.Background(), func() error {

@@ -21,11 +21,9 @@ github.com/pmezard/go-difflib/difflib
 github.com/robfig/cron/v3
 # github.com/stretchr/objx v0.1.0
 ## explicit
-github.com/stretchr/objx
 # github.com/stretchr/testify v1.6.1
 ## explicit; go 1.13
 github.com/stretchr/testify/assert
-github.com/stretchr/testify/mock
 github.com/stretchr/testify/require
 # github.com/umputun/go-flags v1.5.1
 ## explicit; go 1.12

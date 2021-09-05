@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +13,6 @@ import (
 	"github.com/go-pkgz/repeater/strategy"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/cronn/app/crontab"
@@ -20,37 +21,46 @@ import (
 )
 
 func TestScheduler_Do(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
-	cr := &mocks.Cron{}
-	resmr := &mocks.Resumer{}
-	parser := &mocks.CrontabParser{}
+	scCalls := 0
+	cr := &mocks.CronMock{
+		EntriesFunc: func() []cron.Entry { return []cron.Entry{{}, {}, {}} },
+		RemoveFunc:  func(id cron.EntryID) {},
+		StartFunc:   func() {},
+		StopFunc:    func() context.Context { return ctx },
+		ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+			scCalls++
+			return cron.EntryID(scCalls)
+		},
+	}
+
+	resmr := &mocks.ResumerMock{ListFunc: func() []resumer.Cmd { return nil }}
+
+	parser := &mocks.CrontabParserMock{
+		ListFunc: func() ([]crontab.JobSpec, error) {
+			return []crontab.JobSpec{{Spec: "1 * * * *", Command: "test1"}, {Spec: "2 * * * *", Command: "test2"}}, nil
+		},
+	}
+
 	svc := Scheduler{
 		Cron:           cr,
 		Resumer:        resmr,
 		CrontabParser:  parser,
 		UpdatesEnabled: false,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	resmr.On("List").Return(nil).Once()
-	cr.On("Entries").Return([]cron.Entry{{}, {}, {}}).Once()
-	cr.On("Remove", mock.Anything).Times(3)
-	cr.On("Start").Once()
-	cr.On("Stop").Return(ctx).Once()
-	parser.On("List").Return([]crontab.JobSpec{
-		{Spec: "1 * * * *", Command: "test1"},
-		{Spec: "2 * * * *", Command: "test2"},
-	}, nil).Once()
-
-	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(1)).Once()
-	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(2)).Once()
 
 	svc.Do(ctx)
 
-	cr.AssertExpectations(t)
-	resmr.AssertExpectations(t)
-	parser.AssertExpectations(t)
+	assert.Equal(t, 1, len(resmr.ListCalls()))
+
+	assert.Equal(t, 1, len(cr.EntriesCalls()))
+	assert.Equal(t, 3, len(cr.RemoveCalls()))
+	assert.Equal(t, 1, len(cr.StartCalls()))
+	assert.Equal(t, 1, len(cr.StopCalls()))
+
+	assert.Equal(t, 1, len(parser.ListCalls()))
 }
 
 func TestScheduler_DoIntegration(t *testing.T) {
@@ -60,25 +70,34 @@ func TestScheduler_DoIntegration(t *testing.T) {
 	parser := crontab.New("testfiles/crontab", time.Minute)
 	res := resumer.New("/tmp", false)
 
-	notif := &mocks.Notifier{}
-	notif.On("Send", mock.Anything, mock.Anything).Return(nil)
-	notif.On("IsOnError").Return(true)
-	notif.On("IsOnCompletion").Return(false)
+	notif := &mocks.NotifierMock{
+		SendFunc:           func(subj string, text string) error { return nil },
+		IsOnErrorFunc:      func() bool { return true },
+		IsOnCompletionFunc: func() bool { return false },
+		MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
+			return "blah error", nil
+		},
+	}
+	rep := &mocks.RepeaterMock{DoFunc: func(ctx context.Context, fun func() error, errors ...error) error {
+		return fun()
+	}}
+
 	svc := Scheduler{
 		Cron:           cr,
 		Resumer:        res,
 		CrontabParser:  parser,
 		UpdatesEnabled: false,
 		Notifier:       notif,
+		DeDup:          NewDeDup(true),
+		Repeater:       rep,
 		Stdout:         out,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
 	svc.Do(ctx)
 	t.Log(out.String())
-	assert.Contains(t, out.String(), "{echo 123} 123\n")
-	notif.AssertExpectations(t)
+	assert.Contains(t, out.String(), "something: command not found")
 }
 
 func TestScheduler_execute(t *testing.T) {
@@ -115,129 +134,208 @@ func TestScheduler_executeFailedExitCode(t *testing.T) {
 }
 
 func TestScheduler_jobFunc(t *testing.T) {
-	resmr := &mocks.Resumer{}
-	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
+	resmr := &mocks.ResumerMock{
+		OnStartFunc: func(cmd string) (string, error) {
+			assert.Equal(t, "echo 123", cmd)
+			return "resume.file", nil
+		},
+		OnFinishFunc: func(fname string) error {
+			assert.Equal(t, "resume.file", fname)
+			return nil
+		},
+	}
+	scheduleMock := &mocks.ScheduleMock{
+		NextFunc: func(timeMoqParam time.Time) time.Time {
+			return time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)
+		},
+	}
 	wr := bytes.NewBuffer(nil)
 	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr,
 		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true), EnableLogPrefix: true}
 
-	resmr.On("List").Return(nil).Once()
-	resmr.On("OnStart", "echo 123").Return("resume.file", nil).Once()
-	resmr.On("OnFinish", "resume.file").Return(nil).Once()
-
 	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "echo 123"}, scheduleMock).Run()
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
+
+	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
 }
 
 func TestScheduler_jobFuncFailed(t *testing.T) {
-	resmr := &mocks.Resumer{}
-	notif := &mocks.Notifier{}
-	notif.On("Send", mock.Anything, mock.Anything).Return(nil)
-	notif.On("IsOnError").Return(true)
-	notif.On("MakeErrorHTML", "@startup", "no-such-thing", mock.MatchedBy(func(s string) bool {
-		return strings.Contains(s, "not found")
-	})).Return("email msg", nil)
 
-	scheduleMock := &scheduleMock{next: time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)}
+	resmr := &mocks.ResumerMock{
+		OnStartFunc: func(cmd string) (string, error) {
+			assert.Equal(t, "no-such-thing", cmd)
+			return "resume.file", nil
+		},
+	}
+	scheduleMock := &mocks.ScheduleMock{
+		NextFunc: func(timeMoqParam time.Time) time.Time {
+			return time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)
+		},
+	}
+
+	notif := &mocks.NotifierMock{
+		SendFunc:           func(subj string, text string) error { return nil },
+		IsOnErrorFunc:      func() bool { return true },
+		IsOnCompletionFunc: func() bool { return false },
+		MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
+			assert.Equal(t, "@startup", spec)
+			assert.Equal(t, "no-such-thing", command)
+			return "email msg", nil
+		},
+	}
+
 	wr := bytes.NewBuffer(nil)
 	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr, Notifier: notif,
 		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true)}
 
-	resmr.On("List").Return(nil).Once()
-	resmr.On("OnStart", "no-such-thing").Return("resume.file", nil).Once()
-	resmr.On("OnFinish", "resume.file").Return(nil).Once()
-
 	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, scheduleMock).Run()
 	assert.Contains(t, wr.String(), "not found")
-	notif.AssertExpectations(t)
-}
 
-type scheduleMock struct {
-	next time.Time
-}
-
-func (s *scheduleMock) Next(time.Time) time.Time {
-	return s.next
+	assert.Equal(t, 1, len(resmr.OnStartCalls()))
+	assert.Equal(t, 1, len(notif.SendCalls()))
 }
 
 func TestScheduler_notifyOnError(t *testing.T) {
-	notif := &mocks.Notifier{}
-	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
-	notif.On("IsOnError").Return(true)
-	notif.On("MakeErrorHTML", "@startup", "no-such-thing", "message").Return("email msg", nil)
+	notif := &mocks.NotifierMock{
+		SendFunc: func(subj string, text string) error {
+			return nil
+		},
+		IsOnErrorFunc: func() bool {
+			return true
+		},
+		MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
+			assert.Equal(t, spec, "@startup")
+			assert.Equal(t, command, "no-such-thing")
+			assert.Equal(t, errorLog, "message")
+			return "email msg", nil
+		},
+	}
 
 	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
 	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "message")
 	require.NoError(t, err)
-	notif.AssertExpectations(t)
 
+	assert.Equal(t, 1, len(notif.SendCalls()))
+	assert.Equal(t, 1, len(notif.IsOnErrorCalls()))
+	assert.Equal(t, 1, len(notif.MakeErrorHTMLCalls()))
 }
 
 func TestScheduler_notifyOnCompletion(t *testing.T) {
-	notif := &mocks.Notifier{}
-	notif.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
-	notif.On("IsOnCompletion").Return(true)
-	notif.On("MakeCompletionHTML", "@startup", "ls -la").Return("email msg", nil)
 
+	notif := &mocks.NotifierMock{
+		SendFunc: func(subj string, text string) error {
+			return nil
+		},
+		IsOnCompletionFunc: func() bool {
+			return true
+		},
+		MakeCompletionHTMLFunc: func(spec string, command string) (string, error) {
+			assert.Equal(t, spec, "@startup")
+			assert.Equal(t, command, "ls -la")
+			return "email msg", nil
+		},
+	}
 	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
 	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "ls -la"}, "")
 	require.NoError(t, err)
-	notif.AssertExpectations(t)
+
+	assert.Equal(t, 1, len(notif.SendCalls()))
+	assert.Equal(t, 1, len(notif.IsOnCompletionCalls()))
+	assert.Equal(t, 1, len(notif.MakeCompletionHTMLCalls()))
 }
 
 func TestScheduler_DoWithReload(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
-	cr := &mocks.Cron{}
-	resmr := &mocks.Resumer{}
-	parser := &mocks.CrontabParser{}
+	scCalls := 0
+	cr := &mocks.CronMock{
+		EntriesFunc: func() []cron.Entry { return []cron.Entry{{}, {}, {}} },
+		RemoveFunc:  func(id cron.EntryID) {},
+		StartFunc:   func() {},
+		StopFunc:    func() context.Context { return ctx },
+		ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+			scCalls++
+			switch scCalls {
+			case 1, 2:
+				return cron.EntryID(1)
+			case 3:
+				return cron.EntryID(1)
+			default:
+				t.Fatal("unexpected")
+			}
+			return cron.EntryID(0)
+		},
+	}
+
+	resmr := &mocks.ResumerMock{ListFunc: func() []resumer.Cmd { return nil }}
+
+	prsListCalls := 0
+	parser := &mocks.CrontabParserMock{
+		ListFunc: func() ([]crontab.JobSpec, error) {
+			prsListCalls++
+			if prsListCalls == 1 {
+				return []crontab.JobSpec{{Spec: "1 * * * *", Command: "test1"}, {Spec: "2 * * * *", Command: "test2"}}, nil
+			}
+			if prsListCalls == 2 {
+				return []crontab.JobSpec{{Spec: "11 * * * *", Command: "test1"}}, nil
+			}
+			return nil, errors.New("error")
+		},
+		StringFunc: func() string {
+			return "parser"
+		},
+		ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+			ch := make(chan []crontab.JobSpec, 1)
+			ch <- []crontab.JobSpec{{Command: "cmd", Spec: "@reboot"}}
+			close(ch)
+			return ch, nil
+		},
+	}
+
 	svc := Scheduler{
 		Cron:           cr,
 		Resumer:        resmr,
 		CrontabParser:  parser,
 		UpdatesEnabled: true,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	resmr.On("List").Return(nil).Once()
-	cr.On("Entries").Return([]cron.Entry{{}, {}, {}}).Times(2)
-	cr.On("Remove", mock.Anything).Times(6)
-	cr.On("Start").Once()
-	cr.On("Stop").Return(ctx).Once()
-
-	parser.On("String").Return("parser")
-	parser.On("List").Return([]crontab.JobSpec{
-		{Spec: "1 * * * *", Command: "test1"},
-		{Spec: "2 * * * *", Command: "test2"},
-	}, nil).Once()
-
-	parser.On("List").Return([]crontab.JobSpec{
-		{Spec: "11 * * * *", Command: "test1"},
-	}, nil).Once()
-
-	upCh := func() <-chan []crontab.JobSpec {
-		ch := make(chan []crontab.JobSpec, 1)
-		ch <- []crontab.JobSpec{{Command: "cmd", Spec: "@reboot"}}
-		close(ch)
-		return ch
-	}()
-
-	parser.On("Changes", mock.Anything).Return(upCh, nil).Once()
-
-	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(1)).Times(2)
-	cr.On("Schedule", mock.Anything, mock.Anything).Return(cron.EntryID(2)).Once()
 
 	svc.Do(ctx)
 
-	cr.AssertExpectations(t)
-	resmr.AssertExpectations(t)
-	parser.AssertExpectations(t)
+	assert.Equal(t, 1, len(resmr.ListCalls()))
+	assert.Equal(t, 2, len(cr.EntriesCalls()))
+	assert.Equal(t, 6, len(cr.RemoveCalls()))
+	assert.Equal(t, 1, len(cr.StartCalls()))
+	assert.Equal(t, 1, len(cr.StopCalls()))
+	assert.Equal(t, 2, len(parser.ListCalls()))
 }
 
 func TestScheduler_DoWithResume(t *testing.T) {
-	cr := &mocks.Cron{}
-	resmr := &mocks.Resumer{}
-	parser := &mocks.CrontabParser{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	cr := &mocks.CronMock{
+		EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+		StartFunc:   func() {},
+		StopFunc:    func() context.Context { return ctx },
+	}
+
+	rsmFinCalls := 0
+	resmr := &mocks.ResumerMock{
+		ListFunc: func() []resumer.Cmd {
+			return []resumer.Cmd{{Command: "cmd1", Fname: "f1"}, {Command: "cmd2", Fname: "f2"}}
+		},
+		OnFinishFunc: func(fname string) error {
+			rsmFinCalls++
+			assert.Equal(t, "f"+strconv.Itoa(rsmFinCalls), fname)
+			return nil
+		},
+	}
+	parser := &mocks.CrontabParserMock{
+		ListFunc: func() ([]crontab.JobSpec, error) { return []crontab.JobSpec{}, nil },
+	}
+
 	svc := Scheduler{
 		Cron:           cr,
 		Resumer:        resmr,
@@ -245,22 +343,13 @@ func TestScheduler_DoWithResume(t *testing.T) {
 		UpdatesEnabled: false,
 		Repeater:       repeater.New(&strategy.Once{}),
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	resmr.On("List").Return([]resumer.Cmd{{Command: "cmd1", Fname: "f1"}, {Command: "cmd2", Fname: "f2"}}).Once()
-	cr.On("Entries").Return([]cron.Entry{}).Times(1)
-	parser.On("List").Return([]crontab.JobSpec{}, nil).Once()
-
-	cr.On("Start").Once()
-	cr.On("Stop").Return(ctx).Once()
-
-	resmr.On("OnFinish", "f1").Return(nil).Once()
-	resmr.On("OnFinish", "f2").Return(nil).Once()
 
 	svc.Do(ctx)
 
-	cr.AssertExpectations(t)
-	resmr.AssertExpectations(t)
-	parser.AssertExpectations(t)
+	assert.Equal(t, 1, len(resmr.ListCalls()))
+	assert.Equal(t, 2, len(resmr.OnFinishCalls()))
+	assert.Equal(t, 1, len(cr.EntriesCalls()))
+	assert.Equal(t, 1, len(cr.StartCalls()))
+	assert.Equal(t, 1, len(cr.StopCalls()))
+	assert.Equal(t, 1, len(parser.ListCalls()))
 }

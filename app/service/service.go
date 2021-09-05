@@ -12,7 +12,6 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
-	"github.com/go-pkgz/repeater"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 
@@ -20,10 +19,13 @@ import (
 	"github.com/umputun/cronn/app/resumer"
 )
 
-//go:generate mockery -name Resumer -case snake
-//go:generate mockery -name CrontabParser -case snake
-//go:generate mockery -name Cron -case snake
-//go:generate mockery -name Notifier -case snake
+//go:generate moq -out mocks/resumer.go -pkg mocks -skip-ensure -fmt goimports . Resumer
+//go:generate moq -out mocks/crontab.go -pkg mocks -skip-ensure -fmt goimports . CrontabParser
+//go:generate moq -out mocks/cron.go -pkg mocks -skip-ensure -fmt goimports . Cron
+//go:generate moq -out mocks/notifier.go -pkg mocks -skip-ensure -fmt goimports . Notifier
+//go:generate moq -out mocks/dedupper.go -pkg mocks -skip-ensure -fmt goimports . Dedupper
+//go:generate moq -out mocks/repeater.go -pkg mocks -skip-ensure -fmt goimports . Repeater
+//go:generate moq -out mocks/schedule.go -pkg mocks -skip-ensure -fmt goimports . Schedule
 
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
 type Scheduler struct {
@@ -33,11 +35,11 @@ type Scheduler struct {
 	UpdatesEnabled  bool
 	Jitter          time.Duration
 	Notifier        Notifier
-	DeDup           *DeDup
+	DeDup           Dedupper
 	HostName        string
 	MaxLogLines     int
 	EnableLogPrefix bool
-	Repeater        *repeater.Repeater
+	Repeater        Repeater
 	Stdout          io.Writer
 }
 
@@ -74,6 +76,22 @@ type Notifier interface {
 	MakeCompletionHTML(spec, command string) (string, error)
 }
 
+// Dedupper defines a locking primitive to register/unregister command in order to prevent dbl registration
+type Dedupper interface {
+	Add(key string) bool
+	Remove(key string)
+}
+
+// Repeater repeats failed function
+type Repeater interface {
+	Do(ctx context.Context, fun func() error, errors ...error) (err error)
+}
+
+// Schedule describes a job's duty cycle.
+type Schedule interface {
+	Next(time.Time) time.Time
+}
+
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
 	if s.Stdout == nil {
@@ -108,7 +126,7 @@ func (s *Scheduler) schedule(r crontab.JobSpec) error {
 	return nil
 }
 
-func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob {
+func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
 	runJob := func(r crontab.JobSpec) error {
 		cmd, err := NewDayTemplate(time.Now()).Parse(r.Command)

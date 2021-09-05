@@ -25,12 +25,13 @@ import (
 )
 
 var opts struct {
-	CrontabFile  string        `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
-	Command      string        `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
-	Resume       string        `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
-	UpdateEnable bool          `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
-	Jitter       time.Duration `short:"j" long:"jitter" env:"CRONN_JITTER" description:"jitter duration, 0 disables it"`
-	DeDup        bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
+	CrontabFile    string        `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
+	Command        string        `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
+	Resume         string        `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
+	UpdateEnable   bool          `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
+	JitterEnable   bool          `short:"j" long:"jitter" env:"CRONN_JITTER" description:"enable jitter"`
+	JitterDuration time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
+	DeDup          bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -73,9 +74,16 @@ var revision = "unknown"
 func main() {
 	fmt.Printf("cronn %s\n", revision)
 
-	if _, err := flags.Parse(&opts); err != nil {
+	p := flags.NewParser(&opts, flags.PassDoubleDash|flags.HelpFlag)
+	if _, err := p.Parse(); err != nil {
+		if err.(*flags.Error).Type != flags.ErrHelp {
+			fmt.Printf("%v\n", err)
+			os.Exit(1)
+		}
+		p.WriteHelp(os.Stderr)
 		os.Exit(2)
 	}
+
 	stdout := setupLogs()
 
 	defer func() {
@@ -97,12 +105,17 @@ func main() {
 	rptr := repeater.New(&strategy.Backoff{Repeats: opts.Repeater.Attempts, Duration: opts.Repeater.Duration,
 		Factor: opts.Repeater.Factor, Jitter: opts.Repeater.Jitter})
 
+	var jitterDuration time.Duration
+	if opts.JitterEnable {
+		jitterDuration = opts.JitterDuration
+	}
+
 	cronService := service.Scheduler{
 		Cron:            cron.New(),
 		Resumer:         resumer.New(opts.Resume, opts.Resume != ""),
 		CrontabParser:   crontabParser,
 		UpdatesEnabled:  opts.UpdateEnable,
-		Jitter:          opts.Jitter,
+		Jitter:          jitterDuration,
 		Repeater:        rptr,
 		Notifier:        makeNotifier(),
 		HostName:        makeHostName(),

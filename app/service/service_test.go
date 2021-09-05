@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -271,14 +272,14 @@ func TestScheduler_DoWithReload(t *testing.T) {
 
 	resmr := &mocks.ResumerMock{ListFunc: func() []resumer.Cmd { return nil }}
 
-	prsListCalls := 0
+	var prsListCalls int32
 	parser := &mocks.CrontabParserMock{
 		ListFunc: func() ([]crontab.JobSpec, error) {
-			prsListCalls++
-			if prsListCalls == 1 {
+			atomic.AddInt32(&prsListCalls, 1)
+			if atomic.LoadInt32(&prsListCalls) == 1 {
 				return []crontab.JobSpec{{Spec: "1 * * * *", Command: "test1"}, {Spec: "2 * * * *", Command: "test2"}}, nil
 			}
-			if prsListCalls == 2 {
+			if atomic.LoadInt32(&prsListCalls) == 2 {
 				return []crontab.JobSpec{{Spec: "11 * * * *", Command: "test1"}}, nil
 			}
 			return nil, errors.New("error")

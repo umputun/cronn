@@ -53,44 +53,49 @@ weekday on midnight.
 ## Application Options
 
 ```
-  -f, --file=                    crontab file (default: crontab) [$CRONN_FILE]
-  -c, --command=                 crontab single command [$CRONN_COMMAND]
-  -r, --resume=                  auto-resume location [$CRONN_RESUME]
-  -u, --update                   auto-update mode [$CRONN_UPDATE]
-  -j, --jitter                   up to 10s jitter [$CRONN_JITTER]
-      --dedup                    prevent duplicated jobs [$CRONN_DEDUP]
+  -f, --file=                     crontab file (default: crontab) [$CRONN_FILE]
+  -c, --command=                  crontab single command [$CRONN_COMMAND]
+  -r, --resume=                   auto-resume location [$CRONN_RESUME]
+  -u, --update                    auto-update mode [$CRONN_UPDATE]
+  -j, --jitter                    enable jitter [$CRONN_JITTER]
+      --jitter-duration=          jitter duration (default: 10s) [$CRONN_JITTER_DURATION]
+      --dedup                     prevent duplicated jobs [$CRONN_DEDUP]
 
 repeater:
-      --repeater.attempts=       how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]
-      --repeater.duration=       initial duration (default: 1s) [$CRONN_REPEATER_DURATION]
-      --repeater.factor=         backoff factor (default: 3) [$CRONN_REPEATER_FACTOR]
-      --repeater.jitter          jitter [$CRONN_REPEATER_JITTER]
+      --repeater.attempts=        how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]
+      --repeater.duration=        initial duration (default: 1s) [$CRONN_REPEATER_DURATION]
+      --repeater.factor=          backoff factor (default: 3) [$CRONN_REPEATER_FACTOR]
+      --repeater.jitter           jitter [$CRONN_REPEATER_JITTER]
 
 notify:
-      --notify.enabled-error     enable email notifications on errors [$CRONN_NOTIFY_ENABLED_ERROR]
-      --notify.enabled-complete  enable completion notifications [$CRONN_NOTIFY_ENABLED_COMPLETE]
-      --notify.smtp-host=        SMTP host [$CRONN_NOTIFY_SMTP_HOST]
-      --notify.smtp-port=        SMTP port [$CRONN_NOTIFY_SMTP_PORT]
-      --notify.smtp-username=    SMTP user name [$CRONN_NOTIFY_SMTP_USERNAME]
-      --notify.smtp-password=    SMTP password [$CRONN_NOTIFY_SMTP_PASSWORD]
-      --notify.smtp-tls          enable SMTP TLS [$CRONN_NOTIFY_SMTP_TLS]
-      --notify.smtp-timeout=     SMTP TCP connection timeout (default: 10s) [$CRONN_NOTIFY_SMTP_TIMEOUT]
-      --notify.from=             SMTP from email [$CRONN_NOTIFY_FROM]
-      --notify.to=               SMTP to email(s) [$CRONN_NOTIFY_TO]
-      --notify.max-log=          max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
-      --notify.host=             host name running cronn [$CRONN_NOTIFY_HOSTNAME]
+      --notify.enabled-error      enable email notifications on errors [$CRONN_NOTIFY_ENABLED_ERROR]
+      --notify.enabled-complete   enable completion notifications [$CRONN_NOTIFY_ENABLED_COMPLETE]
+      --notify.err-template=      error template file [$CRONN_NOTIFY_ERR_TEMPLATE]
+      --notify.complete-template= completion template file [$CRONN_NOTIFY_COMPLET_TEMPLATE]
+      --notify.smtp-host=         SMTP host [$CRONN_NOTIFY_SMTP_HOST]
+      --notify.smtp-port=         SMTP port [$CRONN_NOTIFY_SMTP_PORT]
+      --notify.smtp-username=     SMTP user name [$CRONN_NOTIFY_SMTP_USERNAME]
+      --notify.smtp-password=     SMTP password [$CRONN_NOTIFY_SMTP_PASSWORD]
+      --notify.smtp-tls           enable SMTP TLS [$CRONN_NOTIFY_SMTP_TLS]
+      --notify.smtp-timeout=      SMTP TCP connection timeout (default: 10s) [$CRONN_NOTIFY_SMTP_TIMEOUT]
+      --notify.from=              SMTP from email [$CRONN_NOTIFY_FROM]
+      --notify.to=                SMTP to email(s) [$CRONN_NOTIFY_TO]
+      --notify.max-log=           max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
+      --notify.host=              host name running cronn [$CRONN_NOTIFY_HOSTNAME]
 
 log:
-      --log.enabled              enable logging [$CRONN_LOG_ENABLED]
-      --log.debug                debug mode [$CRONN_LOG_DEBUG]
-      --log.filename=            file to write logs to. Log to stdout if not specified [$CRONN_LOG_FILENAME]
-      --log.max-size=            maximum size in megabytes of the log file before it gets rotated (default: 100) [$CRONN_LOG_MAX_SIZE]
-      --log.max-age=             maximum number of days to retain old log files (default: 0) [$CRONN_LOG_MAX_AGE]
-      --log.max-backups=         maximum number of old log files to retain (default: 7) [$CRONN_LOG_MAX_BACKUPS]
-      --log.enabled-compress     determines if the rotated log files should be compressed using gzip [$CRONN_LOG_ENABLED_COMPRESS]
+      --log.enabled               enable logging [$CRONN_LOG_ENABLED]
+      --log.debug                 debug mode [$CRONN_LOG_DEBUG]
+      --log.prefix                enable log prefix with current command [$CRONN_LOG_PREFIX]
+      --log.filename=             file to write logs to. Log to stdout if not specified [$CRONN_LOG_FILENAME]
+      --log.max-size=             maximum size in megabytes of the log file before it gets rotated (default: 100) [$CRONN_LOG_MAX_SIZE]
+      --log.max-age=              maximum number of days to retain old log files (default: 0) [$CRONN_LOG_MAX_AGE]
+      --log.max-backups=          maximum number of old log files to retain (default: 7) [$CRONN_LOG_MAX_BACKUPS]
+      --log.enabled-compress      determines if the rotated log files should be compressed using gzip [$CRONN_LOG_ENABLED_COMPRESS]
 
 Help Options:
-  -h, --help                     Show this help message
+  -h, --help                      Show this help message
+
 ```
  
 ## Optional modes:

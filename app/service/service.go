@@ -8,9 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
-	"os/signal"
 	"reflect"
-	"syscall"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -43,6 +41,7 @@ type Scheduler struct {
 	EnableLogPrefix bool
 	Repeater        Repeater
 	Stdout          io.Writer
+	ReloadCh        chan struct{}
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -103,10 +102,11 @@ func (s *Scheduler) Do(ctx context.Context) {
 
 	if s.UpdatesEnabled {
 		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
-		go s.reload(ctx) // start background updater
-	} else {
-		s.catchSignalForUpdate(ctx) // monitor interruption signal
+		go s.trackChanges(ctx) // start background updater
 	}
+
+	go s.reload(ctx)
+
 	if err := s.loadFromFileParser(); err != nil {
 		log.Printf("[WARN] can't load crontab file, %v", err)
 		return
@@ -241,8 +241,23 @@ func (s *Scheduler) loadFromFileParser() error {
 	return nil
 }
 
-// reload runs blocking loop reacting on updates in crontab file and reloading jobs
+// reload runs blocking loop reacting on signal in ReloadCh and reloading jobs
 func (s *Scheduler) reload(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.ReloadCh:
+			log.Printf("[DEBUG] reload signal received")
+			if err := s.loadFromFileParser(); err != nil {
+				log.Printf("[WARN] failed to update jobs, %v", err)
+			}
+		}
+	}
+}
+
+// trackChanges runs blocking loop reacting on updates in crontab file
+func (s *Scheduler) trackChanges(ctx context.Context) {
 	ch, err := s.CrontabParser.Changes(ctx)
 	if err != nil {
 		return
@@ -257,32 +272,9 @@ func (s *Scheduler) reload(ctx context.Context) {
 				return
 			}
 			log.Printf("[DEBUG] jobs update detected, total %d jobs scheduled", len(jobs))
-			if err = s.loadFromFileParser(); err != nil {
-				log.Printf("[WARN] failed to update jobs, %v", err)
-			}
+			s.ReloadCh <- struct{}{}
 		}
 	}
-}
-
-// catchSignalForUpdate waits for a SIGHUP signal (non-blocking) and updates jobs from the file when receives it
-func (s *Scheduler) catchSignalForUpdate(ctx context.Context) {
-	sigChan := make(chan os.Signal, 1)
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-sigChan:
-				log.Print("[DEBUG] SIGHUP signal detected")
-				if err := s.loadFromFileParser(); err != nil {
-					log.Printf("[WARN] failed to update jobs, %v", err)
-				}
-			}
-		}
-	}()
-
-	signal.Notify(sigChan, syscall.SIGHUP)
 }
 
 func (s *Scheduler) resumeInterrupted() {

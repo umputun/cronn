@@ -123,8 +123,9 @@ func main() {
 		EnableLogPrefix: opts.Log.EnablePrefix,
 		Stdout:          stdout,
 		DeDup:           service.NewDeDup(opts.DeDup),
+		ReloadCh:        make(chan struct{}, 1),
 	}
-	signals(cancel) // handle SIGQUIT and SIGTERM
+	signals(cancel, cronService.ReloadCh) // handle SIGQUIT, SIGHUP and SIGTERM
 	cronService.Do(ctx)
 }
 
@@ -199,18 +200,23 @@ func setupLogs() io.Writer {
 	return os.Stdout
 }
 
-func signals(cancel context.CancelFunc) {
+func signals(cancel context.CancelFunc, reloadCh chan<- struct{}) {
 	sigChan := make(chan os.Signal, 1)
 	go func() {
 		stacktrace := make([]byte, 8192)
 		for sig := range sigChan {
-			if sig == syscall.SIGQUIT { // catch SIGQUIT and print stack traces
+			switch sig {
+			case syscall.SIGQUIT:
+				// catch SIGQUIT and print stack traces
 				length := runtime.Stack(stacktrace, true)
 				fmt.Println(string(stacktrace[:length]))
-				continue
+			case syscall.SIGHUP:
+				fmt.Println("SIGHUP signal received")
+				reloadCh <- struct{}{} // catch SIGHUP and send reload signal
+			case syscall.SIGTERM:
+				cancel() // terminate on SIGTERM
 			}
-			cancel() // terminate on SIGTERM
 		}
 	}()
-	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGTERM)
 }

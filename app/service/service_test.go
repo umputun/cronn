@@ -300,6 +300,7 @@ func TestScheduler_DoWithReload(t *testing.T) {
 		Resumer:        resmr,
 		CrontabParser:  parser,
 		UpdatesEnabled: true,
+		ReloadCh:       make(chan struct{}, 1),
 	}
 
 	svc.Do(ctx)

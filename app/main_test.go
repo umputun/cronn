@@ -1,13 +1,13 @@
 package main
 
 import (
-	"io/ioutil"
-	"os"
-	"testing"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/natefinch/lumberjack.v2"
+	"io/ioutil"
+	"os"
+	"syscall"
+	"testing"
 )
 
 func Test_makeHostName(t *testing.T) {
@@ -55,4 +55,27 @@ func Test_setupLogsToFile(t *testing.T) {
 	assert.Equal(t, 7, logger.MaxBackups)
 	assert.Equal(t, 0, logger.MaxAge)
 	assert.Equal(t, false, logger.Compress)
+}
+
+func Test_signals(t *testing.T) {
+	sysCalls := []syscall.Signal{syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGTERM}
+	os.Args = []string{"-c @every 2s echo {{.UNIX}}"}
+
+	for _, signal := range sysCalls {
+		done := make(chan struct{})
+		finished := make(chan struct{})
+		go func() {
+			main()
+			close(done)
+		}()
+
+		go func(s syscall.Signal) {
+			<-done
+			e := syscall.Kill(syscall.Getpid(), s)
+			require.NoError(t, e)
+			close(finished)
+		}(signal)
+
+		<-finished
+	}
 }

@@ -3,13 +3,13 @@ package notify
 
 import (
 	"bytes"
+	"fmt"
 	"html/template"
 	"io/ioutil"
 	"os"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
-	"github.com/pkg/errors"
 )
 
 // Service warps email client and template management
@@ -26,7 +26,7 @@ func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
 	res.errorTemplate = defaultErrorTemplate
 	res.completionTemplate = defaultCompletionTemplate
 	if errTmplFile != "" {
-		data, err := ioutil.ReadFile(errTmplFile) //nolint gosec
+		data, err := ioutil.ReadFile(errTmplFile) // nolint gosec
 		if err == nil {
 			res.errorTemplate = string(data)
 		} else {
@@ -34,7 +34,7 @@ func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
 		}
 	}
 	if complTmplFile != "" {
-		data, err := ioutil.ReadFile(complTmplFile) //nolint gosec
+		data, err := ioutil.ReadFile(complTmplFile) // nolint gosec
 		if err == nil {
 			res.completionTemplate = string(data)
 		} else {
@@ -63,11 +63,13 @@ func (s Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
 
 	t, err := template.New("msg").Parse(s.errorTemplate)
 	if err != nil {
-		return "", errors.Wrap(err, "can't parse message template")
+		return "", fmt.Errorf("can't parse message template: %w", err)
 	}
 	buf := bytes.Buffer{}
-	err = t.Execute(&buf, data)
-	return buf.String(), errors.Wrap(err, "failed to apply template")
+	if err = t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to apply template: %w", err)
+	}
+	return buf.String(), nil
 }
 
 // MakeCompletionHTML creates error html body from completionTemplate
@@ -87,11 +89,13 @@ func (s Service) MakeCompletionHTML(spec, command string) (string, error) {
 
 	t, err := template.New("msg").Parse(s.completionTemplate)
 	if err != nil {
-		return "", errors.Wrap(err, "can't parse message template")
+		return "", fmt.Errorf("can't parse message template: %w", err)
 	}
 	buf := bytes.Buffer{}
-	err = t.Execute(&buf, data)
-	return buf.String(), errors.Wrap(err, "failed to apply template")
+	if err = t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to apply template: %w", err)
+	}
+	return buf.String(), nil
 }
 
 var (

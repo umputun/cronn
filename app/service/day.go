@@ -2,10 +2,9 @@ package service
 
 import (
 	"bytes"
+	"fmt"
 	"text/template"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 // DayParser for command line containing template elements from tmpl, like {{.YYYYMMDD}}
@@ -114,7 +113,7 @@ func (p DayParser) Parse(dayTemplate string) (string, error) {
 	b1 := bytes.Buffer{}
 	err := template.Must(template.New("ymd").Parse(dayTemplate)).Execute(&b1, p.tmpl)
 	if err != nil {
-		return "", errors.Wrapf(err, "failed to parse day from %s", dayTemplate)
+		return "", fmt.Errorf("failed to parse day from %s: %w", dayTemplate, err)
 	}
 	return b1.String(), nil
 }

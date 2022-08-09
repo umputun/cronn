@@ -4,14 +4,14 @@ package crontab
 
 import (
 	"context"
-	"io/ioutil"
+	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
-	"github.com/pkg/errors"
 )
 
 // Parser file, thread safe
@@ -34,7 +34,7 @@ func New(file string, updInterval time.Duration) *Parser {
 
 // List parses crontab and returns lit of jobs
 func (p Parser) List() (result []JobSpec, err error) {
-	bs, err := ioutil.ReadFile(p.file)
+	bs, err := os.ReadFile(p.file)
 	if err != nil {
 		return []JobSpec{}, err
 	}
@@ -61,7 +61,7 @@ func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 	mtime := func() (time.Time, error) {
 		st, err := os.Stat(p.file)
 		if err != nil {
-			return time.Time{}, errors.Wrapf(err, "can't load cron file %s", p.file)
+			return time.Time{}, fmt.Errorf("can't load cron file %s: %w", p.file, err)
 		}
 		return st.ModTime(), nil
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"runtime"
@@ -170,7 +169,7 @@ func makeHostName() string {
 
 func setupLogs() io.Writer {
 	if !opts.Log.Enabled {
-		log.Setup(log.Out(ioutil.Discard), log.Err(ioutil.Discard))
+		log.Setup(log.Out(io.Discard), log.Err(io.Discard))
 		return os.Stdout
 	}
 

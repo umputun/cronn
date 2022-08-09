@@ -13,7 +13,6 @@ import (
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/syncs"
-	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 
 	"github.com/umputun/cronn/app/crontab"
@@ -123,7 +122,7 @@ func (s *Scheduler) schedule(r crontab.JobSpec) error {
 	log.Printf("[INFO] new cron, command %q", r.Command)
 	sched, e := cron.ParseStandard(r.Spec)
 	if e != nil {
-		return errors.Wrapf(e, "can't parse %s", r.Spec)
+		return fmt.Errorf("can't parse %s: %w", r.Spec, e)
 	}
 
 	id := s.Schedule(sched, s.jobFunc(r, sched))
@@ -141,7 +140,7 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
 		dedupKey := cmd + "#" + r.Spec
 		if !s.DeDup.Add(dedupKey) {
-			return errors.Errorf("duplicated job %q ignored", dedupKey)
+			return fmt.Errorf("duplicated job %q ignored", dedupKey)
 		}
 		defer s.DeDup.Remove(dedupKey)
 
@@ -149,17 +148,17 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
 		if err = s.executeCommand(cmd, s.Stdout); err != nil {
 			if e := s.notify(r, err.Error()); e != nil {
-				return errors.Wrap(err, "failed to notify")
+				return fmt.Errorf("failed to notify: %w", err)
 			}
 			return err
 		}
 
 		if rerr == nil {
 			if err = s.Resumer.OnFinish(rfile); err != nil {
-				return errors.Wrapf(err, "failed to finish resumer for %s", rfile)
+				return fmt.Errorf("failed to finish resumer for %s: %w", rfile, err)
 			}
 		}
-		return errors.Wrapf(rerr, "failed to initiate resumer for %+v", cmd)
+		return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 	}
 
 	return func() {
@@ -189,7 +188,7 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
 		if e := cmd.Run(); e != nil {
-			serr.SerError(errors.Wrapf(e, "failed to executeCommand %s", command))
+			serr.SerError(fmt.Errorf("failed to execute command %s: %w", command, e))
 			return serr
 		}
 		return nil
@@ -207,7 +206,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 	if errMsg != "" && s.Notifier.IsOnError() {
 		msg, err := s.Notifier.MakeErrorHTML(r.Spec, r.Command, errMsg)
 		if err != nil {
-			return errors.Wrap(err, "can't make html email")
+			return fmt.Errorf("can't make html email: %w", err)
 		}
 		return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.Command, s.HostName), msg)
 	}
@@ -215,7 +214,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 	if errMsg == "" && s.Notifier.IsOnCompletion() {
 		msg, err := s.Notifier.MakeCompletionHTML(r.Spec, r.Command)
 		if err != nil {
-			return errors.Wrap(err, "can't make html email")
+			return fmt.Errorf("can't make html email: %w", err)
 		}
 		return s.Notifier.Send(fmt.Sprintf("completed %q on %s", r.Command, s.HostName), msg)
 	}
@@ -230,13 +229,13 @@ func (s *Scheduler) loadFromFileParser() error {
 
 	jss, err := s.CrontabParser.List()
 	if err != nil {
-		return errors.Wrapf(err, "failed to load file %s", s.CrontabParser.String())
+		return fmt.Errorf("failed to load file %s: %w", s.CrontabParser.String(), err)
 	}
 
 	for _, js := range jss {
 		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command}
 		if err = s.schedule(req); err != nil {
-			return errors.Wrapf(err, "can't add %s, %s", js.Spec, js.Command)
+			return fmt.Errorf("can't add %s, %s: %w", js.Spec, js.Command, err)
 		}
 	}
 	return nil

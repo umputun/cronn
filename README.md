@@ -1,7 +1,7 @@
 # cronn - cli cron replacement and scheduler container
 
 <div align="center">
-  <img class="logo" src="https://raw.githubusercontent.com/umputun/cronn/master/site/logo.png" width="355px" height="142px" alt="Cronn | cli cron replacement and scheduler container"/>
+  <img class="logo" src="https://raw.githubusercontent.com/umputun/cronn/master/site/docs/logo.png" width="355px" height="142px" alt="Cronn | cli cron replacement and scheduler container"/>
 </div>
 
 

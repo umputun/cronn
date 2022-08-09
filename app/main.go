@@ -30,6 +30,7 @@ var opts struct {
 	Resume         string        `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
 	ResumeConcur   int           `long:"resume-concur" env:"CRONN_RESUME_CONCUR" default:"1" description:"auto-resume concurrency level"`
 	UpdateEnable   bool          `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
+	UpdateInterval time.Duration `long:"update-interval" env:"CRONN_UPDATE_INTERVAL" default:"10s" description:"auto-update interval"`
 	JitterEnable   bool          `short:"j" long:"jitter" env:"CRONN_JITTER" description:"enable jitter"`
 	JitterDuration time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
 	DeDup          bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
@@ -98,8 +99,10 @@ func main() {
 	hupCh := signals(cancel) // handle SIGQUIT and SIGTERM
 
 	updateInterval := time.Duration(math.MaxInt64) // very long interval, effectively disabling automatic refresh
-	if opts.UpdateEnable {
-		updateInterval = 10 * time.Second
+	if opts.UpdateEnable && opts.UpdateInterval > 0 {
+		updateInterval = opts.UpdateInterval
+	} else {
+		log.Printf("[INFO] auto-update disabled")
 	}
 
 	var crontabParser service.CrontabParser

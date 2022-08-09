@@ -12,32 +12,36 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
-	"github.com/go-pkgz/repeater"
-	"github.com/pkg/errors"
+	"github.com/go-pkgz/syncs"
 	"github.com/robfig/cron/v3"
 
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/resumer"
 )
 
-//go:generate mockery -name Resumer -case snake
-//go:generate mockery -name CrontabParser -case snake
-//go:generate mockery -name Cron -case snake
-//go:generate mockery -name Notifier -case snake
+//go:generate moq -out mocks/resumer.go -pkg mocks -skip-ensure -fmt goimports . Resumer
+//go:generate moq -out mocks/crontab.go -pkg mocks -skip-ensure -fmt goimports . CrontabParser
+//go:generate moq -out mocks/cron.go -pkg mocks -skip-ensure -fmt goimports . Cron
+//go:generate moq -out mocks/notifier.go -pkg mocks -skip-ensure -fmt goimports . Notifier
+//go:generate moq -out mocks/dedupper.go -pkg mocks -skip-ensure -fmt goimports . Dedupper
+//go:generate moq -out mocks/repeater.go -pkg mocks -skip-ensure -fmt goimports . Repeater
+//go:generate moq -out mocks/schedule.go -pkg mocks -skip-ensure -fmt goimports . Schedule
 
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
 type Scheduler struct {
 	Cron
-	Resumer        Resumer
-	CrontabParser  CrontabParser
-	UpdatesEnabled bool
-	JitterEnabled  bool
-	Notifier       Notifier
-	DeDup          *DeDup
-	HostName       string
-	MaxLogLines    int
-	Repeater       *repeater.Repeater
-	Stdout         io.Writer
+	Resumer           Resumer
+	ResumeConcurrency int
+	CrontabParser     CrontabParser
+	UpdatesEnabled    bool
+	Jitter            time.Duration
+	Notifier          Notifier
+	DeDup             Dedupper
+	HostName          string
+	MaxLogLines       int
+	EnableLogPrefix   bool
+	Repeater          Repeater
+	Stdout            io.Writer
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -73,12 +77,31 @@ type Notifier interface {
 	MakeCompletionHTML(spec, command string) (string, error)
 }
 
+// Dedupper defines a locking primitive to register/unregister command in order to prevent dbl registration
+type Dedupper interface {
+	Add(key string) bool
+	Remove(key string)
+}
+
+// Repeater repeats failed function
+type Repeater interface {
+	Do(ctx context.Context, fun func() error, errors ...error) (err error)
+}
+
+// Schedule describes a job's duty cycle.
+type Schedule interface {
+	Next(time.Time) time.Time
+}
+
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
+	if s.ResumeConcurrency <= 0 {
+		s.ResumeConcurrency = 1
+	}
 	if s.Stdout == nil {
 		s.Stdout = os.Stdout
 	}
-	s.resumeInterrupted()
+	s.resumeInterrupted(s.ResumeConcurrency)
 
 	log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
 	go s.reload(ctx) // start background updater
@@ -98,7 +121,7 @@ func (s *Scheduler) schedule(r crontab.JobSpec) error {
 	log.Printf("[INFO] new cron, command %q", r.Command)
 	sched, e := cron.ParseStandard(r.Spec)
 	if e != nil {
-		return errors.Wrapf(e, "can't parse %s", r.Spec)
+		return fmt.Errorf("can't parse %s: %w", r.Spec, e)
 	}
 
 	id := s.Schedule(sched, s.jobFunc(r, sched))
@@ -106,7 +129,7 @@ func (s *Scheduler) schedule(r crontab.JobSpec) error {
 	return nil
 }
 
-func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob {
+func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
 	runJob := func(r crontab.JobSpec) error {
 		cmd, err := NewDayTemplate(time.Now()).Parse(r.Command)
@@ -116,7 +139,7 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 
 		dedupKey := cmd + "#" + r.Spec
 		if !s.DeDup.Add(dedupKey) {
-			return errors.Errorf("duplicated job %q ignored", dedupKey)
+			return fmt.Errorf("duplicated job %q ignored", dedupKey)
 		}
 		defer s.DeDup.Remove(dedupKey)
 
@@ -124,17 +147,17 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 
 		if err = s.executeCommand(cmd, s.Stdout); err != nil {
 			if e := s.notify(r, err.Error()); e != nil {
-				return errors.Wrap(err, "failed to notify")
+				return fmt.Errorf("failed to notify: %w", err)
 			}
 			return err
 		}
 
 		if rerr == nil {
 			if err = s.Resumer.OnFinish(rfile); err != nil {
-				return errors.Wrapf(err, "failed to finish resumer for %s", rfile)
+				return fmt.Errorf("failed to finish resumer for %s: %w", rfile, err)
 			}
 		}
-		return errors.Wrapf(rerr, "failed to initiate resumer for %+v", cmd)
+		return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 	}
 
 	return func() {
@@ -149,21 +172,22 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched cron.Schedule) cron.FuncJob
 }
 
 func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
-	if s.JitterEnabled {
-		time.Sleep(time.Millisecond * time.Duration(rand.Intn(10_000))) // jitter up to 10s
+	if s.Jitter > 0 {
+		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
 
 	err := s.Repeater.Do(context.Background(), func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		serr := NewErrorWriter(s.MaxLogLines)
-
-		prefixer := NewLogPrefixer(logWriter, command)
-
-		logWithErr := io.MultiWriter(prefixer, serr)
+		logWithErr := io.MultiWriter(logWriter, serr)
+		if s.EnableLogPrefix {
+			prefixer := NewLogPrefixer(logWriter, command)
+			logWithErr = io.MultiWriter(prefixer, serr)
+		}
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
 		if e := cmd.Run(); e != nil {
-			serr.SerError(errors.Wrapf(e, "failed to executeCommand %s", command))
+			serr.SerError(fmt.Errorf("failed to execute command %s: %w", command, e))
 			return serr
 		}
 		return nil
@@ -181,7 +205,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 	if errMsg != "" && s.Notifier.IsOnError() {
 		msg, err := s.Notifier.MakeErrorHTML(r.Spec, r.Command, errMsg)
 		if err != nil {
-			return errors.Wrap(err, "can't make html email")
+			return fmt.Errorf("can't make html email: %w", err)
 		}
 		return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.Command, s.HostName), msg)
 	}
@@ -189,7 +213,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 	if errMsg == "" && s.Notifier.IsOnCompletion() {
 		msg, err := s.Notifier.MakeCompletionHTML(r.Spec, r.Command)
 		if err != nil {
-			return errors.Wrap(err, "can't make html email")
+			return fmt.Errorf("can't make html email: %w", err)
 		}
 		return s.Notifier.Send(fmt.Sprintf("completed %q on %s", r.Command, s.HostName), msg)
 	}
@@ -204,13 +228,13 @@ func (s *Scheduler) loadFromFileParser() error {
 
 	jss, err := s.CrontabParser.List()
 	if err != nil {
-		return errors.Wrapf(err, "failed to load file %s", s.CrontabParser.String())
+		return fmt.Errorf("failed to load file %s: %w", s.CrontabParser.String(), err)
 	}
 
 	for _, js := range jss {
 		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command}
 		if err = s.schedule(req); err != nil {
-			return errors.Wrapf(err, "can't add %s, %s", js.Spec, js.Command)
+			return fmt.Errorf("can't add %s, %s: %w", js.Spec, js.Command, err)
 		}
 	}
 	return nil
@@ -239,24 +263,29 @@ func (s *Scheduler) reload(ctx context.Context) {
 	}
 }
 
-func (s *Scheduler) resumeInterrupted() {
+func (s *Scheduler) resumeInterrupted(concur int) {
 	cmds := s.Resumer.List()
 	if len(cmds) > 0 {
 		log.Printf("[INFO] interrupted commands detected - %+v", cmds)
 	}
 
 	go func() {
+		gr := syncs.NewSizedGroup(concur)
 		for _, cmd := range cmds {
-			if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
-				r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
-				if e := s.notify(r, err.Error()); e != nil {
-					log.Printf("[WARN] failed to notify, %v", e)
-					continue
+			cmd := cmd
+			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
+			gr.Go(func(_ context.Context) {
+				if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
+					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
+					if e := s.notify(r, err.Error()); e != nil {
+						log.Printf("[WARN] failed to notify, %v", e)
+						return
+					}
 				}
-			}
-			if err := s.Resumer.OnFinish(cmd.Fname); err != nil {
-				log.Printf("[WARN] failed to finish resumer for %s, %s", cmd.Fname, err)
-			}
+				if err := s.Resumer.OnFinish(cmd.Fname); err != nil {
+					log.Printf("[WARN] failed to finish resumer for %s, %s", cmd.Fname, err)
+				}
+			})
 		}
 	}()
 }

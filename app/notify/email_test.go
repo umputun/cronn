@@ -2,13 +2,13 @@ package notify
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/smtp"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

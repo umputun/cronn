@@ -13,7 +13,6 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
-	"github.com/pkg/errors"
 )
 
 // Email implements sender interface for VerifyHandler
@@ -64,7 +63,7 @@ func (em *Email) Send(subj, text string) error {
 	if client == nil { // if client not set make new net/smtp
 		c, err := em.client()
 		if err != nil {
-			return errors.Wrap(err, "failed to makre smtp client")
+			return fmt.Errorf("failed to makre smtp client: %w", err)
 		}
 		client = c
 	}
@@ -82,35 +81,35 @@ func (em *Email) Send(subj, text string) error {
 	if em.SMTPUserName != "" && em.SMTPPassword != "" {
 		auth := smtp.PlainAuth("", em.SMTPUserName, em.SMTPPassword, em.Host)
 		if err := client.Auth(auth); err != nil {
-			return errors.Wrapf(err, "failed to auth to smtp %s:%d", em.Host, em.Port)
+			return fmt.Errorf("failed to auth to smtp %s:%d %w", em.Host, em.Port, err)
 		}
 	}
 
 	if err := client.Mail(em.From); err != nil {
-		return errors.Wrapf(err, "bad from address %q", em.From)
+		return fmt.Errorf("bad from address %q: %w", em.From, err)
 	}
 
 	for _, rcpt := range em.To {
 		if err := client.Rcpt(rcpt); err != nil {
-			return errors.Wrapf(err, "bad to address %q", em.To)
+			return fmt.Errorf("bad to address %q: %w", em.To, err)
 		}
 	}
 
 	writer, err := client.Data()
 	if err != nil {
-		return errors.Wrap(err, "can't make email writer")
+		return fmt.Errorf("can't make email writer: %w", err)
 	}
 
 	msg, err := em.buildMessage(subj, text)
 	if err != nil {
-		return errors.Wrap(err, "can't make email message")
+		return fmt.Errorf("can't make email message: %w", err)
 	}
 	buf := bytes.NewBufferString(msg)
 	if _, err = buf.WriteTo(writer); err != nil {
-		return errors.Wrapf(err, "failed to send email body to %q", em.To)
+		return fmt.Errorf("failed to send email body to %q: %w", em.To, err)
 	}
 	if err = writer.Close(); err != nil {
-		log.Printf("[WARN] can't close smtp body writer, %v", err)
+		log.Printf("[WARN] can't close smtp body writer: %v", err)
 	}
 
 	if err = client.Quit(); err != nil {
@@ -130,28 +129,28 @@ func (em *Email) IsOnCompletion() bool { return em.OnCompletion }
 func (em *Email) client() (c *smtp.Client, err error) {
 	srvAddress := fmt.Sprintf("%s:%d", em.Host, em.Port)
 	if em.TLS {
-		tlsConf := &tls.Config{
+		tlsConf := &tls.Config{ //nolint
 			InsecureSkipVerify: false,
 			ServerName:         em.Host,
 		}
 		conn, e := tls.Dial("tcp", srvAddress, tlsConf)
 		if e != nil {
-			return nil, errors.Wrapf(e, "failed to dial smtp tls to %s", srvAddress)
+			return nil, fmt.Errorf("failed to dial smtp tls to %s: %w", srvAddress, e)
 		}
 		if c, err = smtp.NewClient(conn, em.Host); err != nil {
-			return nil, errors.Wrapf(err, "failed to make smtp client for %s", srvAddress)
+			return nil, fmt.Errorf("failed to make smtp client for %s: %w", srvAddress, err)
 		}
 		return c, nil
 	}
 
 	conn, err := net.DialTimeout("tcp", srvAddress, em.TimeOut)
 	if err != nil {
-		return nil, errors.Wrapf(err, "timeout connecting to %s", srvAddress)
+		return nil, fmt.Errorf("timeout connecting to %s: %w", srvAddress, err)
 	}
 
 	c, err = smtp.NewClient(conn, em.Host)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to dial")
+		return nil, fmt.Errorf("failed to dial to %s: %w", em.Host, err)
 	}
 	return c, nil
 }
@@ -175,11 +174,11 @@ func (em *Email) buildMessage(subj, msg string) (message string, err error) {
 	buff := &bytes.Buffer{}
 	qp := quotedprintable.NewWriter(buff)
 	if _, err := qp.Write([]byte(msg)); err != nil {
-		return "", err
+		return "", fmt.Errorf("quotedprintable write failed: %w", err)
 	}
 	// flush now, must NOT use defer, for small body, defer may cause buff.String() got empty body
 	if err := qp.Close(); err != nil {
-		return "", errors.Wrapf(err, "quotedprintable Write failed")
+		return "", fmt.Errorf("quotedprintable close failed: %w", err)
 	}
 	m := buff.String()
 	message += "\n" + m

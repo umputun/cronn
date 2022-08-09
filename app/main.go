@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"math"
 	"os"
 	"os/signal"
 	"runtime"
@@ -26,12 +24,14 @@ import (
 )
 
 var opts struct {
-	CrontabFile  string `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
-	Command      string `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
-	Resume       string `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
-	UpdateEnable bool   `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
-	JitterEnable bool   `short:"j" long:"jitter" env:"CRONN_JITTER" description:"up to 10s jitter"`
-	DeDup        bool   `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
+	CrontabFile    string        `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
+	Command        string        `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
+	Resume         string        `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
+	ResumeConcur   int           `long:"resume-concur" env:"CRONN_RESUME_CONCUR" default:"1" description:"auto-resume concurrency level"`
+	UpdateEnable   bool          `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
+	JitterEnable   bool          `short:"j" long:"jitter" env:"CRONN_JITTER" description:"enable jitter"`
+	JitterDuration time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
+	DeDup          bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -60,6 +60,7 @@ var opts struct {
 	Log struct {
 		Enabled         bool   `long:"enabled" env:"ENABLED" description:"enable logging"`
 		Debug           bool   `long:"debug" env:"DEBUG" description:"debug mode"`
+		EnablePrefix    bool   `long:"prefix" env:"PREFIX" description:"enable log prefix with current command"`
 		Filename        string `long:"filename" env:"FILENAME" description:"file to write logs to. Log to stdout if not specified"`
 		MaxSize         int    `long:"max-size" env:"MAX_SIZE" default:"100" description:"maximum size in megabytes of the log file before it gets rotated"`
 		MaxAge          int    `long:"max-age" env:"MAX_AGE" default:"0" description:"maximum number of days to retain old log files"`
@@ -73,9 +74,16 @@ var revision = "unknown"
 func main() {
 	fmt.Printf("cronn %s\n", revision)
 
-	if _, err := flags.Parse(&opts); err != nil {
+	p := flags.NewParser(&opts, flags.PassDoubleDash|flags.HelpFlag)
+	if _, err := p.Parse(); err != nil {
+		if err.(*flags.Error).Type != flags.ErrHelp {
+			fmt.Printf("%v\n", err)
+			os.Exit(1)
+		}
+		p.WriteHelp(os.Stderr)
 		os.Exit(2)
 	}
+
 	stdout := setupLogs()
 
 	defer func() {
@@ -103,18 +111,25 @@ func main() {
 	rptr := repeater.New(&strategy.Backoff{Repeats: opts.Repeater.Attempts, Duration: opts.Repeater.Duration,
 		Factor: opts.Repeater.Factor, Jitter: opts.Repeater.Jitter})
 
+	var jitterDuration time.Duration
+	if opts.JitterEnable {
+		jitterDuration = opts.JitterDuration
+	}
+
 	cronService := service.Scheduler{
-		Cron:           cron.New(),
-		Resumer:        resumer.New(opts.Resume, opts.Resume != ""),
-		CrontabParser:  crontabParser,
-		UpdatesEnabled: opts.UpdateEnable,
-		JitterEnabled:  opts.JitterEnable,
-		Repeater:       rptr,
-		Notifier:       makeNotifier(),
-		HostName:       makeHostName(),
-		MaxLogLines:    opts.Notify.MaxLogLines,
-		Stdout:         stdout,
-		DeDup:          service.NewDeDup(opts.DeDup),
+		Cron:              cron.New(),
+		Resumer:           resumer.New(opts.Resume, opts.Resume != ""),
+		ResumeConcurrency: opts.ResumeConcur,
+		CrontabParser:     crontabParser,
+		UpdatesEnabled:    opts.UpdateEnable,
+		Jitter:            jitterDuration,
+		Repeater:          rptr,
+		Notifier:          makeNotifier(),
+		HostName:          makeHostName(),
+		MaxLogLines:       opts.Notify.MaxLogLines,
+		EnableLogPrefix:   opts.Log.EnablePrefix,
+		Stdout:            stdout,
+		DeDup:             service.NewDeDup(opts.DeDup),
 	}
 
 	cronService.Do(ctx)
@@ -160,7 +175,7 @@ func makeHostName() string {
 
 func setupLogs() io.Writer {
 	if !opts.Log.Enabled {
-		log.Setup(log.Out(ioutil.Discard), log.Err(ioutil.Discard))
+		log.Setup(log.Out(io.Discard), log.Err(io.Discard))
 		return os.Stdout
 	}
 
@@ -192,7 +207,7 @@ func setupLogs() io.Writer {
 }
 
 func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
-	sigChan := make(chan os.Signal)
+	sigChan := make(chan os.Signal, 1)
 	hupCh = make(chan struct{})
 	go func() {
 		stacktrace := make([]byte, 8192)

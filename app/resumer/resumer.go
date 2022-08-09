@@ -29,7 +29,7 @@ type Cmd struct {
 // New makes resumer for given location. Enabled affects List only
 func New(location string, enabled bool) *Resumer {
 	if enabled {
-		if err := os.MkdirAll(location, 0700); err != nil {
+		if err := os.MkdirAll(location, 0o700); err != nil {
 			log.Printf("[DEBUG] can't make %s, %s", location, err)
 		}
 	}
@@ -44,7 +44,7 @@ func (r *Resumer) OnStart(cmd string) (string, error) {
 	seq := atomic.AddUint64(&r.seq, 1)
 	fname := fmt.Sprintf("%s/%d-%d.cronn", r.location, time.Now().UnixNano(), seq)
 	log.Printf("[DEBUG] create resumer file %s", fname)
-	return fname, ioutil.WriteFile(fname, []byte(cmd), 0600)
+	return fname, os.WriteFile(fname, []byte(cmd), 0o600)
 }
 
 // OnFinish removes cronn fileÒ
@@ -62,17 +62,23 @@ func (r *Resumer) List() (res []Cmd) {
 		return []Cmd{}
 	}
 
-	ff, err := ioutil.ReadDir(r.location)
+	entries, err := os.ReadDir(r.location)
 	if err != nil {
 		log.Printf("[WARN] can't get resume list for %s, %s", r.location, err)
 		return []Cmd{}
 	}
 
-	for _, finfo := range ff {
-		if finfo.IsDir() {
+	for _, entry := range entries {
+		if entry.IsDir() {
 			continue
 		}
-		if !strings.HasSuffix(finfo.Name(), ".cronn") {
+		if !strings.HasSuffix(entry.Name(), ".cronn") {
+			continue
+		}
+
+		finfo, err := entry.Info()
+		if err != nil {
+			log.Printf("[WARN] can't get resume info for %s, %s", entry.Name(), err)
 			continue
 		}
 
@@ -80,7 +86,7 @@ func (r *Resumer) List() (res []Cmd) {
 		// skip old files
 		if finfo.ModTime().Add(24 * time.Hour).Before(time.Now()) {
 			log.Printf("[DEBUG] resume file %s too old", fileName)
-			if err := os.Remove(fileName); err != nil {
+			if err = os.Remove(fileName); err != nil {
 				log.Printf("[WARN] can't delete %s, %s", fileName, err)
 			}
 			continue

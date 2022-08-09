@@ -43,6 +43,12 @@ func TestScheduler_Do(t *testing.T) {
 		ListFunc: func() ([]crontab.JobSpec, error) {
 			return []crontab.JobSpec{{Spec: "1 * * * *", Command: "test1"}, {Spec: "2 * * * *", Command: "test2"}}, nil
 		},
+		StringFunc: func() string {
+			return "test"
+		},
+		ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+			return nil, nil
+		},
 	}
 
 	svc := Scheduler{
@@ -68,7 +74,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 	t.Skip()
 	out := bytes.NewBuffer(nil)
 	cr := cron.New()
-	parser := crontab.New("testfiles/crontab", time.Minute)
+	parser := crontab.New("testfiles/crontab", time.Minute, nil)
 	res := resumer.New("/tmp", false)
 
 	notif := &mocks.NotifierMock{
@@ -334,7 +340,9 @@ func TestScheduler_DoWithResume(t *testing.T) {
 		},
 	}
 	parser := &mocks.CrontabParserMock{
-		ListFunc: func() ([]crontab.JobSpec, error) { return []crontab.JobSpec{}, nil },
+		ListFunc:    func() ([]crontab.JobSpec, error) { return []crontab.JobSpec{}, nil },
+		StringFunc:  func() string { return "test" },
+		ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) { return nil, nil },
 	}
 
 	svc := Scheduler{

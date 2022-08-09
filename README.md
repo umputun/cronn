@@ -58,10 +58,18 @@ weekday on midnight.
  
 ## Optional modes
 
+By default all the optional modes are disabled. This includes:
+
 - Logging mode
 - Debug mode: produces more debug info
 - Auto-resume mode: executes terminated task(s) on startup.
 - Auto-update mode: checks for changes in crontab file (`-f` mode only) and reloads updated jobs.
+- Reload crontab on SIGHUP signal
+- Notification mode: sends email notification on failed or passed jobs
+- De-duplication mode: prevents the same jobs to run in parallel
+- Repeater mode: repeats failed jobs
+- Rotated logs: creates rotated logs
+- Jitter mode: adds a random delay prior to execution of a job
 
 ### Auto-Resume
 
@@ -74,6 +82,14 @@ Note: it won't block usual, scheduled tasks and it is possible to have initial (
 - usually it is not necessary to map `$CRONN_RESUME` location to host's FS as we don't want it to survive container recreation. 
 However, it will survive container's restart.
 - by default resume jobs executed sequentially, but can be configured to run in parallel with `--resume-concur=2..N` option.
+
+### Auto-Update
+
+- auto-update mode is disabled by default. To enable it, add `--update` to the command line or set `$CRONN_UPDATE` environment variable.
+- if enabled, `cronn` will check for changes in crontab file (`-f` mode only) and reload updated jobs.
+- the check is performed every 10 seconds by default and can be changed with `--update-interval=<duration>` option.
+- user can send SIGHUP signal to `cronn` to force update check.
+- if user wishes to disable aut-update check but allow SIGHUP reloads the `--update-interval` can be set to `0s`. Pls note: in order to reload crontab file on SIGHUP signal update mode has to be enabled with `--update`.
 
 ### Repeater
 
@@ -118,6 +134,7 @@ Optional notifications are sent to the specified email address on job failure or
   -r, --resume=                   auto-resume location [$CRONN_RESUME]
       --resume-concur=            auto-resume concurrency level (default: 1) [$CRONN_RESUME_CONCUR]
   -u, --update                    auto-update mode [$CRONN_UPDATE]
+  -u, --update-interval=          auto-update mode interval (default: 10s) [$CRONN_UPDATE_INTERVAL]
   -j, --jitter                    enable jitter [$CRONN_JITTER]
       --jitter-duration=          jitter duration (default: 10s) [$CRONN_JITTER_DURATION]
       --dedup                     prevent duplicated jobs [$CRONN_DEDUP]

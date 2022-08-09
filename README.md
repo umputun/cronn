@@ -16,7 +16,7 @@ In addition `cronn` provides:
 - Supports wide range of date templates 
 - Optional email notification on failed or/and passed jobs
 - Optional jitter adding a random delay prior to execution of a job
-- Automatic restart of jobs in cronn (or container) failed unexpectedly
+- Automatic resume (restart) of jobs in cronn service or container failed unexpectedly
 - Reload crontab file on changes
 - Optional repeater for failed jobs
 - Optional de-duplication preventing the same jobs to run in parallel
@@ -24,16 +24,16 @@ In addition `cronn` provides:
 
 ## Basic usage
  
-- `cronn -c "30 23 * * 1-5 command arg1 arg2 ..."`
-- `cronn -c "@every 5s ls -la"`
-- `cronn -f crontab`
+- `cronn -c "30 23 * * 1-5 command arg1 arg2 ..."` - runs `command` with `arg1` and `arg2` every day at 23:30
+- `cronn -c "@every 5s ls -la"` - runs `ls -la` every 5 seconds
+- `cronn -f crontab` - runs jobs from the `crontab` file
 
 Scheduling can be defined as:
 
 - standard 5-parts crontab syntax `minute, hour, day-of-month, month, day-of-week`
 - @syntax (descriptors), like `@every 5m`, `@midnight`, `@daily`, `@yearly`, `@annually`, `@monthly`, `@weekly` and `@hourly`.
 
-Cronn also understands various day templates evaluated at the time of job's execution:
+Cronn also understands various day-realted templates evaluated at the time of job's execution:
 
 - `{{.YYYYMMDD}}` - current day in local TZ
 - `{{.YYYY}}` - current year
@@ -41,21 +41,76 @@ Cronn also understands various day templates evaluated at the time of job's exec
 - `{{.YY}}` - current year (short form)
 - `{{.MM}}` - current month
 - `{{.DD}}` - current day
-- `{{.ISODATE}` - day-time (local TZ) formatted as `2006-01-02T00:00:00.000Z`
+- `{{.ISODATE}` - day-time formatted as `2006-01-02T00:00:00.000Z` (RFC3339)
 - `{{.UNIX}}` - unix timestamp (in seconds)
 - `{{.UNIXMSEC}}` - unix timestamp (in milliseconds)
 
 
 Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
 cronn executes the command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
-weekday on midnight. 
+weekday on midnight.
+ 
+## Optional modes:
 
-## Application Options
+- Logging mode
+- Debug mode: produces more debug info
+- Auto-resume mode: executes terminated task(s) on startup.
+- Auto-update mode: checks for changes in crontab file (`-f` mode only) and reloads updated jobs.
+
+### Auto-Resume
+
+- auto-resume mode is disabled by default. To enable it, add `--resume=<directory>` to the command line or set `$CRONN_RESUME` environment variable.
+- each task creates a flag-file named as `<ts>-<seq>.cronn` in `$CRONN_RESUME` directory and removes this flag on completion.
+- flag file's content is the command line for the running job.
+- at the start time `cronn` will discover all flag files and will execute them sequentially in case if multiple flag files discovered. 
+Note: it won't block usual, scheduled tasks and it is possible to have initial (auto-resume) task running in parallel with regular tasks.
+- old resume files (>=24h) ignored 
+- usually it is not necessary to map `$CRONN_RESUME` location to host's FS as we don't want it to survive container recreation. 
+However, it will survive container's restart.
+- by default resume jobs executed sequentially, but can be configured to run in parallel with `--resume-concur=2..N` option.
+
+### Repeater
+
+- Optional repeater retries failed job multiple times. It uses backoff strategy with an exponential interval. 
+- Duration interval goes in steps with `last * math.Pow(factor, attempt)` increments. 
+- Optional jitter randomizes intervals a little bit. Factor = 1 effectively makes this strategy fixed with `duration` delay.
+
+### Deduplication
+
+Optional de-duplication prevents the same jobs to run in parallel. Jobs are identified by their command line and scheduling. 
+By default this option is off. To enable it, add `--dedup` to the command line or set `$CRONN_DEDUP` environment variable.
+
+### Notifications
+
+Optional notifications are sent to the specified email address on job failure or completion. User can define custom templates for notifications messages with `--notify.complere-template`  and `--notify.err-template` options.  The following templates are available:
+
+- `{{.Command}}` - the command with arguments
+- `{{.Spec}}` - the crontab specification
+- `{{.Host}}` - the hostname of the machine where the job is running
+- `{{.TS}}` - the time-stamp of event
+- `{{.Error}}` - the error message if any
+
+### Logging
+
+- In order to allow logging, add `--log.enabled` to the command line or set `$CRONN_LOG_ENABLED` environment variable.
+- By default logs send to stdout and errors to stderr.
+- To specify log file, add `--log.filename=<path>` to the command line or set `$CRONN_LOG_FILE` environment variable.
+- Files are rotated every according to `--log.max-size=<size>`, `--log.max-files=<files>` and `--log.max-age=<days>` options.
+- The maximum number of rotated backup files set with `--log.max-backups=<files>`.
+- To turn compression on, add `--log.enabled-compress` to the command line or set `$CRONN_LOG_ENABLED_COMPRESS` environment variable.
+
+## Things to know
+
+1. CTRL-C won't kill `cronn` process right away but will wait till job(s) completion
+2. each job runs as `sh -c cmd args...` to allow use of env and all other shell-related goodies
+
+## All application Options
 
 ```
   -f, --file=                     crontab file (default: crontab) [$CRONN_FILE]
   -c, --command=                  crontab single command [$CRONN_COMMAND]
   -r, --resume=                   auto-resume location [$CRONN_RESUME]
+      --resume-concur=            auto-resume concurrency level (default: 1) [$CRONN_RESUME_CONCUR]
   -u, --update                    auto-update mode [$CRONN_UPDATE]
   -j, --jitter                    enable jitter [$CRONN_JITTER]
       --jitter-duration=          jitter duration (default: 10s) [$CRONN_JITTER_DURATION]
@@ -97,34 +152,6 @@ Help Options:
   -h, --help                      Show this help message
 
 ```
- 
-## Optional modes:
-
-- Logging mode
-- Debug mode: produces more debug info
-- Auto-resume mode: executes terminated task(s) on startup.
-- Auto-update mode: checks for changes in crontab file (`-f` mode only) and reloads updated jobs.
-
-### Auto-Resume details
-
-- each task creates a flag file named as `<ts>-<seq>.cronn` in `$CRONN_RESUME` directory and removes this flag on completion.
-- flag file's content is the command line for the running job.
-- at the start time `cronn` will discover all flag files and will execute them sequentially in case if multiple flag files discovered. 
-Note: it won't block usual, scheduled tasks and it is possible to have initial (auto-resume) task running in parallel with regular tasks.
-- old resume files (>=24h) ignored 
-- usually it is not necessary to map `$CRONN_RESUME` location to host's FS as we don't want it to survive container recreation. 
-However, it will survive container's restart.
-
-### Repeater
-
-Optional repeater retries failed job multiple times. It uses backoff strategy with an exponential interval. 
-Duration interval goes in steps with `last * math.Pow(factor, attempt)` increments. Optional jitter randomizes intervals a little bit.
-Factor = 1 effectively makes this strategy fixed with `duration` delay.
-
-## Things to know
-
-1. CTRL-C won't kill `cronn` process right away but will wait till job(s) completion
-2. each job runs as `sh -c cmd args...` to allow use of env and all other shell-related goodies
 
 ## Credits
 

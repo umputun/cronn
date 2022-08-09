@@ -12,6 +12,7 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"github.com/go-pkgz/syncs"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 
@@ -30,17 +31,18 @@ import (
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
 type Scheduler struct {
 	Cron
-	Resumer         Resumer
-	CrontabParser   CrontabParser
-	UpdatesEnabled  bool
-	Jitter          time.Duration
-	Notifier        Notifier
-	DeDup           Dedupper
-	HostName        string
-	MaxLogLines     int
-	EnableLogPrefix bool
-	Repeater        Repeater
-	Stdout          io.Writer
+	Resumer           Resumer
+	ResumeConcurrency int
+	CrontabParser     CrontabParser
+	UpdatesEnabled    bool
+	Jitter            time.Duration
+	Notifier          Notifier
+	DeDup             Dedupper
+	HostName          string
+	MaxLogLines       int
+	EnableLogPrefix   bool
+	Repeater          Repeater
+	Stdout            io.Writer
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -94,10 +96,13 @@ type Schedule interface {
 
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
+	if s.ResumeConcurrency <= 0 {
+		s.ResumeConcurrency = 1
+	}
 	if s.Stdout == nil {
 		s.Stdout = os.Stdout
 	}
-	s.resumeInterrupted()
+	s.resumeInterrupted(s.ResumeConcurrency)
 
 	if s.UpdatesEnabled {
 		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
@@ -260,24 +265,28 @@ func (s *Scheduler) reload(ctx context.Context) {
 	}
 }
 
-func (s *Scheduler) resumeInterrupted() {
+func (s *Scheduler) resumeInterrupted(concur int) {
 	cmds := s.Resumer.List()
 	if len(cmds) > 0 {
 		log.Printf("[INFO] interrupted commands detected - %+v", cmds)
 	}
 
 	go func() {
+		gr := syncs.NewSizedGroup(concur)
 		for _, cmd := range cmds {
-			if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
-				r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
-				if e := s.notify(r, err.Error()); e != nil {
-					log.Printf("[WARN] failed to notify, %v", e)
-					continue
+			cmd := cmd
+			gr.Go(func(_ context.Context) {
+				if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
+					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
+					if e := s.notify(r, err.Error()); e != nil {
+						log.Printf("[WARN] failed to notify, %v", e)
+						return
+					}
 				}
-			}
-			if err := s.Resumer.OnFinish(cmd.Fname); err != nil {
-				log.Printf("[WARN] failed to finish resumer for %s, %s", cmd.Fname, err)
-			}
+				if err := s.Resumer.OnFinish(cmd.Fname); err != nil {
+					log.Printf("[WARN] failed to finish resumer for %s, %s", cmd.Fname, err)
+				}
+			})
 		}
 	}()
 }

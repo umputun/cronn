@@ -28,6 +28,7 @@ var opts struct {
 	CrontabFile    string        `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
 	Command        string        `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
 	Resume         string        `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
+	ResumeConcur   int           `long:"resume-concur" env:"CRONN_RESUME_CONCUR" default:"1" description:"auto-resume concurrency level"`
 	UpdateEnable   bool          `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
 	JitterEnable   bool          `short:"j" long:"jitter" env:"CRONN_JITTER" description:"enable jitter"`
 	JitterDuration time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
@@ -111,18 +112,19 @@ func main() {
 	}
 
 	cronService := service.Scheduler{
-		Cron:            cron.New(),
-		Resumer:         resumer.New(opts.Resume, opts.Resume != ""),
-		CrontabParser:   crontabParser,
-		UpdatesEnabled:  opts.UpdateEnable,
-		Jitter:          jitterDuration,
-		Repeater:        rptr,
-		Notifier:        makeNotifier(),
-		HostName:        makeHostName(),
-		MaxLogLines:     opts.Notify.MaxLogLines,
-		EnableLogPrefix: opts.Log.EnablePrefix,
-		Stdout:          stdout,
-		DeDup:           service.NewDeDup(opts.DeDup),
+		Cron:              cron.New(),
+		Resumer:           resumer.New(opts.Resume, opts.Resume != ""),
+		ResumeConcurrency: opts.ResumeConcur,
+		CrontabParser:     crontabParser,
+		UpdatesEnabled:    opts.UpdateEnable,
+		Jitter:            jitterDuration,
+		Repeater:          rptr,
+		Notifier:          makeNotifier(),
+		HostName:          makeHostName(),
+		MaxLogLines:       opts.Notify.MaxLogLines,
+		EnableLogPrefix:   opts.Log.EnablePrefix,
+		Stdout:            stdout,
+		DeDup:             service.NewDeDup(opts.DeDup),
 	}
 	signals(cancel) // handle SIGQUIT and SIGTERM
 	cronService.Do(ctx)

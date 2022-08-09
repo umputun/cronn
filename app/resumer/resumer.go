@@ -44,7 +44,7 @@ func (r *Resumer) OnStart(cmd string) (string, error) {
 	seq := atomic.AddUint64(&r.seq, 1)
 	fname := fmt.Sprintf("%s/%d-%d.cronn", r.location, time.Now().UnixNano(), seq)
 	log.Printf("[DEBUG] create resumer file %s", fname)
-	return fname, os.WriteFile(fname, []byte(cmd), 0600)
+	return fname, os.WriteFile(fname, []byte(cmd), 0o600)
 }
 
 // OnFinish removes cronn fileÒ
@@ -86,7 +86,7 @@ func (r *Resumer) List() (res []Cmd) {
 		// skip old files
 		if finfo.ModTime().Add(24 * time.Hour).Before(time.Now()) {
 			log.Printf("[DEBUG] resume file %s too old", fileName)
-			if err := os.Remove(fileName); err != nil {
+			if err = os.Remove(fileName); err != nil {
 				log.Printf("[WARN] can't delete %s, %s", fileName, err)
 			}
 			continue

@@ -103,9 +103,10 @@ func (s *Scheduler) Do(ctx context.Context) {
 	}
 	s.resumeInterrupted(s.ResumeConcurrency)
 
-	log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
-	go s.reload(ctx) // start background updater
-
+	if s.UpdatesEnabled {
+		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
+		go s.reload(ctx) // start background updater
+	}
 	if err := s.loadFromFileParser(); err != nil {
 		log.Printf("[WARN] can't load crontab file, %v", err)
 		return

@@ -1,0 +1,17 @@
+FROM  --platform=$BUILDPLATFORM squidfunk/mkdocs-material as build
+
+WORKDIR /build
+COPY site/ /build/
+COPY README.md /build/docs/index.md
+
+RUN \
+    sed -i 's|https://raw.githubusercontent.com/umputun/cronn/master/site/logo.png|logo.png|' /build/docs/index.md && \
+    sed -i 's|^.*https://github.com/umputun/cronn/workflows/build/badge.svg.*$||' /build/docs/index.md
+RUN mkdocs build
+
+
+FROM ghcr.io/umputun/reproxy
+COPY --from=build /build/site /srv/site
+EXPOSE 8080
+USER app
+ENTRYPOINT ["/srv/reproxy", "--assets.location=/srv/site"]

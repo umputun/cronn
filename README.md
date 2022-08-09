@@ -1,5 +1,10 @@
 # cronn - cli cron replacement and scheduler container
 
+<div align="center">
+  <img class="logo" src="https://raw.githubusercontent.com/umputun/cronn/master/site/logo.png" width="355px" height="142px" alt="Cronn | cli cron replacement and scheduler container"/>
+</div>
+
+
 [![Build Status](https://github.com/umputun/cronn/workflows/build/badge.svg)](https://github.com/umputun/cronn/actions) [![Coverage Status](https://coveralls.io/repos/github/umputun/cronn/badge.svg?branch=master)](https://coveralls.io/github/umputun/cronn?branch=master)
 
 

@@ -7,6 +7,7 @@
 
 [![Build Status](https://github.com/umputun/cronn/workflows/build/badge.svg)](https://github.com/umputun/cronn/actions) [![Coverage Status](https://coveralls.io/repos/github/umputun/cronn/badge.svg?branch=master)](https://coveralls.io/github/umputun/cronn?branch=master)
 
+Cronn is a crontab jobs scheduler with some nice extras. It allows to run commands on specified time intervals and can be used directly as well as from a container.
 
 ## Use cases
 
@@ -55,7 +56,7 @@ Templates can be passed in command line or crontab file and will be evaluated an
 cronn executes the command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight.
  
-## Optional modes:
+## Optional modes
 
 - Logging mode
 - Debug mode: produces more debug info

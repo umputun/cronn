@@ -275,6 +275,7 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 		gr := syncs.NewSizedGroup(concur)
 		for _, cmd := range cmds {
 			cmd := cmd
+			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(_ context.Context) {
 				if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}

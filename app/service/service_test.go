@@ -338,11 +338,12 @@ func TestScheduler_DoWithResume(t *testing.T) {
 	}
 
 	svc := Scheduler{
-		Cron:           cr,
-		Resumer:        resmr,
-		CrontabParser:  parser,
-		UpdatesEnabled: false,
-		Repeater:       repeater.New(&strategy.Once{}),
+		Cron:              cr,
+		Resumer:           resmr,
+		ResumeConcurrency: 1,
+		CrontabParser:     parser,
+		UpdatesEnabled:    false,
+		Repeater:          repeater.New(&strategy.Once{}),
 	}
 
 	svc.Do(ctx)

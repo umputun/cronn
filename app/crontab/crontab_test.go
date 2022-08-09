@@ -79,7 +79,7 @@ func TestParser_Changes(t *testing.T) {
 	ch, err := ctab.Changes(ctx)
 	require.NoError(t, err)
 	updJobs := <-ch
-	assert.Len(t, updJobs, 3)
+	require.Len(t, updJobs, 3)
 	assert.Equal(t, "3 * * * *", updJobs[2].Spec)
 	jobs, err = ctab.List()
 	require.NoError(t, err)

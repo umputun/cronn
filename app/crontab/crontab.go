@@ -75,8 +75,8 @@ func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 	}
 
 	ticker := time.NewTicker(p.updInterval)
-	defer ticker.Stop()
 	go func() {
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():

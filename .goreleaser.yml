@@ -46,9 +46,11 @@ nfpms:
     bindir: /usr/bin
     epoch: 1
     release: 1
-    files:
-      "cronn.service": "/etc/systemd/system/cronn.service"
-      "crontab.example": "/etc/cronntab"
+    contents:
+      - src: cronn.service
+        dst: /etc/systemd/system/cronn.service
+      - src: crontab.example
+        dst: /etc/cronntab
     scripts:
       postinstall: "scripts/postinstall.sh"
       preremove: "scripts/preremove.sh"

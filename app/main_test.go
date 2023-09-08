@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -36,7 +35,7 @@ func Test_setupLogsWithLogsDisabled(t *testing.T) {
 }
 
 func Test_setupLogsToFile(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "")
+	tmpfile, err := os.CreateTemp("", "")
 	require.NoError(t, err)
 
 	opts.Log.Enabled = true

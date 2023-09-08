@@ -3,7 +3,6 @@ package resumer
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"strings"
@@ -91,7 +90,7 @@ func (r *Resumer) List() (res []Cmd) {
 			}
 			continue
 		}
-		data, err := ioutil.ReadFile(fileName) // nolint gosec
+		data, err := os.ReadFile(fileName) // nolint gosec
 		if err != nil {
 			log.Printf("[WARN] failed to read resume file %s, %s", fileName, err)
 			continue

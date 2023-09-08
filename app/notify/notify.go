@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"io/ioutil"
 	"os"
 	"time"
 
@@ -26,7 +25,7 @@ func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
 	res.errorTemplate = defaultErrorTemplate
 	res.completionTemplate = defaultCompletionTemplate
 	if errTmplFile != "" {
-		data, err := ioutil.ReadFile(errTmplFile) // nolint gosec
+		data, err := os.ReadFile(errTmplFile) // nolint gosec
 		if err == nil {
 			res.errorTemplate = string(data)
 		} else {
@@ -34,7 +33,7 @@ func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
 		}
 	}
 	if complTmplFile != "" {
-		data, err := ioutil.ReadFile(complTmplFile) // nolint gosec
+		data, err := os.ReadFile(complTmplFile) // nolint gosec
 		if err == nil {
 			res.completionTemplate = string(data)
 		} else {

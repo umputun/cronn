@@ -2,7 +2,6 @@ package crontab
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -52,7 +51,7 @@ func TestParser_List(t *testing.T) {
 }
 
 func TestParser_Changes(t *testing.T) {
-	tmp, err := ioutil.TempFile("", "crontab")
+	tmp, err := os.CreateTemp("", "crontab")
 	require.NoError(t, err)
 	defer func() {
 		_ = tmp.Close()
@@ -87,7 +86,7 @@ func TestParser_Changes(t *testing.T) {
 }
 
 func TestParser_ChangesHup(t *testing.T) {
-	tmp, err := ioutil.TempFile("", "crontab")
+	tmp, err := os.CreateTemp("", "crontab")
 	require.NoError(t, err)
 	defer func() {
 		_ = tmp.Close()

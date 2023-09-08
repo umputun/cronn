@@ -1,14 +1,17 @@
+run:
+  timeout: 5m
+  output:
+    format: tab
+  skip-dirs:
+    - vendor
+
 linters-settings:
   govet:
     check-shadowing: true
   golint:
-    min-confidence: 0.8
-  gocyclo:
-    min-complexity: 15
+    min-confidence: 0.1
   maligned:
     suggest-new: true
-  dupl:
-    threshold: 100
   goconst:
     min-len: 2
     min-occurrences: 2
@@ -25,25 +28,22 @@ linters-settings:
       - wrapperFunc
       - hugeParam
       - rangeValCopy
+      - singleCaseSwitch
+      - ifElseChain
 
 linters:
-  disable-all: true
   enable:
     - megacheck
     - revive
     - govet
     - unconvert
     - megacheck
-    - structcheck
     - gas
-    - gocyclo
+    - dupl
     - misspell
-    - unparam
-    - varcheck
-    - deadcode
+    - unused
     - typecheck
     - ineffassign
-    - varcheck
     - stylecheck
     - gochecknoinits
     - exportloopref
@@ -51,21 +51,22 @@ linters:
     - nakedret
     - gosimple
     - prealloc
-
   fast: false
-
-run:
-  modules-download-mode: vendor
-  skip-dirs:
-    - vendor
-  concurrency: 4
+  disable-all: true
 
 issues:
   exclude-rules:
-    - text: "weak cryptographic primitive"
+    - text: "package-comments: should have a package comment"
+      linters:
+        - revive
+    - text: "at least one file in a package should have a package comment"
+      linters:
+        - stylecheck
+    - text: "should have a package comment, unless it's in another file for this package"
+      linters:
+        - golint
+    - path: _test\.go
       linters:
         - gosec
+        - dupl
   exclude-use-default: false
-
-service:
-  golangci-lint-version: 1.41.x

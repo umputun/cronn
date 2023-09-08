@@ -1,7 +1,6 @@
 package resumer
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -18,7 +17,7 @@ func TestResumer_OnStart(t *testing.T) {
 	assert.Nil(t, err)
 	t.Log(s)
 
-	data, err := ioutil.ReadFile(s) // nolint gosec
+	data, err := os.ReadFile(s) // nolint gosec
 	assert.Nil(t, err)
 	assert.Equal(t, "cmd 1 2 blah", string(data))
 }
@@ -32,7 +31,7 @@ func TestResumer_OnFinish(t *testing.T) {
 	err = r.OnFinish(s)
 
 	assert.Nil(t, err)
-	_, err = ioutil.ReadFile(s) // nolint gosec
+	_, err = os.ReadFile(s) // nolint gosec
 	assert.NotNil(t, err)
 }
 
@@ -47,7 +46,7 @@ func TestResumer_List(t *testing.T) {
 	_, e = r.OnStart("cmd3 blah")
 	assert.Nil(t, e)
 
-	err := ioutil.WriteFile("/tmp/resumer.test/old.cronn", []byte("something"), 0600) //nolint
+	err := os.WriteFile("/tmp/resumer.test/old.cronn", []byte("something"), 0600) //nolint
 	require.NoError(t, err)
 	defer os.Remove("/tmp/resumer.test/old.cronn")
 

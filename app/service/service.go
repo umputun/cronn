@@ -70,7 +70,7 @@ type Cron interface {
 
 // Notifier interface defines notification delivery on failed executions
 type Notifier interface {
-	Send(subj, text string) error
+	Send(ctx context.Context, subj, text string) error
 	IsOnError() bool
 	IsOnCompletion() bool
 	MakeErrorHTML(spec, command, errorLog string) (string, error)
@@ -147,7 +147,7 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 		rfile, rerr := s.Resumer.OnStart(cmd)
 
 		if err = s.executeCommand(cmd, s.Stdout); err != nil {
-			if e := s.notify(r, err.Error()); e != nil {
+			if e := s.notify(context.TODO(), r, err.Error()); e != nil {
 				return fmt.Errorf("failed to notify: %w", err)
 			}
 			return err
@@ -197,7 +197,7 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 	return err
 }
 
-func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
+func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string) error {
 
 	if s.Notifier == nil || reflect.ValueOf(s.Notifier).IsNil() {
 		return nil
@@ -208,7 +208,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 		if err != nil {
 			return fmt.Errorf("can't make html email: %w", err)
 		}
-		return s.Notifier.Send(fmt.Sprintf("failed %q on %s", r.Command, s.HostName), msg)
+		return s.Notifier.Send(ctx, fmt.Sprintf("failed %q on %s", r.Command, s.HostName), msg)
 	}
 
 	if errMsg == "" && s.Notifier.IsOnCompletion() {
@@ -216,7 +216,7 @@ func (s *Scheduler) notify(r crontab.JobSpec, errMsg string) error {
 		if err != nil {
 			return fmt.Errorf("can't make html email: %w", err)
 		}
-		return s.Notifier.Send(fmt.Sprintf("completed %q on %s", r.Command, s.HostName), msg)
+		return s.Notifier.Send(ctx, fmt.Sprintf("completed %q on %s", r.Command, s.HostName), msg)
 	}
 
 	return nil
@@ -275,10 +275,10 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 		for _, cmd := range cmds {
 			cmd := cmd
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
-			gr.Go(func(_ context.Context) {
+			gr.Go(func(ctx context.Context) {
 				if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
-					if e := s.notify(r, err.Error()); e != nil {
+					if e := s.notify(ctx, r, err.Error()); e != nil {
 						log.Printf("[WARN] failed to notify, %v", e)
 						return
 					}

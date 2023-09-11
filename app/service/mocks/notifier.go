@@ -4,36 +4,37 @@
 package mocks
 
 import (
+	"context"
 	"sync"
 )
 
 // NotifierMock is a mock implementation of service.Notifier.
 //
-// 	func TestSomethingThatUsesNotifier(t *testing.T) {
+//	func TestSomethingThatUsesNotifier(t *testing.T) {
 //
-// 		// make and configure a mocked service.Notifier
-// 		mockedNotifier := &NotifierMock{
-// 			IsOnCompletionFunc: func() bool {
-// 				panic("mock out the IsOnCompletion method")
-// 			},
-// 			IsOnErrorFunc: func() bool {
-// 				panic("mock out the IsOnError method")
-// 			},
-// 			MakeCompletionHTMLFunc: func(spec string, command string) (string, error) {
-// 				panic("mock out the MakeCompletionHTML method")
-// 			},
-// 			MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
-// 				panic("mock out the MakeErrorHTML method")
-// 			},
-// 			SendFunc: func(subj string, text string) error {
-// 				panic("mock out the Send method")
-// 			},
-// 		}
+//		// make and configure a mocked service.Notifier
+//		mockedNotifier := &NotifierMock{
+//			IsOnCompletionFunc: func() bool {
+//				panic("mock out the IsOnCompletion method")
+//			},
+//			IsOnErrorFunc: func() bool {
+//				panic("mock out the IsOnError method")
+//			},
+//			MakeCompletionHTMLFunc: func(spec string, command string) (string, error) {
+//				panic("mock out the MakeCompletionHTML method")
+//			},
+//			MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
+//				panic("mock out the MakeErrorHTML method")
+//			},
+//			SendFunc: func(ctx context.Context, subj string, text string) error {
+//				panic("mock out the Send method")
+//			},
+//		}
 //
-// 		// use mockedNotifier in code that requires service.Notifier
-// 		// and then make assertions.
+//		// use mockedNotifier in code that requires service.Notifier
+//		// and then make assertions.
 //
-// 	}
+//	}
 type NotifierMock struct {
 	// IsOnCompletionFunc mocks the IsOnCompletion method.
 	IsOnCompletionFunc func() bool
@@ -48,7 +49,7 @@ type NotifierMock struct {
 	MakeErrorHTMLFunc func(spec string, command string, errorLog string) (string, error)
 
 	// SendFunc mocks the Send method.
-	SendFunc func(subj string, text string) error
+	SendFunc func(ctx context.Context, subj string, text string) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -76,6 +77,8 @@ type NotifierMock struct {
 		}
 		// Send holds details about calls to the Send method.
 		Send []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Subj is the subj argument value.
 			Subj string
 			// Text is the text argument value.
@@ -104,7 +107,8 @@ func (mock *NotifierMock) IsOnCompletion() bool {
 
 // IsOnCompletionCalls gets all the calls that were made to IsOnCompletion.
 // Check the length with:
-//     len(mockedNotifier.IsOnCompletionCalls())
+//
+//	len(mockedNotifier.IsOnCompletionCalls())
 func (mock *NotifierMock) IsOnCompletionCalls() []struct {
 } {
 	var calls []struct {
@@ -130,7 +134,8 @@ func (mock *NotifierMock) IsOnError() bool {
 
 // IsOnErrorCalls gets all the calls that were made to IsOnError.
 // Check the length with:
-//     len(mockedNotifier.IsOnErrorCalls())
+//
+//	len(mockedNotifier.IsOnErrorCalls())
 func (mock *NotifierMock) IsOnErrorCalls() []struct {
 } {
 	var calls []struct {
@@ -161,7 +166,8 @@ func (mock *NotifierMock) MakeCompletionHTML(spec string, command string) (strin
 
 // MakeCompletionHTMLCalls gets all the calls that were made to MakeCompletionHTML.
 // Check the length with:
-//     len(mockedNotifier.MakeCompletionHTMLCalls())
+//
+//	len(mockedNotifier.MakeCompletionHTMLCalls())
 func (mock *NotifierMock) MakeCompletionHTMLCalls() []struct {
 	Spec    string
 	Command string
@@ -198,7 +204,8 @@ func (mock *NotifierMock) MakeErrorHTML(spec string, command string, errorLog st
 
 // MakeErrorHTMLCalls gets all the calls that were made to MakeErrorHTML.
 // Check the length with:
-//     len(mockedNotifier.MakeErrorHTMLCalls())
+//
+//	len(mockedNotifier.MakeErrorHTMLCalls())
 func (mock *NotifierMock) MakeErrorHTMLCalls() []struct {
 	Spec     string
 	Command  string
@@ -216,31 +223,36 @@ func (mock *NotifierMock) MakeErrorHTMLCalls() []struct {
 }
 
 // Send calls SendFunc.
-func (mock *NotifierMock) Send(subj string, text string) error {
+func (mock *NotifierMock) Send(ctx context.Context, subj string, text string) error {
 	if mock.SendFunc == nil {
 		panic("NotifierMock.SendFunc: method is nil but Notifier.Send was just called")
 	}
 	callInfo := struct {
+		Ctx  context.Context
 		Subj string
 		Text string
 	}{
+		Ctx:  ctx,
 		Subj: subj,
 		Text: text,
 	}
 	mock.lockSend.Lock()
 	mock.calls.Send = append(mock.calls.Send, callInfo)
 	mock.lockSend.Unlock()
-	return mock.SendFunc(subj, text)
+	return mock.SendFunc(ctx, subj, text)
 }
 
 // SendCalls gets all the calls that were made to Send.
 // Check the length with:
-//     len(mockedNotifier.SendCalls())
+//
+//	len(mockedNotifier.SendCalls())
 func (mock *NotifierMock) SendCalls() []struct {
+	Ctx  context.Context
 	Subj string
 	Text string
 } {
 	var calls []struct {
+		Ctx  context.Context
 		Subj string
 		Text string
 	}

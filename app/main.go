@@ -12,6 +12,7 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	ntf "github.com/go-pkgz/notify"
 	"github.com/go-pkgz/repeater"
 	"github.com/go-pkgz/repeater/strategy"
 	"github.com/robfig/cron/v3"
@@ -52,6 +53,7 @@ var opts struct {
 		SMTPUsername       string        `long:"smtp-username" env:"SMTP_USERNAME" description:"SMTP user name"`
 		SMTPPassword       string        `long:"smtp-password" env:"SMTP_PASSWORD" description:"SMTP password"`
 		SMTPTLS            bool          `long:"smtp-tls" env:"SMTP_TLS" description:"enable SMTP TLS"`
+		SMTPStartTLS       bool          `long:"smtp-starttls" env:"SMTP_STARTTLS" description:"enable SMTP StartTLS"`
 		SMTPTimeOut        time.Duration `long:"smtp-timeout" env:"SMTP_TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
 		From               string        `long:"from" env:"FROM" description:"SMTP from email"`
 		To                 []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
@@ -140,30 +142,34 @@ func main() {
 }
 
 func makeNotifier() *notify.Service {
-
 	if !opts.Notify.EnabledError && !opts.Notify.EnabledCompletion {
 		return nil
 	}
-
-	from := opts.Notify.From
-	if from == "" {
-		from = "cronn@" + makeHostName()
+	if opts.Notify.From == "" {
+		opts.Notify.From = "cronn@" + makeHostName()
 	}
-
-	email := notify.NewEmailClient(notify.EmailParams{
-		Host:         opts.Notify.SMTPHost,
-		Port:         opts.Notify.SMTPPort,
-		From:         from,
-		To:           opts.Notify.To,
-		TLS:          opts.Notify.SMTPTLS,
-		SMTPUserName: opts.Notify.SMTPUsername,
-		SMTPPassword: opts.Notify.SMTPPassword,
-		TimeOut:      opts.Notify.SMTPTimeOut,
-		ContentType:  "text/html",
-		OnError:      opts.Notify.EnabledError,
-		OnCompletion: opts.Notify.EnabledCompletion,
-	})
-	return notify.NewService(email, opts.Notify.ErrorTemplate, opts.Notify.CompletionTemplate)
+	return notify.NewService(
+		notify.Params{
+			EnabledError:       opts.Notify.EnabledError,
+			EnabledCompletion:  opts.Notify.EnabledCompletion,
+			ErrorTemplate:      opts.Notify.ErrorTemplate,
+			CompletionTemplate: opts.Notify.CompletionTemplate,
+		},
+		notify.SendersParams{
+			SMTPParams: ntf.SMTPParams{
+				Host:        opts.Notify.SMTPHost,
+				Port:        opts.Notify.SMTPPort,
+				TLS:         opts.Notify.SMTPTLS,
+				StartTLS:    opts.Notify.SMTPStartTLS,
+				Username:    opts.Notify.SMTPUsername,
+				Password:    opts.Notify.SMTPPassword,
+				TimeOut:     opts.Notify.SMTPTimeOut,
+				ContentType: "text/html",
+				Charset:     "utf-8",
+			},
+			FromEmail: opts.Notify.From,
+			ToEmails:  opts.Notify.To,
+		})
 }
 
 func makeHostName() string {

@@ -26,7 +26,6 @@ jobs:
           cat $GITHUB_WORKSPACE/profile.cov_tmp | grep -v "mocks" > $GITHUB_WORKSPACE/profile.cov
         working-directory: app
         env:
-          GOFLAGS: "-mod=vendor"
           TZ: "America/Chicago"
 
       - name: golangci-lint
@@ -35,26 +34,24 @@ jobs:
           version: latest
 
       - name: install goveralls
-        run: GO111MODULE=off go get -u -v github.com/mattn/goveralls
+        run: go install github.com/mattn/goveralls@latest
 
       - name: submit coverage
         run: |
-          export GIT_BRANCH=$GITHUB_REF
-          $(go env GOPATH)/bin/goveralls -service="github" -coverprofile=$GITHUB_WORKSPACE/profile.cov
+          goveralls -service="github" -coverprofile=$GITHUB_WORKSPACE/profile.cov
         working-directory: app
         env:
           COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: set up QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v2
 
       - name: set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v2
 
       - name: available platforms
         run: echo ${{ steps.buildx.outputs.platforms }}
-
 
       - name: build and deploy master image to ghcr.io and dockerhub
         if: ${{ github.ref == 'refs/heads/master' }}

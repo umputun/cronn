@@ -3,49 +3,93 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"html/template"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"github.com/go-pkgz/notify"
 )
+
+//go:generate moq -out mocks/notifier.go -pkg mocks -skip-ensure -fmt goimports ../../vendor/github.com/go-pkgz/notify Notifier
 
 // Service warps email client and template management
 type Service struct {
-	*Email
+	destinations []notify.Notifier
+
+	fromEmail string
+	toEmail   []string
+
+	onCompletion       bool
+	onError            bool
 	errorTemplate      string
 	completionTemplate string
 }
 
+// Params which are used in all notify destinations
+type Params struct {
+	EnabledError       bool
+	EnabledCompletion  bool
+	ErrorTemplate      string
+	CompletionTemplate string
+}
+
+// SendersParams contains params specific for notify destinations
+// like email, slack, telegram or webhook
+type SendersParams struct {
+	notify.SMTPParams
+	FromEmail string
+	ToEmails  []string
+}
+
 // NewService makes notification service with optional template files
-func NewService(email *Email, errTmplFile, complTmplFile string) *Service {
-	res := Service{Email: email}
+func NewService(notifyParams Params, emailParams SendersParams) *Service {
+	emailService := notify.NewEmail(emailParams.SMTPParams)
+
+	res := Service{
+		destinations: []notify.Notifier{emailService},
+		fromEmail:    emailParams.FromEmail,
+		toEmail:      emailParams.ToEmails,
+		onError:      notifyParams.EnabledError,
+		onCompletion: notifyParams.EnabledCompletion,
+	}
 
 	res.errorTemplate = defaultErrorTemplate
 	res.completionTemplate = defaultCompletionTemplate
-	if errTmplFile != "" {
-		data, err := os.ReadFile(errTmplFile) // nolint gosec
+	if notifyParams.ErrorTemplate != "" {
+		data, err := os.ReadFile(notifyParams.ErrorTemplate) // nolint gosec
 		if err == nil {
 			res.errorTemplate = string(data)
 		} else {
-			log.Printf("[WARN] can't open email template file %s, %v", errTmplFile, err)
+			log.Printf("[WARN] can't open email template file %s, %v", notifyParams.ErrorTemplate, err)
 		}
 	}
-	if complTmplFile != "" {
-		data, err := os.ReadFile(complTmplFile) // nolint gosec
+	if notifyParams.CompletionTemplate != "" {
+		data, err := os.ReadFile(notifyParams.CompletionTemplate) // nolint gosec
 		if err == nil {
 			res.completionTemplate = string(data)
 		} else {
-			log.Printf("[WARN] can't open email template file %s, %v", complTmplFile, err)
+			log.Printf("[WARN] can't open email template file %s, %v", notifyParams.CompletionTemplate, err)
 		}
 	}
 
 	return &res
 }
 
+// Send notification, currently only email is supported
+func (s *Service) Send(ctx context.Context, subj, text string) error {
+	emailSubj := url.QueryEscape(subj)
+	emails := strings.Join(s.toEmail, ",")
+	emailDestination := fmt.Sprintf("mailto:%s?from=%s&subject=%s", emails, s.fromEmail, emailSubj)
+	return notify.Send(ctx, s.destinations, emailDestination, text)
+}
+
 // MakeErrorHTML creates error html body from errorTemplate
-func (s Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
+func (s *Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
 	data := struct {
 		Spec    string
 		Command string
@@ -72,7 +116,7 @@ func (s Service) MakeErrorHTML(spec, command, errorLog string) (string, error) {
 }
 
 // MakeCompletionHTML creates error html body from completionTemplate
-func (s Service) MakeCompletionHTML(spec, command string) (string, error) {
+func (s *Service) MakeCompletionHTML(spec, command string) (string, error) {
 	data := struct {
 		Spec    string
 		Command string
@@ -96,6 +140,12 @@ func (s Service) MakeCompletionHTML(spec, command string) (string, error) {
 	}
 	return buf.String(), nil
 }
+
+// IsOnError status enabling on-error notification
+func (s *Service) IsOnError() bool { return s.onError }
+
+// IsOnCompletion status enabling on-passed notification
+func (s *Service) IsOnCompletion() bool { return s.onCompletion }
 
 var (
 	defaultErrorTemplate = `<!DOCTYPE html>

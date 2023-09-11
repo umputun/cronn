@@ -78,7 +78,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 	res := resumer.New("/tmp", false)
 
 	notif := &mocks.NotifierMock{
-		SendFunc:           func(subj string, text string) error { return nil },
+		SendFunc:           func(ctx context.Context, destination string, text string) error { return nil },
 		IsOnErrorFunc:      func() bool { return true },
 		IsOnCompletionFunc: func() bool { return false },
 		MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
@@ -182,7 +182,7 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	}
 
 	notif := &mocks.NotifierMock{
-		SendFunc:           func(subj string, text string) error { return nil },
+		SendFunc:           func(ctx context.Context, destination string, text string) error { return nil },
 		IsOnErrorFunc:      func() bool { return true },
 		IsOnCompletionFunc: func() bool { return false },
 		MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
@@ -205,7 +205,7 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 
 func TestScheduler_notifyOnError(t *testing.T) {
 	notif := &mocks.NotifierMock{
-		SendFunc: func(subj string, text string) error {
+		SendFunc: func(ctx context.Context, destination string, text string) error {
 			return nil
 		},
 		IsOnErrorFunc: func() bool {
@@ -220,7 +220,7 @@ func TestScheduler_notifyOnError(t *testing.T) {
 	}
 
 	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
-	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "message")
+	err := svc.notify(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "message")
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, len(notif.SendCalls()))
@@ -231,7 +231,7 @@ func TestScheduler_notifyOnError(t *testing.T) {
 func TestScheduler_notifyOnCompletion(t *testing.T) {
 
 	notif := &mocks.NotifierMock{
-		SendFunc: func(subj string, text string) error {
+		SendFunc: func(ctx context.Context, destination string, text string) error {
 			return nil
 		},
 		IsOnCompletionFunc: func() bool {
@@ -244,8 +244,38 @@ func TestScheduler_notifyOnCompletion(t *testing.T) {
 		},
 	}
 	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
-	err := svc.notify(crontab.JobSpec{Spec: "@startup", Command: "ls -la"}, "")
+	err := svc.notify(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "ls -la"}, "")
 	require.NoError(t, err)
+
+	assert.Equal(t, 1, len(notif.SendCalls()))
+	assert.Equal(t, 1, len(notif.IsOnCompletionCalls()))
+	assert.Equal(t, 1, len(notif.MakeCompletionHTMLCalls()))
+}
+
+func TestScheduler_notifyContextCancellation(t *testing.T) {
+	notif := &mocks.NotifierMock{
+		SendFunc: func(ctx context.Context, destination string, text string) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return nil
+			}
+		},
+		IsOnCompletionFunc: func() bool {
+			return true
+		},
+		MakeCompletionHTMLFunc: func(spec string, command string) (string, error) {
+			assert.Equal(t, spec, "@startup")
+			assert.Equal(t, command, "ls -la")
+			return "email msg", nil
+		},
+	}
+	svc := Scheduler{MaxLogLines: 10, Notifier: notif, Repeater: repeater.New(&strategy.Once{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := svc.notify(ctx, crontab.JobSpec{Spec: "@startup", Command: "ls -la"}, "")
+	require.EqualError(t, err, "context canceled")
 
 	assert.Equal(t, 1, len(notif.SendCalls()))
 	assert.Equal(t, 1, len(notif.IsOnCompletionCalls()))

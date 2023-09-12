@@ -16,6 +16,16 @@ func TestService_EmptyDestinations(t *testing.T) {
 	require.Nil(t, svc)
 }
 
+func TestService_AllDestinations(t *testing.T) {
+	svc := NewService(Params{}, SendersParams{
+		ToEmails:             []string{"test@example.com"},
+		TelegramDestinations: []string{"username1"},
+		SlackChannels:        []string{"general"},
+		WebhookURLs:          []string{"https://example.com/cronn_notifications"},
+	})
+	require.NotNil(t, svc)
+}
+
 func TestMakeErrorHTMLDefault(t *testing.T) {
 	svc := NewService(Params{}, SendersParams{ToEmails: []string{"test@example.com"}})
 	require.NotNil(t, svc)
@@ -85,29 +95,59 @@ func TestService_IsOnError(t *testing.T) {
 	assert.False(t, svc.IsOnError())
 }
 
-func TestService_Send(t *testing.T) {
+func TestService_SendEmail(t *testing.T) {
 	tests := []struct {
-		name           string
-		subj           string
-		text           string
-		destination    string
-		mockSendErr    error
-		expectedErrMsg string
+		name                 string
+		destination          string
+		mockSendErr          error
+		expectedErrMsg       string
+		fromEmail            string
+		toEmails             []string
+		slackChannels        []string
+		telegramDestinations []string
+		webhookURLs          []string
+		shouldSend           bool
 	}{
 		{
-			name:        "Successful Send",
-			subj:        "Test Subject",
-			text:        "Test Text",
+			name:        "Send Email",
 			destination: "mailto:to@example.com,to2@example.com?from=from@example.com&subject=Test+Subject",
-			mockSendErr: nil,
+			toEmails:    []string{"to@example.com", "to2@example.com"},
+			shouldSend:  true,
 		},
 		{
-			name:           "Send Error",
-			subj:           "Problem Subject",
-			text:           "Problem Text",
-			destination:    "mailto:to@example.com,to2@example.com?from=from@example.com&subject=Problem+Subject",
+			name:           "Error sending email",
+			destination:    "mailto:to@example.com?from=from@example.com&subject=Test+Subject",
 			mockSendErr:    errors.New("mock error"),
 			expectedErrMsg: "mock error",
+			toEmails:       []string{"to@example.com"},
+			shouldSend:     true,
+		},
+		{
+			name:                 "Send to Telegram, unsuccessfully as there is no destination",
+			destination:          "mailto:to@example.com,to2@example.com?from=from@example.com&subject=Test+Subject",
+			telegramDestinations: []string{"username"},
+			expectedErrMsg:       "unsupported destination schema: telegram",
+		},
+		{
+			name:           "Send to Slack, unsuccessfully as there is no destination",
+			destination:    "mailto:to@example.com,to2@example.com?from=from@example.com&subject=Test+Subject",
+			slackChannels:  []string{"general"},
+			expectedErrMsg: "unsupported destination schema: slack",
+		},
+		{
+			name:           "Send to webhook, unsuccessfully as there is no destination",
+			destination:    "mailto:to@example.com,to2@example.com?from=from@example.com&subject=Test+Subject",
+			webhookURLs:    []string{"https://example.com/cronn_notifications"},
+			expectedErrMsg: "unsupported destination schema: https",
+		},
+		{
+			name:                 "Send Email and unsuccessfully send to Telegram and Slack as there is no destination for it",
+			destination:          "mailto:to@example.com,to2@example.com?from=from@example.com&subject=Test+Subject",
+			toEmails:             []string{"to@example.com", "to2@example.com"},
+			telegramDestinations: []string{"username"},
+			slackChannels:        []string{"general"},
+			shouldSend:           true,
+			expectedErrMsg:       "unsupported destination schema: slack\nunsupported destination schema: telegram",
 		},
 	}
 
@@ -115,7 +155,7 @@ func TestService_Send(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mailtoNotifier := &mocks.NotifierMock{
 				SendFunc: func(_ context.Context, dest string, text string) error {
-					assert.Equal(t, tt.text, text)
+					assert.Equal(t, "Test Text", text)
 					assert.Equal(t, tt.destination, dest)
 					return tt.mockSendErr
 				},
@@ -125,13 +165,20 @@ func TestService_Send(t *testing.T) {
 			}
 
 			s := Service{
-				destinations: []notify.Notifier{mailtoNotifier},
-				fromEmail:    "from@example.com",
-				toEmail:      []string{"to@example.com", "to2@example.com"},
+				destinations:         []notify.Notifier{mailtoNotifier},
+				fromEmail:            "from@example.com",
+				toEmails:             tt.toEmails,
+				slackChannels:        tt.slackChannels,
+				telegramDestinations: tt.telegramDestinations,
+				webhookURLs:          tt.webhookURLs,
 			}
 
-			err := s.Send(context.Background(), tt.subj, tt.text)
-			assert.Len(t, mailtoNotifier.SendCalls(), 1)
+			err := s.Send(context.Background(), "Test Subject", "Test Text")
+			if tt.shouldSend {
+				assert.Len(t, mailtoNotifier.SendCalls(), 1)
+			} else {
+				assert.Zero(t, mailtoNotifier.SendCalls())
+			}
 			if tt.expectedErrMsg == "" {
 				require.NoError(t, err)
 			} else {

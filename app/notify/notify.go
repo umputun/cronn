@@ -4,6 +4,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/url"
@@ -21,8 +22,11 @@ import (
 type Service struct {
 	destinations []notify.Notifier
 
-	fromEmail string
-	toEmail   []string
+	fromEmail            string
+	toEmails             []string
+	slackChannels        []string
+	telegramDestinations []string
+	webhookURLs          []string
 
 	onCompletion       bool
 	onError            bool
@@ -44,20 +48,46 @@ type SendersParams struct {
 	notify.SMTPParams
 	FromEmail string
 	ToEmails  []string
+
+	SlackToken    string
+	SlackChannels []string
+
+	TelegramToken        string
+	TelegramDestinations []string
+
+	WebhookURLs []string
 }
 
 // NewService makes notification service with optional template files
 func NewService(notifyParams Params, sendersParams SendersParams) *Service {
 	res := Service{
-		destinations: []notify.Notifier{},
-		fromEmail:    sendersParams.FromEmail,
-		toEmail:      sendersParams.ToEmails,
-		onError:      notifyParams.EnabledError,
-		onCompletion: notifyParams.EnabledCompletion,
+		destinations:         []notify.Notifier{},
+		onError:              notifyParams.EnabledError,
+		onCompletion:         notifyParams.EnabledCompletion,
+		fromEmail:            sendersParams.FromEmail,
+		toEmails:             sendersParams.ToEmails,
+		slackChannels:        sendersParams.SlackChannels,
+		telegramDestinations: sendersParams.TelegramDestinations,
+		webhookURLs:          sendersParams.WebhookURLs,
 	}
 
 	if len(sendersParams.ToEmails) != 0 {
 		res.destinations = append(res.destinations, notify.NewEmail(sendersParams.SMTPParams))
+	}
+	if len(sendersParams.WebhookURLs) != 0 {
+		res.destinations = append(res.destinations, notify.NewWebhook(notify.WebhookParams{}))
+	}
+	if len(sendersParams.SlackChannels) != 0 {
+		res.destinations = append(res.destinations, notify.NewSlack(sendersParams.SlackToken))
+	}
+	if len(sendersParams.TelegramDestinations) != 0 {
+		tgService, err := notify.NewTelegram(notify.TelegramParams{Token: sendersParams.TelegramToken})
+		if err != nil {
+			log.Printf("[WARN] error setting up telegram notifications: %v", err)
+		}
+		if err == nil {
+			res.destinations = append(res.destinations, tgService)
+		}
 	}
 
 	if len(res.destinations) == 0 {
@@ -86,12 +116,27 @@ func NewService(notifyParams Params, sendersParams SendersParams) *Service {
 	return &res
 }
 
-// Send notification, currently only email is supported
+// Send notification to all set up notification destinations
 func (s *Service) Send(ctx context.Context, subj, text string) error {
-	emailSubj := url.QueryEscape(subj)
-	emails := strings.Join(s.toEmail, ",")
-	emailDestination := fmt.Sprintf("mailto:%s?from=%s&subject=%s", emails, s.fromEmail, emailSubj)
-	return notify.Send(ctx, s.destinations, emailDestination, text)
+	var err error
+	escapedSubj := url.QueryEscape(subj)
+	if len(s.toEmails) != 0 {
+		emails := strings.Join(s.toEmails, ",")
+		destination := fmt.Sprintf("mailto:%s?from=%s&subject=%s", emails, s.fromEmail, escapedSubj)
+		err = errors.Join(err, notify.Send(ctx, s.destinations, destination, text))
+	}
+	for _, slackChannel := range s.slackChannels {
+		destination := fmt.Sprintf("slack:%s?title=%s", slackChannel, escapedSubj)
+		err = errors.Join(err, notify.Send(ctx, s.destinations, destination, text))
+	}
+	for _, telegramDestination := range s.telegramDestinations {
+		destination := fmt.Sprintf("telegram:%s?type=HTML", telegramDestination)
+		err = errors.Join(err, notify.Send(ctx, s.destinations, destination, notify.TelegramSupportedHTML(text)))
+	}
+	for _, webhookURL := range s.webhookURLs {
+		err = errors.Join(err, notify.Send(ctx, s.destinations, webhookURL, subj+"\n"+text))
+	}
+	return err
 }
 
 // MakeErrorHTML creates error html body from errorTemplate

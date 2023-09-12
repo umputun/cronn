@@ -1,9 +1,19 @@
+# github.com/aymerick/douceur v0.2.0
+## explicit
+github.com/aymerick/douceur/css
+github.com/aymerick/douceur/parser
 # github.com/davecgh/go-spew v1.1.1
 ## explicit
 github.com/davecgh/go-spew/spew
+# github.com/go-pkgz/email v0.4.1
+## explicit; go 1.19
+github.com/go-pkgz/email
 # github.com/go-pkgz/lgr v0.11.0
 ## explicit; go 1.19
 github.com/go-pkgz/lgr
+# github.com/go-pkgz/notify v1.0.0
+## explicit; go 1.20
+github.com/go-pkgz/notify
 # github.com/go-pkgz/repeater v1.1.3
 ## explicit; go 1.12
 github.com/go-pkgz/repeater
@@ -11,12 +21,29 @@ github.com/go-pkgz/repeater/strategy
 # github.com/go-pkgz/syncs v1.3.2
 ## explicit; go 1.20
 github.com/go-pkgz/syncs
+# github.com/gorilla/css v1.0.0
+## explicit
+github.com/gorilla/css/scanner
+# github.com/gorilla/websocket v1.4.2
+## explicit; go 1.12
+github.com/gorilla/websocket
+# github.com/microcosm-cc/bluemonday v1.0.25
+## explicit; go 1.19
+github.com/microcosm-cc/bluemonday
+github.com/microcosm-cc/bluemonday/css
 # github.com/pmezard/go-difflib v1.0.0
 ## explicit
 github.com/pmezard/go-difflib/difflib
 # github.com/robfig/cron/v3 v3.0.1
 ## explicit; go 1.12
 github.com/robfig/cron/v3
+# github.com/slack-go/slack v0.12.2
+## explicit; go 1.16
+github.com/slack-go/slack
+github.com/slack-go/slack/internal/backoff
+github.com/slack-go/slack/internal/errorsx
+github.com/slack-go/slack/internal/timex
+github.com/slack-go/slack/slackutilsx
 # github.com/stretchr/testify v1.8.4
 ## explicit; go 1.20
 github.com/stretchr/testify/assert
@@ -24,6 +51,10 @@ github.com/stretchr/testify/require
 # github.com/umputun/go-flags v1.5.1
 ## explicit; go 1.12
 github.com/umputun/go-flags
+# golang.org/x/net v0.14.0
+## explicit; go 1.17
+golang.org/x/net/html
+golang.org/x/net/html/atom
 # gopkg.in/natefinch/lumberjack.v2 v2.2.1
 ## explicit; go 1.13
 gopkg.in/natefinch/lumberjack.v2

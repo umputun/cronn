@@ -20,7 +20,7 @@ In addition `cronn` provides:
 - Both single-job scheduler and more traditional crontab file with multiple jobs
 - Runs as an ordinary process or the entry point of a container
 - Supports wide range of date templates 
-- Optional email notification on failed or/and passed jobs
+- Optional notification on failed or/and passed jobs using email, Slack, Telegram, or webhook
 - Optional jitter adding a random delay prior to execution of a job
 - Automatic resume (restart) of jobs in cronn service or container failed unexpectedly
 - Reload crontab file on changes
@@ -58,14 +58,14 @@ weekday on midnight.
  
 ## Optional modes
 
-By default all the optional modes are disabled. This includes:
+By default, all the optional modes are disabled. This includes:
 
 - Logging mode
 - Debug mode: produces more debug info
 - Auto-resume mode: executes terminated task(s) on startup.
 - Auto-update mode: checks for changes in crontab file (`-f` mode only) and reloads updated jobs.
 - Reload crontab on SIGHUP signal
-- Notification mode: sends email notification on failed or passed jobs
+- Notification mode: sends email, Slack, Telegram and\or Webhook notifications on failed or passed jobs
 - De-duplication mode: prevents the same jobs to run in parallel
 - Repeater mode: repeats failed jobs
 - Rotated logs: creates rotated logs
@@ -104,7 +104,29 @@ By default this option is off. To enable it, add `--dedup` to the command line o
 
 ### Notifications
 
-Optional notifications are sent to the specified email address on job failure or completion. User can define custom templates for notifications messages with `--notify.complere-template`  and `--notify.err-template` options.  The following templates are available:
+You can enable one or more notification methods: Slack, Webhook, Telegram, and Email. Either `--notify.enabled-error` or `--notify.enabled-complete` or both should be enabled for notifications to work.
+
+#### Email
+
+Enabled if `--notify.to` option is set, which could be list of emails. Please set all SMTP-related options for the email notifications to work.
+
+#### Slack
+
+Enabled if `--notify.slack-channels` option is set, which could be list of channels, channelIDs, and userIDs. Please set `--notify.slack-token` for this method to work.
+
+#### Webhook
+
+Enabled if `--notify.webhook-urls` option is set, which could be list of URLs.
+
+#### Telegram
+
+Enabled if `--notify.telegram-destinations` option is set, which could be list of channels, userIDs, and channelIDs (a number, like -1001480738202: use [that instruction](https://remark42.com/docs/configuration/telegram/#notifications-for-administrators) to obtain it). Please set `--notify.telegram-token` obtained from [BotFather](https://core.telegram.org/bots) for this method to work.
+
+Text of notification is expected to be in HTML, tags which are not allowed in Telegram will be automatically removed.
+
+#### Notification text
+
+When enabled, notifications are sent to the specified destinations on job failure or completion. User can define custom templates for notifications messages with `--notify.complere-template` and `--notify.err-template` options. Default templates are in HTML. The following variables are available:
 
 - `{{.Command}}` - the command with arguments
 - `{{.Spec}}` - the crontab specification
@@ -146,21 +168,26 @@ repeater:
       --repeater.jitter           jitter [$CRONN_REPEATER_JITTER]
 
 notify:
-      --notify.enabled-error      enable email notifications on errors [$CRONN_NOTIFY_ENABLED_ERROR]
-      --notify.enabled-complete   enable completion notifications [$CRONN_NOTIFY_ENABLED_COMPLETE]
-      --notify.err-template=      error template file [$CRONN_NOTIFY_ERR_TEMPLATE]
-      --notify.complete-template= completion template file [$CRONN_NOTIFY_COMPLET_TEMPLATE]
-      --notify.smtp-host=         SMTP host [$CRONN_NOTIFY_SMTP_HOST]
-      --notify.smtp-port=         SMTP port [$CRONN_NOTIFY_SMTP_PORT]
-      --notify.smtp-username=     SMTP user name [$CRONN_NOTIFY_SMTP_USERNAME]
-      --notify.smtp-password=     SMTP password [$CRONN_NOTIFY_SMTP_PASSWORD]
-      --notify.smtp-tls           enable SMTP TLS [$CRONN_NOTIFY_SMTP_TLS]
-      --notify.smtp-starttls      enable SMTP StartTLS [$CRONN_NOTIFY_SMTP_STARTTLS]
-      --notify.smtp-timeout=      SMTP TCP connection timeout (default: 10s) [$CRONN_NOTIFY_SMTP_TIMEOUT]
-      --notify.from=              SMTP from email [$CRONN_NOTIFY_FROM]
-      --notify.to=                SMTP to email(s) [$CRONN_NOTIFY_TO]
-      --notify.max-log=           max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
-      --notify.host=              host name running cronn [$CRONN_NOTIFY_HOSTNAME]
+      --notify.enabled-error          enable email notifications on errors [$CRONN_NOTIFY_ENABLED_ERROR]
+      --notify.enabled-complete       enable completion notifications [$CRONN_NOTIFY_ENABLED_COMPLETE]
+      --notify.err-template=          error template file [$CRONN_NOTIFY_ERR_TEMPLATE]
+      --notify.complete-template=     completion template file [$CRONN_NOTIFY_COMPLET_TEMPLATE]
+      --notify.smtp-host=             SMTP host [$CRONN_NOTIFY_SMTP_HOST]
+      --notify.smtp-port=             SMTP port [$CRONN_NOTIFY_SMTP_PORT]
+      --notify.smtp-username=         SMTP user name [$CRONN_NOTIFY_SMTP_USERNAME]
+      --notify.smtp-password=         SMTP password [$CRONN_NOTIFY_SMTP_PASSWORD]
+      --notify.smtp-tls               enable SMTP TLS [$CRONN_NOTIFY_SMTP_TLS]
+      --notify.smtp-starttls          enable SMTP StartTLS [$CRONN_NOTIFY_SMTP_STARTTLS]
+      --notify.smtp-timeout=          SMTP TCP connection timeout (default: 10s) [$CRONN_NOTIFY_SMTP_TIMEOUT]
+      --notify.from=                  SMTP from email [$CRONN_NOTIFY_FROM]
+      --notify.to=                    SMTP to email(s) [$CRONN_NOTIFY_TO]
+      --notify.max-log=               max number of log lines name (default: 100) [$CRONN_NOTIFY_MAX_LOG]
+      --notify.host=                  host name running cronn [$CRONN_NOTIFY_HOSTNAME]
+      --notify.slack-token=           API token for the Slack bot [$CRONN_NOTIFY_SLACK_TOKEN]
+      --notify.slack-channels=        List of Slack channels the bot will post messages to [$CRONN_NOTIFY_SLACK_CHANNELS]
+      --notify.telegram-token=        API token for the Telegram bot [$CRONN_NOTIFY_TELEGRAM_TOKEN]
+      --notify.telegram-destinations= List of Telegram chat IDs the bot will post messages to [$CRONN_NOTIFY_TELEGRAM_DESTINATIONS]
+      --notify.webhook-urls=          List of webhook URLs the bot will post messages to [$CRONN_NOTIFY_WEBHOOK_URLS]
 
 log:
       --log.enabled               enable logging [$CRONN_LOG_ENABLED]

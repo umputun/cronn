@@ -44,21 +44,26 @@ var opts struct {
 	} `group:"repeater" namespace:"repeater" env-namespace:"CRONN_REPEATER"`
 
 	Notify struct {
-		EnabledError       bool          `long:"enabled-error" env:"ENABLED_ERROR" description:"enable email notifications on errors"`
-		EnabledCompletion  bool          `long:"enabled-complete" env:"ENABLED_COMPLETE" description:"enable completion notifications"`
-		ErrorTemplate      string        `long:"err-template" env:"ERR_TEMPLATE" description:"error template file"`
-		CompletionTemplate string        `long:"complete-template" env:"COMPLET_TEMPLATE" description:"completion template file"`
-		SMTPHost           string        `long:"smtp-host" env:"SMTP_HOST" description:"SMTP host"`
-		SMTPPort           int           `long:"smtp-port" env:"SMTP_PORT" description:"SMTP port"`
-		SMTPUsername       string        `long:"smtp-username" env:"SMTP_USERNAME" description:"SMTP user name"`
-		SMTPPassword       string        `long:"smtp-password" env:"SMTP_PASSWORD" description:"SMTP password"`
-		SMTPTLS            bool          `long:"smtp-tls" env:"SMTP_TLS" description:"enable SMTP TLS"`
-		SMTPStartTLS       bool          `long:"smtp-starttls" env:"SMTP_STARTTLS" description:"enable SMTP StartTLS"`
-		SMTPTimeOut        time.Duration `long:"smtp-timeout" env:"SMTP_TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
-		FromEmail          string        `long:"from" env:"FROM" description:"SMTP from email"`
-		ToEmails           []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
-		MaxLogLines        int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
-		HostName           string        `long:"host" env:"HOSTNAME" description:"host name running cronn"`
+		EnabledError         bool          `long:"enabled-error" env:"ENABLED_ERROR" description:"enable email notifications on errors"`
+		EnabledCompletion    bool          `long:"enabled-complete" env:"ENABLED_COMPLETE" description:"enable completion notifications"`
+		ErrorTemplate        string        `long:"err-template" env:"ERR_TEMPLATE" description:"error template file"`
+		CompletionTemplate   string        `long:"complete-template" env:"COMPLET_TEMPLATE" description:"completion template file"`
+		SMTPHost             string        `long:"smtp-host" env:"SMTP_HOST" description:"SMTP host"`
+		SMTPPort             int           `long:"smtp-port" env:"SMTP_PORT" description:"SMTP port"`
+		SMTPUsername         string        `long:"smtp-username" env:"SMTP_USERNAME" description:"SMTP user name"`
+		SMTPPassword         string        `long:"smtp-password" env:"SMTP_PASSWORD" description:"SMTP password"`
+		SMTPTLS              bool          `long:"smtp-tls" env:"SMTP_TLS" description:"enable SMTP TLS"`
+		SMTPStartTLS         bool          `long:"smtp-starttls" env:"SMTP_STARTTLS" description:"enable SMTP StartTLS"`
+		SMTPTimeOut          time.Duration `long:"smtp-timeout" env:"SMTP_TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
+		FromEmail            string        `long:"from" env:"FROM" description:"SMTP from email"`
+		ToEmails             []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
+		MaxLogLines          int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
+		HostName             string        `long:"host" env:"HOSTNAME" description:"host name running cronn"`
+		SlackToken           string        `long:"slack-token" env:"SLACK_TOKEN" description:"API token for the Slack bot"`
+		SlackChannels        []string      `long:"slack-channels" env:"SLACK_CHANNELS" description:"List of Slack channels the bot will post messages to" env-delim:","`
+		TelegramToken        string        `long:"telegram-token" env:"TELEGRAM_TOKEN" description:"API token for the Telegram bot"`
+		TelegramDestinations []string      `long:"telegram-destinations" env:"TELEGRAM_DESTINATIONS" description:"List of Telegram chat IDs the bot will post messages to" env-delim:","`
+		WebhookURLs          []string      `long:"webhook-urls" env:"WEBHOOK_URLS" description:"List of webhook URLs the bot will post messages to" env-delim:","`
 	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
 
 	Log struct {
@@ -167,8 +172,13 @@ func makeNotifier() *notify.Service {
 				ContentType: "text/html",
 				Charset:     "utf-8",
 			},
-			FromEmail: opts.Notify.FromEmail,
-			ToEmails:  opts.Notify.ToEmails,
+			FromEmail:            opts.Notify.FromEmail,
+			ToEmails:             opts.Notify.ToEmails,
+			SlackToken:           opts.Notify.SlackToken,
+			SlackChannels:        opts.Notify.SlackChannels,
+			TelegramToken:        opts.Notify.TelegramToken,
+			TelegramDestinations: opts.Notify.TelegramDestinations,
+			WebhookURLs:          opts.Notify.WebhookURLs,
 		})
 }
 

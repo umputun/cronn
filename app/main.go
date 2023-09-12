@@ -55,8 +55,8 @@ var opts struct {
 		SMTPTLS            bool          `long:"smtp-tls" env:"SMTP_TLS" description:"enable SMTP TLS"`
 		SMTPStartTLS       bool          `long:"smtp-starttls" env:"SMTP_STARTTLS" description:"enable SMTP StartTLS"`
 		SMTPTimeOut        time.Duration `long:"smtp-timeout" env:"SMTP_TIMEOUT" default:"10s" description:"SMTP TCP connection timeout"`
-		From               string        `long:"from" env:"FROM" description:"SMTP from email"`
-		To                 []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
+		FromEmail          string        `long:"from" env:"FROM" description:"SMTP from email"`
+		ToEmails           []string      `long:"to" env:"TO" description:"SMTP to email(s)" env-delim:","`
 		MaxLogLines        int           `long:"max-log" env:"MAX_LOG" default:"100" description:"max number of log lines name"`
 		HostName           string        `long:"host" env:"HOSTNAME" description:"host name running cronn"`
 	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
@@ -145,8 +145,8 @@ func makeNotifier() *notify.Service {
 	if !opts.Notify.EnabledError && !opts.Notify.EnabledCompletion {
 		return nil
 	}
-	if opts.Notify.From == "" {
-		opts.Notify.From = "cronn@" + makeHostName()
+	if opts.Notify.FromEmail == "" {
+		opts.Notify.FromEmail = "cronn@" + makeHostName()
 	}
 	return notify.NewService(
 		notify.Params{
@@ -167,8 +167,8 @@ func makeNotifier() *notify.Service {
 				ContentType: "text/html",
 				Charset:     "utf-8",
 			},
-			FromEmail: opts.Notify.From,
-			ToEmails:  opts.Notify.To,
+			FromEmail: opts.Notify.FromEmail,
+			ToEmails:  opts.Notify.ToEmails,
 		})
 }
 

@@ -11,8 +11,14 @@ import (
 	"github.com/umputun/cronn/app/notify/mocks"
 )
 
-func TestMakeErrorHTMLDefault(t *testing.T) {
+func TestService_EmptyDestinations(t *testing.T) {
 	svc := NewService(Params{}, SendersParams{})
+	require.Nil(t, svc)
+}
+
+func TestMakeErrorHTMLDefault(t *testing.T) {
+	svc := NewService(Params{}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	res, err := svc.MakeErrorHTML("* * * * *", "ls -la", "some log")
 	require.NoError(t, err)
 	assert.Contains(t, res, "<li>Command: <span class=\"bold\">ls -la</span></li>")
@@ -21,20 +27,23 @@ func TestMakeErrorHTMLDefault(t *testing.T) {
 }
 
 func TestMakeErrorHTMLCustom(t *testing.T) {
-	svc := NewService(Params{ErrorTemplate: "testfiles/err.tmpl"}, SendersParams{})
+	svc := NewService(Params{ErrorTemplate: "testfiles/err.tmpl"}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	res, err := svc.MakeErrorHTML("* * * * *", "ls -la", "some log")
 	require.NoError(t, err)
 	assert.Contains(t, res, "Command failed: ls -la")
 	assert.Contains(t, res, "Spec: * * * * *")
 
-	svc = NewService(Params{ErrorTemplate: "testfiles/err-bad.tmpl"}, SendersParams{})
+	svc = NewService(Params{ErrorTemplate: "testfiles/err-bad.tmpl"}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	res, err = svc.MakeErrorHTML("* * * * *", "ls -la", "some log")
 	require.NoError(t, err)
 	assert.Contains(t, res, "<li>Command: <span class=\"bold\">ls -la</span></li>")
 }
 
 func TestMakeCompletionHTMLDefault(t *testing.T) {
-	svc := NewService(Params{}, SendersParams{})
+	svc := NewService(Params{}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	res, err := svc.MakeCompletionHTML("* * * * *", "ls -la")
 	require.NoError(t, err)
 	assert.Contains(t, res, "<li>Command: <span class=\"bold\">ls -la</span></li>")
@@ -43,31 +52,36 @@ func TestMakeCompletionHTMLDefault(t *testing.T) {
 }
 
 func TestMakeCompletionHTMLCustom(t *testing.T) {
-	svc := NewService(Params{CompletionTemplate: "testfiles/completed.tmpl"}, SendersParams{})
+	svc := NewService(Params{CompletionTemplate: "testfiles/completed.tmpl"}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	res, err := svc.MakeCompletionHTML("* * * * *", "ls -la")
 	require.NoError(t, err)
 	assert.Contains(t, res, "Command done: ls -la")
 	assert.Contains(t, res, "Spec: * * * * *")
 
-	svc = NewService(Params{CompletionTemplate: "testfiles/completed-bad.tmpl"}, SendersParams{})
+	svc = NewService(Params{CompletionTemplate: "testfiles/completed-bad.tmpl"}, SendersParams{ToEmails: []string{"test@example.com"}})
 	res, err = svc.MakeCompletionHTML("* * * * *", "ls -la")
 	require.NoError(t, err)
 	assert.Contains(t, res, "<li>Command: <span class=\"bold\">ls -la</span></li>")
 }
 
 func TestService_IsOnCompletion(t *testing.T) {
-	svc := NewService(Params{EnabledCompletion: true}, SendersParams{})
+	svc := NewService(Params{EnabledCompletion: true}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	assert.True(t, svc.IsOnCompletion())
 
-	svc = NewService(Params{EnabledCompletion: false}, SendersParams{})
+	svc = NewService(Params{EnabledCompletion: false}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	assert.False(t, svc.IsOnCompletion())
 }
 
 func TestService_IsOnError(t *testing.T) {
-	svc := NewService(Params{EnabledError: true}, SendersParams{})
+	svc := NewService(Params{EnabledError: true}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	assert.True(t, svc.IsOnError())
 
-	svc = NewService(Params{EnabledError: false}, SendersParams{})
+	svc = NewService(Params{EnabledError: false}, SendersParams{ToEmails: []string{"test@example.com"}})
+	require.NotNil(t, svc)
 	assert.False(t, svc.IsOnError())
 }
 

@@ -21,13 +21,14 @@ func Test_makeHostName(t *testing.T) {
 
 func Test_makeNotifier(t *testing.T) {
 	opts.Notify.EnabledCompletion, opts.Notify.EnabledError = false, false
-	opts.Notify.From = ""
+	opts.Notify.FromEmail = ""
+	opts.Notify.ToEmails = []string{"test@example.com"}
 	assert.Nil(t, makeNotifier())
 
 	opts.Notify.EnabledCompletion = true
 	notif := makeNotifier()
 	require.NotNil(t, notif)
-	assert.Equal(t, "cronn@"+makeHostName(), opts.Notify.From,
+	assert.Equal(t, "cronn@"+makeHostName(), opts.Notify.FromEmail,
 		"side effect of creating notifier with empty From "+
 			"is setting the From based on hostname")
 }

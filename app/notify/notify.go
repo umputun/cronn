@@ -47,15 +47,21 @@ type SendersParams struct {
 }
 
 // NewService makes notification service with optional template files
-func NewService(notifyParams Params, emailParams SendersParams) *Service {
-	emailService := notify.NewEmail(emailParams.SMTPParams)
-
+func NewService(notifyParams Params, sendersParams SendersParams) *Service {
 	res := Service{
-		destinations: []notify.Notifier{emailService},
-		fromEmail:    emailParams.FromEmail,
-		toEmail:      emailParams.ToEmails,
+		destinations: []notify.Notifier{},
+		fromEmail:    sendersParams.FromEmail,
+		toEmail:      sendersParams.ToEmails,
 		onError:      notifyParams.EnabledError,
 		onCompletion: notifyParams.EnabledCompletion,
+	}
+
+	if len(sendersParams.ToEmails) != 0 {
+		res.destinations = append(res.destinations, notify.NewEmail(sendersParams.SMTPParams))
+	}
+
+	if len(res.destinations) == 0 {
+		return nil
 	}
 
 	res.errorTemplate = defaultErrorTemplate

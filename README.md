@@ -188,7 +188,7 @@ notify:
       --notify.telegram-token=        API token for the Telegram bot [$CRONN_NOTIFY_TELEGRAM_TOKEN]
       --notify.telegram-destinations= List of Telegram chat IDs the bot will post messages to [$CRONN_NOTIFY_TELEGRAM_DESTINATIONS]
       --notify.webhook-urls=          List of webhook URLs the bot will post messages to [$CRONN_NOTIFY_WEBHOOK_URLS]
-
+      --noify.timeout=                timeout for notifications (default: 10s) [$TIMEOUT]
 log:
       --log.enabled               enable logging [$CRONN_LOG_ENABLED]
       --log.debug                 debug mode [$CRONN_LOG_DEBUG]

@@ -64,6 +64,7 @@ var opts struct {
 		TelegramToken        string        `long:"telegram-token" env:"TELEGRAM_TOKEN" description:"API token for the Telegram bot"`
 		TelegramDestinations []string      `long:"telegram-destinations" env:"TELEGRAM_DESTINATIONS" description:"List of Telegram chat IDs the bot will post messages to" env-delim:","`
 		WebhookURLs          []string      `long:"webhook-urls" env:"WEBHOOK_URLS" description:"List of webhook URLs the bot will post messages to" env-delim:","`
+		TimeOut              time.Duration `long:"timeout" env:"TIMEOUT" default:"10s" description:"timeout for notification"`
 	} `group:"notify" namespace:"notify" env-namespace:"CRONN_NOTIFY"`
 
 	Log struct {
@@ -141,6 +142,7 @@ func main() {
 		EnableLogPrefix:   opts.Log.EnablePrefix,
 		Stdout:            stdout,
 		DeDup:             service.NewDeDup(opts.DeDup),
+		NotifyTimeout:     opts.Notify.TimeOut,
 	}
 
 	cronService.Do(ctx)

@@ -27,7 +27,8 @@ import (
 //go:generate moq -out mocks/repeater.go -pkg mocks -skip-ensure -fmt goimports . Repeater
 //go:generate moq -out mocks/schedule.go -pkg mocks -skip-ensure -fmt goimports . Schedule
 
-// Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking) to start the process
+// Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking)
+// to start the process
 type Scheduler struct {
 	Cron
 	Resumer           Resumer
@@ -42,6 +43,7 @@ type Scheduler struct {
 	EnableLogPrefix   bool
 	Repeater          Repeater
 	Stdout            io.Writer
+	NotifyTimeout     time.Duration
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -151,7 +153,9 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 		}
 
 		if err = s.executeCommand(cmd, s.Stdout); err != nil {
-			if e := s.notify(context.TODO(), r, err.Error()); e != nil {
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), s.NotifyTimeout)
+			defer cancel()
+			if e := s.notify(ctxTimeout, r, err.Error()); e != nil {
 				return fmt.Errorf("failed to notify: %w", err)
 			}
 			return err
@@ -202,7 +206,6 @@ func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
 }
 
 func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string) error {
-
 	if s.Notifier == nil || reflect.ValueOf(s.Notifier).IsNil() {
 		return nil
 	}
@@ -282,7 +285,9 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			gr.Go(func(ctx context.Context) {
 				if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
-					if e := s.notify(ctx, r, err.Error()); e != nil {
+					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
+					defer cancel()
+					if e := s.notify(ctxTimeout, r, err.Error()); e != nil {
 						log.Printf("[WARN] failed to notify, %v", e)
 						return
 					}

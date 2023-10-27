@@ -138,13 +138,17 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 			return err
 		}
 
-		dedupKey := cmd + "#" + r.Spec
+		dedupKey := cmd + "#" + r.Spec // dedup by command and spec
 		if !s.DeDup.Add(dedupKey) {
+			// already running
 			return fmt.Errorf("duplicated job %q ignored", dedupKey)
 		}
 		defer s.DeDup.Remove(dedupKey)
 
-		rfile, rerr := s.Resumer.OnStart(cmd)
+		rfile, rerr := s.Resumer.OnStart(cmd) // register job in resumer prior to execution
+		if rerr != nil {
+			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
+		}
 
 		if err = s.executeCommand(cmd, s.Stdout); err != nil {
 			if e := s.notify(context.TODO(), r, err.Error()); e != nil {
@@ -153,12 +157,12 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 			return err
 		}
 
-		if rerr == nil {
-			if err = s.Resumer.OnFinish(rfile); err != nil {
-				return fmt.Errorf("failed to finish resumer for %s: %w", rfile, err)
-			}
+		// if no error, finish (unregister) resumer
+		if err := s.Resumer.OnFinish(rfile); err != nil {
+			return fmt.Errorf("failed to finish resumer for %s: %w", rfile, err)
 		}
-		return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
+
+		return nil
 	}
 
 	return func() {

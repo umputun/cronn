@@ -64,7 +64,7 @@ func NewDayTemplate(ts time.Time, options ...Option) *DayParser {
 		timeZone:       time.Local,
 		eodHour:        17,
 		skipWeekDays:   []time.Weekday{time.Saturday, time.Sunday},
-		holidayChecker: HolidayCheckerFunc(func(day time.Time) bool { return false }), // inactive by default
+		holidayChecker: HolidayCheckerFunc(func(time.Time) bool { return false }), // inactive by default
 	}
 
 	for _, opt := range options {

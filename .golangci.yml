@@ -1,17 +1,14 @@
-run:
-  timeout: 5m
-  output:
-    format: tab
-  skip-dirs:
-    - vendor
-
 linters-settings:
   govet:
-    check-shadowing: true
+    shadow: true
   golint:
-    min-confidence: 0.1
+    min-confidence: 0.6
+  gocyclo:
+    min-complexity: 15
   maligned:
     suggest-new: true
+  dupl:
+    threshold: 100
   goconst:
     min-len: 2
     min-occurrences: 2
@@ -28,19 +25,16 @@ linters-settings:
       - wrapperFunc
       - hugeParam
       - rangeValCopy
-      - singleCaseSwitch
-      - ifElseChain
 
 linters:
+  disable-all: true
   enable:
-    - megacheck
     - revive
     - govet
     - unconvert
-    - megacheck
     - gas
-    - dupl
     - misspell
+    - unparam
     - unused
     - typecheck
     - ineffassign
@@ -51,22 +45,58 @@ linters:
     - nakedret
     - gosimple
     - prealloc
+
   fast: false
-  disable-all: true
+
+
+run:
+  concurrency: 4
 
 issues:
+  exclude-dirs:
+    - vendor
   exclude-rules:
-    - text: "package-comments: should have a package comment"
+    - text: "should have a package comment, unless it's in another file for this package"
+      linters:
+        - golint
+    - text: "exitAfterDefer:"
+      linters:
+        - gocritic
+    - text: "whyNoLint: include an explanation for nolint directive"
+      linters:
+        - gocritic
+    - text: "go.mongodb.org/mongo-driver/bson/primitive.E"
+      linters:
+        - govet
+    - text: "weak cryptographic primitive"
+      linters:
+        - gosec
+    - text: "should have a package comment"
       linters:
         - revive
     - text: "at least one file in a package should have a package comment"
       linters:
         - stylecheck
-    - text: "should have a package comment, unless it's in another file for this package"
+    - text: "commentedOutCode: may want to remove commented-out code"
       linters:
-        - golint
-    - path: _test\.go
+        - gocritic
+    - text: "unnamedResult: consider giving a name to these results"
       linters:
-        - gosec
-        - dupl
+        - gocritic
+    - text: "var-naming: don't use an underscore in package name"
+      linters:
+        - revive
+    - text: "should not use underscores in package names"
+      linters:
+        - stylecheck
+    - text: "struct literal uses unkeyed fields"
+      linters:
+        - govet
+    - linters:
+        - unparam
+        - unused
+        - revive
+      path: _test\.go$
+      text: "unused-parameter"
   exclude-use-default: false
+

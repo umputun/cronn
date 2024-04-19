@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -29,7 +30,11 @@ type JobSpec struct {
 
 // New creates Parser for file, but not parsing yet
 func New(file string, updInterval time.Duration, hupCh <-chan struct{}) *Parser {
-	log.Printf("[INFO] crontab file %s, update every %v", file, updInterval)
+	updIntervalStr := fmt.Sprintf("update every %v", updInterval)
+	if updInterval == time.Duration(math.MaxInt64) {
+		updIntervalStr = "no updates"
+	}
+	log.Printf("[INFO] crontab file %s, %s", file, updIntervalStr)
 	return &Parser{file: file, updInterval: updInterval, hupCh: hupCh}
 }
 

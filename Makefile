@@ -10,7 +10,7 @@ dist:
 	docker rm -f cronn.bin
 
 race_test:
-	cd app && go test -race -mod=vendor -timeout=60s -count 1 ./...
+	cd app && go test -race -timeout=60s -count 1 ./...
 
 prep_site:
 	cp -fv README.md site/docs/index.md

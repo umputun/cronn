@@ -4,8 +4,6 @@ ARG GIT_BRANCH
 ARG GITHUB_SHA
 ARG CI
 
-ENV GOFLAGS="-mod=vendor"
-
 ADD . /build/cronn
 WORKDIR /build/cronn
 
@@ -18,6 +16,9 @@ RUN \
 
 
 FROM umputun/baseimage:app-latest
+
+# enables automatic changelog generation by tools like Dependabot
+LABEL org.opencontainers.image.source="https://github.com/umputun/cronn"
 
 COPY --from=build /build/cronn/cronn /srv/cronn
 RUN chmod +x /srv/cronn

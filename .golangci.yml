@@ -1,12 +1,9 @@
 linters-settings:
   govet:
-    shadow: true
-  golint:
-    min-confidence: 0.6
+    enable:
+      - shadow
   gocyclo:
     min-complexity: 15
-  maligned:
-    suggest-new: true
   dupl:
     threshold: 100
   goconst:
@@ -32,7 +29,8 @@ linters:
     - revive
     - govet
     - unconvert
-    - gas
+    - gosec
+    - staticcheck
     - misspell
     - unparam
     - unused

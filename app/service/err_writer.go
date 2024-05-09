@@ -13,8 +13,8 @@ type ErrorWriter struct {
 }
 
 // NewErrorWriter makes io.Writer and error capturing data in and limit to last max lines
-func NewErrorWriter(max int) *ErrorWriter {
-	return &ErrorWriter{maxErrLogLines: max}
+func NewErrorWriter(maximum int) *ErrorWriter {
+	return &ErrorWriter{maxErrLogLines: maximum}
 }
 
 // Error returns string combining the error and log

@@ -130,7 +130,7 @@ func (s *Service) Send(ctx context.Context, subj, text string) error {
 		err = errors.Join(err, notify.Send(ctx, s.destinations, destination, text))
 	}
 	for _, telegramDestination := range s.telegramDestinations {
-		destination := fmt.Sprintf("telegram:%s?type=HTML", telegramDestination)
+		destination := fmt.Sprintf("telegram:%s?parseMode=HTML", telegramDestination)
 		err = errors.Join(err, notify.Send(ctx, s.destinations, destination, notify.TelegramSupportedHTML(text)))
 	}
 	for _, webhookURL := range s.webhookURLs {
@@ -272,7 +272,7 @@ var (
 		<ul>
 			<li>Command: <span class="bold">{{.Command}}</span></li>
 			<li>Spec: <span class="bold">{{.Spec}}</span></li>
-		</ul>>
+		</ul>
 	</body>
 </html>
 `

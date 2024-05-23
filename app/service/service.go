@@ -152,12 +152,17 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 		}
 
-		if err = s.executeCommand(cmd, s.Stdout); err != nil {
-			ctxTimeout, cancel := context.WithTimeout(context.Background(), s.NotifyTimeout)
-			defer cancel()
-			if e := s.notify(ctxTimeout, r, err.Error()); e != nil {
-				return fmt.Errorf("failed to notify: %w", err)
-			}
+		err = s.executeCommand(cmd, s.Stdout)
+		ctxTimeout, cancel := context.WithTimeout(context.Background(), s.NotifyTimeout)
+		defer cancel()
+		var errMsg string
+		if err != nil {
+			errMsg = err.Error()
+		}
+		if e := s.notify(ctxTimeout, r, errMsg); e != nil {
+			return fmt.Errorf("failed to notify: %w", err)
+		}
+		if err != nil {
 			return err
 		}
 

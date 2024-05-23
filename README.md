@@ -126,7 +126,7 @@ Text of notification is expected to be in HTML, tags which are not allowed in Te
 
 #### Notification text
 
-When enabled, notifications are sent to the specified destinations on job failure or completion. User can define custom templates for notifications messages with `--notify.complere-template` and `--notify.err-template` options. Default templates are in HTML. The following variables are available:
+When enabled, notifications are sent to the specified destinations on job failure or completion. User can define custom templates for notifications messages with `--notify.complete-template` and `--notify.err-template` options. Default templates are in HTML. The following variables are available:
 
 - `{{.Command}}` - the command with arguments
 - `{{.Spec}}` - the crontab specification
@@ -188,7 +188,7 @@ notify:
       --notify.telegram-token=        API token for the Telegram bot [$CRONN_NOTIFY_TELEGRAM_TOKEN]
       --notify.telegram-destinations= List of Telegram chat IDs the bot will post messages to [$CRONN_NOTIFY_TELEGRAM_DESTINATIONS]
       --notify.webhook-urls=          List of webhook URLs the bot will post messages to [$CRONN_NOTIFY_WEBHOOK_URLS]
-      --noify.timeout=                timeout for notifications (default: 10s) [$TIMEOUT]
+      --notify.timeout=                timeout for notifications (default: 10s) [$TIMEOUT]
 log:
       --log.enabled               enable logging [$CRONN_LOG_ENABLED]
       --log.debug                 debug mode [$CRONN_LOG_DEBUG]

@@ -5,7 +5,7 @@ go 1.22
 require (
 	github.com/go-pkgz/lgr v0.11.1
 	github.com/go-pkgz/notify v1.2.0
-	github.com/go-pkgz/repeater v1.1.3
+	github.com/go-pkgz/repeater v1.2.0
 	github.com/go-pkgz/syncs v1.3.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.9.0

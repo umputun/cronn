@@ -8,7 +8,7 @@ require (
 	github.com/go-pkgz/repeater v1.2.0
 	github.com/go-pkgz/syncs v1.3.2
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/umputun/go-flags v1.5.1
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )

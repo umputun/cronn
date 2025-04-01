@@ -3,7 +3,7 @@ module github.com/umputun/cronn
 go 1.22
 
 require (
-	github.com/go-pkgz/lgr v0.11.1
+	github.com/go-pkgz/lgr v0.12.0
 	github.com/go-pkgz/notify v1.2.0
 	github.com/go-pkgz/repeater v1.2.0
 	github.com/go-pkgz/syncs v1.3.2

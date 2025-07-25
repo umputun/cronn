@@ -1,6 +1,6 @@
 module github.com/umputun/cronn
 
-go 1.22
+go 1.24
 
 require (
 	github.com/go-pkgz/lgr v0.11.1

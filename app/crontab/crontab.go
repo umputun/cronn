@@ -127,7 +127,7 @@ func Parse(line string) (result JobSpec, err error) {
 	}
 	reWhtSpaces := regexp.MustCompile(`[\s\p{Zs}]{2,}`)
 	l := strings.TrimSpace(line)
-	l = strings.Replace(l, "\t", " ", -1)
+	l = strings.ReplaceAll(l, "\t", " ")
 	singleSpace := reWhtSpaces.ReplaceAllString(l, " ")
 	elems := strings.Split(singleSpace, " ")
 

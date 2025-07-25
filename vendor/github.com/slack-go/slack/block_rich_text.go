@@ -16,6 +16,11 @@ func (b RichTextBlock) BlockType() MessageBlockType {
 	return b.Type
 }
 
+// ID returns the ID of the block
+func (s RichTextBlock) ID() string {
+	return s.BlockID
+}
+
 func (e *RichTextBlock) UnmarshalJSON(b []byte) error {
 	var raw struct {
 		Type        MessageBlockType  `json:"type"`
@@ -110,6 +115,8 @@ type RichTextList struct {
 	Elements []RichTextElement       `json:"elements"`
 	Style    RichTextListElementType `json:"style"`
 	Indent   int                     `json:"indent"`
+	Border   int                     `json:"border"`
+	Offset   int                     `json:"offset"`
 }
 
 // NewRichTextList returns a new rich text list element.
@@ -132,6 +139,8 @@ func (e *RichTextList) UnmarshalJSON(b []byte) error {
 		RawElements []json.RawMessage       `json:"elements"`
 		Style       RichTextListElementType `json:"style"`
 		Indent      int                     `json:"indent"`
+		Border      int                     `json:"border"`
+		Offset      int                     `json:"offset"`
 	}
 	if string(b) == "{}" {
 		return nil
@@ -174,6 +183,8 @@ func (e *RichTextList) UnmarshalJSON(b []byte) error {
 		Elements: elems,
 		Style:    raw.Style,
 		Indent:   raw.Indent,
+		Border:   raw.Border,
+		Offset:   raw.Offset,
 	}
 	return nil
 }
@@ -190,7 +201,8 @@ func (s RichTextSection) RichTextElementType() RichTextElementType {
 
 func (e *RichTextSection) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		RawElements []json.RawMessage `json:"elements"`
+		RawElements []json.RawMessage   `json:"elements"`
+		Type        RichTextElementType `json:"type"`
 	}
 	if string(b) == "{}" {
 		return nil
@@ -240,8 +252,11 @@ func (e *RichTextSection) UnmarshalJSON(b []byte) error {
 		}
 		elems = append(elems, elem)
 	}
+	if raw.Type == "" {
+		raw.Type = RTESection
+	}
 	*e = RichTextSection{
-		Type:     RTESection,
+		Type:     raw.Type,
 		Elements: elems,
 	}
 	return nil
@@ -340,7 +355,8 @@ func NewRichTextSectionUserElement(userID string, style *RichTextSectionTextStyl
 type RichTextSectionEmojiElement struct {
 	Type     RichTextSectionElementType `json:"type"`
 	Name     string                     `json:"name"`
-	SkinTone int                        `json:"skin_tone"`
+	SkinTone int                        `json:"skin_tone,omitempty"`
+	Unicode  string                     `json:"unicode,omitempty"`
 	Style    *RichTextSectionTextStyle  `json:"style,omitempty"`
 }
 
@@ -360,7 +376,7 @@ func NewRichTextSectionEmojiElement(name string, skinTone int, style *RichTextSe
 type RichTextSectionLinkElement struct {
 	Type  RichTextSectionElementType `json:"type"`
 	URL   string                     `json:"url"`
-	Text  string                     `json:"text"`
+	Text  string                     `json:"text,omitempty"`
 	Style *RichTextSectionTextStyle  `json:"style,omitempty"`
 }
 
@@ -414,16 +430,22 @@ func NewRichTextSectionUserGroupElement(usergroupID string) *RichTextSectionUser
 type RichTextSectionDateElement struct {
 	Type      RichTextSectionElementType `json:"type"`
 	Timestamp JSONTime                   `json:"timestamp"`
+	Format    string                     `json:"format"`
+	URL       *string                    `json:"url,omitempty"`
+	Fallback  *string                    `json:"fallback,omitempty"`
 }
 
 func (r RichTextSectionDateElement) RichTextSectionElementType() RichTextSectionElementType {
 	return r.Type
 }
 
-func NewRichTextSectionDateElement(timestamp int64) *RichTextSectionDateElement {
+func NewRichTextSectionDateElement(timestamp int64, format string, url *string, fallback *string) *RichTextSectionDateElement {
 	return &RichTextSectionDateElement{
 		Type:      RTSEDate,
 		Timestamp: JSONTime(timestamp),
+		Format:    format,
+		URL:       url,
+		Fallback:  fallback,
 	}
 }
 

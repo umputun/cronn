@@ -8,8 +8,8 @@ github.com/davecgh/go-spew/spew
 # github.com/go-pkgz/email v0.5.0
 ## explicit; go 1.19
 github.com/go-pkgz/email
-# github.com/go-pkgz/lgr v0.11.1
-## explicit; go 1.20
+# github.com/go-pkgz/lgr v0.12.1
+## explicit; go 1.21
 github.com/go-pkgz/lgr
 # github.com/go-pkgz/notify v1.2.0
 ## explicit; go 1.21
@@ -24,8 +24,8 @@ github.com/go-pkgz/syncs
 # github.com/gorilla/css v1.0.1
 ## explicit; go 1.20
 github.com/gorilla/css/scanner
-# github.com/gorilla/websocket v1.5.1
-## explicit; go 1.20
+# github.com/gorilla/websocket v1.5.3
+## explicit; go 1.12
 github.com/gorilla/websocket
 # github.com/microcosm-cc/bluemonday v1.0.27
 ## explicit; go 1.19
@@ -37,8 +37,8 @@ github.com/pmezard/go-difflib/difflib
 # github.com/robfig/cron/v3 v3.0.1
 ## explicit; go 1.12
 github.com/robfig/cron/v3
-# github.com/slack-go/slack v0.14.0
-## explicit; go 1.16
+# github.com/slack-go/slack v0.17.3
+## explicit; go 1.22
 github.com/slack-go/slack
 github.com/slack-go/slack/internal/backoff
 github.com/slack-go/slack/internal/errorsx
@@ -52,12 +52,10 @@ github.com/stretchr/testify/require
 # github.com/umputun/go-flags v1.5.1
 ## explicit; go 1.12
 github.com/umputun/go-flags
-# golang.org/x/net v0.28.0
-## explicit; go 1.18
+# golang.org/x/net v0.42.0
+## explicit; go 1.23.0
 golang.org/x/net/html
 golang.org/x/net/html/atom
-golang.org/x/net/internal/socks
-golang.org/x/net/proxy
 # gopkg.in/natefinch/lumberjack.v2 v2.2.1
 ## explicit; go 1.13
 gopkg.in/natefinch/lumberjack.v2

@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strconv"
@@ -35,9 +36,10 @@ type Conversation struct {
 	ConnectedTeamIDs   []string `json:"connected_team_ids,omitempty"`
 	SharedTeamIDs      []string `json:"shared_team_ids,omitempty"`
 	InternalTeamIDs    []string `json:"internal_team_ids,omitempty"`
-
-	// TODO support pending_shared
-	// TODO support previous_names
+	ContextTeamID      string   `json:"context_team_id,omitempty"`
+	ConversationHostID string   `json:"conversation_host_id,omitempty"`
+	PreviousNames      []string `json:"previous_names,omitempty"`
+	PendingShared      []string `json:"pending_shared,omitempty"`
 }
 
 // GroupConversation is the foundation for Group and Channel
@@ -67,7 +69,21 @@ type Purpose struct {
 
 // Properties contains the Canvas associated to the channel.
 type Properties struct {
-	Canvas Canvas `json:"canvas"`
+	Canvas              Canvas       `json:"canvas"`
+	PostingRestrictedTo RestrictedTo `json:"posting_restricted_to"`
+	Tabs                []Tab        `json:"tabs"`
+	ThreadsRestrictedTo RestrictedTo `json:"threads_restricted_to"`
+}
+
+type RestrictedTo struct {
+	Type []string `json:"type"`
+	User []string `json:"user"`
+}
+
+type Tab struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Type  string `json:"type"`
 }
 
 type Canvas struct {
@@ -328,43 +344,110 @@ func (api *Client) InviteUsersToConversationContext(ctx context.Context, channel
 	return response.Channel, response.Err()
 }
 
-// InviteSharedEmailsToConversation invites users to a shared channels by email.
-// For more details, see InviteSharedEmailsToConversationContext documentation.
-func (api *Client) InviteSharedEmailsToConversation(channelID string, emails ...string) (string, bool, error) {
-	return api.inviteSharedToConversationHelper(context.Background(), channelID, emails, nil)
+// The following functions are for inviting users to a channel but setting the `force`
+// parameter to true. We have added this so that we don't break the existing API.
+//
+// IMPORTANT: If we ever get here for _another_ parameter, we should consider refactoring
+// this to be more flexible.
+//
+// ForceInviteUsersToConversation invites users to a channel but sets the `force`
+// parameter to true.
+//
+// For more details, see ForceInviteUsersToConversationContext documentation.
+func (api *Client) ForceInviteUsersToConversation(channelID string, users ...string) (*Channel, error) {
+	return api.ForceInviteUsersToConversationContext(context.Background(), channelID, users...)
 }
 
-// InviteSharedEmailsToConversationContext invites users to a shared channels by email using context.
-// For more details, see inviteSharedToConversationHelper documentation.
-func (api *Client) InviteSharedEmailsToConversationContext(ctx context.Context, channelID string, emails ...string) (string, bool, error) {
-	return api.inviteSharedToConversationHelper(ctx, channelID, emails, nil)
-}
-
-// InviteSharedUserIDsToConversation invites users to a shared channels by user id.
-// For more details, see InviteSharedUserIDsToConversationContext documentation.
-func (api *Client) InviteSharedUserIDsToConversation(channelID string, userIDs ...string) (string, bool, error) {
-	return api.inviteSharedToConversationHelper(context.Background(), channelID, nil, userIDs)
-}
-
-// InviteSharedUserIDsToConversationContext invites users to a shared channels by user id with context.
-// For more details, see inviteSharedToConversationHelper documentation.
-func (api *Client) InviteSharedUserIDsToConversationContext(ctx context.Context, channelID string, userIDs ...string) (string, bool, error) {
-	return api.inviteSharedToConversationHelper(ctx, channelID, nil, userIDs)
-}
-
-// inviteSharedToConversationHelper invites emails or userIDs to a channel with a custom context.
-// This is a helper function for InviteSharedEmailsToConversation and InviteSharedUserIDsToConversation.
-// It accepts either emails or userIDs, but not both.
-// Slack API docs: https://api.slack.com/methods/conversations.inviteShared
-func (api *Client) inviteSharedToConversationHelper(ctx context.Context, channelID string, emails []string, userIDs []string) (string, bool, error) {
+// ForceInviteUsersToConversationContext invites users to a channel with a custom context
+// while setting the `force` argument to true.
+//
+// Slack API docs: https://api.slack.com/methods/conversations.invite
+func (api *Client) ForceInviteUsersToConversationContext(ctx context.Context, channelID string, users ...string) (*Channel, error) {
 	values := url.Values{
 		"token":   {api.token},
 		"channel": {channelID},
+		"users":   {strings.Join(users, ",")},
+		"force":   {"true"},
 	}
-	if len(emails) > 0 {
-		values.Add("emails", strings.Join(emails, ","))
-	} else if len(userIDs) > 0 {
-		values.Add("user_ids", strings.Join(userIDs, ","))
+	response := struct {
+		SlackResponse
+		Channel *Channel `json:"channel"`
+	}{}
+
+	err := api.postMethod(ctx, "conversations.invite", values, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return response.Channel, response.Err()
+}
+
+// InviteSharedEmailsToConversation invites users to a shared channels by email.
+// For more details, see InviteSharedToConversationContext documentation.
+func (api *Client) InviteSharedEmailsToConversation(channelID string, emails ...string) (string, bool, error) {
+	return api.InviteSharedToConversationContext(context.Background(), InviteSharedToConversationParams{
+		ChannelID: channelID,
+		Emails:    emails,
+	})
+}
+
+// InviteSharedEmailsToConversationContext invites users to a shared channels by email using context.
+// For more details, see InviteSharedToConversationContext documentation.
+func (api *Client) InviteSharedEmailsToConversationContext(ctx context.Context, channelID string, emails ...string) (string, bool, error) {
+	return api.InviteSharedToConversationContext(ctx, InviteSharedToConversationParams{
+		ChannelID: channelID,
+		Emails:    emails,
+	})
+}
+
+// InviteSharedUserIDsToConversation invites users to a shared channels by user id.
+// For more details, see InviteSharedToConversationContext documentation.
+func (api *Client) InviteSharedUserIDsToConversation(channelID string, userIDs ...string) (string, bool, error) {
+	return api.InviteSharedToConversationContext(context.Background(), InviteSharedToConversationParams{
+		ChannelID: channelID,
+		UserIDs:   userIDs,
+	})
+}
+
+// InviteSharedUserIDsToConversationContext invites users to a shared channels by user id with context.
+// For more details, see InviteSharedToConversationContext documentation.
+func (api *Client) InviteSharedUserIDsToConversationContext(ctx context.Context, channelID string, userIDs ...string) (string, bool, error) {
+	return api.InviteSharedToConversationContext(ctx, InviteSharedToConversationParams{
+		ChannelID: channelID,
+		UserIDs:   userIDs,
+	})
+}
+
+// InviteSharedToConversationParams defines the parameters for the InviteSharedToConversation and InviteSharedToConversationContext functions.
+type InviteSharedToConversationParams struct {
+	ChannelID       string
+	Emails          []string
+	UserIDs         []string
+	ExternalLimited *bool
+}
+
+// InviteSharedToConversation invites emails or userIDs to a channel.
+// For more details, see InviteSharedToConversationContext documentation.
+func (api *Client) InviteSharedToConversation(params InviteSharedToConversationParams) (string, bool, error) {
+	return api.InviteSharedToConversationContext(context.Background(), params)
+}
+
+// InviteSharedToConversationContext invites emails or userIDs to a channel with a custom context.
+// This is a helper function for InviteSharedEmailsToConversation and InviteSharedUserIDsToConversation.
+// It accepts either emails or userIDs, but not both.
+// Slack API docs: https://api.slack.com/methods/conversations.inviteShared
+func (api *Client) InviteSharedToConversationContext(ctx context.Context, params InviteSharedToConversationParams) (string, bool, error) {
+	values := url.Values{
+		"token":   {api.token},
+		"channel": {params.ChannelID},
+	}
+	if len(params.Emails) > 0 {
+		values.Add("emails", strings.Join(params.Emails, ","))
+	} else if len(params.UserIDs) > 0 {
+		values.Add("user_ids", strings.Join(params.UserIDs, ","))
+	}
+	if params.ExternalLimited != nil {
+		values.Add("external_limited", strconv.FormatBool(*params.ExternalLimited))
 	}
 	response := struct {
 		SlackResponse
@@ -795,4 +878,37 @@ func (api *Client) MarkConversationContext(ctx context.Context, channel, ts stri
 		return err
 	}
 	return response.Err()
+}
+
+// CreateChannelCanvas creates a new canvas in a channel.
+// For more details, see CreateChannelCanvasContext documentation.
+func (api *Client) CreateChannelCanvas(channel string, documentContent DocumentContent) (string, error) {
+	return api.CreateChannelCanvasContext(context.Background(), channel, documentContent)
+}
+
+// CreateChannelCanvasContext creates a new canvas in a channel with a custom context.
+// Slack API docs: https://api.slack.com/methods/conversations.canvases.create
+func (api *Client) CreateChannelCanvasContext(ctx context.Context, channel string, documentContent DocumentContent) (string, error) {
+	values := url.Values{
+		"token":      {api.token},
+		"channel_id": {channel},
+	}
+	if documentContent.Type != "" {
+		documentContentJSON, err := json.Marshal(documentContent)
+		if err != nil {
+			return "", err
+		}
+		values.Add("document_content", string(documentContentJSON))
+	}
+
+	response := struct {
+		SlackResponse
+		CanvasID string `json:"canvas_id"`
+	}{}
+	err := api.postMethod(ctx, "conversations.canvases.create", values, &response)
+	if err != nil {
+		return "", err
+	}
+
+	return response.CanvasID, response.Err()
 }

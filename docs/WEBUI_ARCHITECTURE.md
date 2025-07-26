@@ -367,3 +367,10 @@ The architecture stays minimal while addressing all critical concerns:
 - Resource limits (max concurrent viewers, rate limiting)
 - Session-based authentication with secure cookies
 - Advanced user management and roles
+- Execution anomaly detection (alert when job runs longer/shorter than usual)
+- Group run mode - bulk execute selected jobs with parallelism control
+- Visual cron builder/helper for easier expression creation
+- Execution time prediction showing next 5-10 runs
+- Search and filter capabilities for job management
+- Job duplication for quick similar job creation
+- Timeline/calendar view of scheduled jobs

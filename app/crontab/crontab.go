@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"gopkg.in/yaml.v3"
 )
 
 // Parser file, thread safe
@@ -20,12 +22,18 @@ type Parser struct {
 	file        string
 	updInterval time.Duration
 	hupCh       <-chan struct{}
+	isYAML      bool
 }
 
 // JobSpec for spec and cmd + params
 type JobSpec struct {
-	Spec    string
-	Command string
+	Spec    string `yaml:"spec"`
+	Command string `yaml:"command"`
+}
+
+// yamlConfig represents the YAML configuration structure
+type yamlConfig struct {
+	Jobs []JobSpec `yaml:"jobs"`
 }
 
 // New creates Parser for file, but not parsing yet
@@ -34,8 +42,18 @@ func New(file string, updInterval time.Duration, hupCh <-chan struct{}) *Parser 
 	if updInterval == time.Duration(math.MaxInt64) {
 		updIntervalStr = "no updates"
 	}
-	log.Printf("[INFO] crontab file %s, %s", file, updIntervalStr)
-	return &Parser{file: file, updInterval: updInterval, hupCh: hupCh}
+	
+	// detect format by file extension
+	ext := strings.ToLower(filepath.Ext(file))
+	isYAML := ext == ".yml" || ext == ".yaml"
+	
+	format := "crontab"
+	if isYAML {
+		format = "yaml"
+	}
+	
+	log.Printf("[INFO] config file %s (%s format), %s", file, format, updIntervalStr)
+	return &Parser{file: file, updInterval: updInterval, hupCh: hupCh, isYAML: isYAML}
 }
 
 // List parses crontab and returns lit of jobs
@@ -44,6 +62,12 @@ func (p Parser) List() (result []JobSpec, err error) {
 	if err != nil {
 		return []JobSpec{}, err
 	}
+	
+	if p.isYAML {
+		return p.parseYAML(bs)
+	}
+	
+	// parse as traditional crontab
 	lines := strings.Split(string(bs), "\n")
 	for _, l := range lines {
 		if js, err := Parse(l); err == nil {
@@ -51,6 +75,26 @@ func (p Parser) List() (result []JobSpec, err error) {
 		}
 	}
 	return result, nil
+}
+
+// parseYAML parses YAML configuration
+func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
+	var config yamlConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+	
+	// validate each job
+	for i, job := range config.Jobs {
+		if job.Spec == "" {
+			return nil, fmt.Errorf("job %d has empty spec", i+1)
+		}
+		if job.Command == "" {
+			return nil, fmt.Errorf("job %d has empty command", i+1)
+		}
+	}
+	
+	return config.Jobs, nil
 }
 
 func (p Parser) String() string {

@@ -1,0 +1,24 @@
+# Example YAML configuration for cronn
+# This format is automatically detected by .yml or .yaml extension
+
+jobs:
+  # Standard cron format: minute hour day month weekday
+  - spec: "*/5 * * * *"
+    command: "ls -la ."
+  
+  - spec: "*/2 1-18 * * *"
+    command: "export"
+  
+  # Template support works the same way
+  - spec: "*/1 * * * *"
+    command: "echo {{.YYYYMMDD}}"
+  
+  # Special @-descriptors are supported
+  - spec: "@every 1h15m"
+    command: "something blah bad"
+  
+  - spec: "@midnight"
+    command: "backup /data"
+  
+  - spec: "@hourly"
+    command: "check system health"

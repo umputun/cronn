@@ -33,8 +33,8 @@ func (p *LogPrefixer) Write(data []byte) (int, error) {
 	for {
 		line, err = reader.ReadBytes('\n')
 
-		// There can be data to write in `line` even if `io.EOF` error is returned.
-		// Exit immediately only in case of unexpected error.
+		// there can be data to write in `line` even if `io.EOF` error is returned.
+		// exit immediately only in case of unexpected error.
 		if err != nil && err != io.EOF {
 			return bytesWritten, err
 		}

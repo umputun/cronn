@@ -32,7 +32,8 @@ In addition `cronn` provides:
  
 - `cronn -c "30 23 * * 1-5 command arg1 arg2 ..."` - runs `command` with `arg1` and `arg2` every day at 23:30
 - `cronn -c "@every 5s ls -la"` - runs `ls -la` every 5 seconds
-- `cronn -f crontab` - runs jobs from the `crontab` file
+- `cronn -f crontab` - runs jobs from the `crontab` file (traditional crontab format)
+- `cronn -f config.yml` - runs jobs from the `config.yml` file (YAML format, auto-detected by extension)
 
 Scheduling can be defined as:
 
@@ -55,6 +56,35 @@ Cronn also understands various day-realted templates evaluated at the time of jo
 Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
 cronn executes the command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight.
+
+### Configuration file formats
+
+Cronn supports two configuration file formats, automatically detected by file extension:
+
+#### Traditional crontab format (default)
+Any file without `.yml` or `.yaml` extension is treated as traditional crontab:
+```
+# crontab format
+*/5 * * * * ls -la .
+*/2 1-18 * * * export
+@every 1h15m something blah bad
+```
+
+#### YAML format
+Files with `.yml` or `.yaml` extension are parsed as YAML:
+```yaml
+jobs:
+  - spec: "*/5 * * * *"
+    command: "ls -la ."
+  
+  - spec: "@every 1h15m"
+    command: "something blah bad"
+  
+  - spec: "@midnight"
+    command: "backup /data"
+```
+
+Both formats support the same scheduling specifications and template variables.
  
 ## Optional modes
 

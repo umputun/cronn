@@ -1,0 +1,9 @@
+jobs:
+  - spec: "*/5 * * * *"
+    command: "ls -la ."
+  - spec: "*/2 1-18 * * *"
+    command: "export"
+  - spec: "@every 2h30m"
+    command: "echo test"
+  - spec: "@midnight"
+    command: "backup /data"

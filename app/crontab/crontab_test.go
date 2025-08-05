@@ -50,6 +50,74 @@ func TestParser_List(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestParser_ListYAML(t *testing.T) {
+	ctab := New("testfiles/crontab.yml", time.Hour, nil)
+	jobs, err := ctab.List()
+	require.NoError(t, err)
+	assert.Len(t, jobs, 4)
+	assert.Equal(t, []JobSpec{
+		{Spec: "*/5 * * * *", Command: "ls -la ."},
+		{Spec: "*/2 1-18 * * *", Command: "export"},
+		{Spec: "@every 2h30m", Command: "echo test"},
+		{Spec: "@midnight", Command: "backup /data"},
+	}, jobs)
+	assert.Equal(t, "testfiles/crontab.yml", ctab.String())
+	assert.True(t, ctab.isYAML)
+}
+
+func TestParser_ListYAMLInvalid(t *testing.T) {
+	// test invalid YAML
+	tmp, err := os.CreateTemp("", "crontab*.yml")
+	require.NoError(t, err)
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+
+	// write invalid YAML
+	_, err = tmp.WriteString("not valid yaml: [\n")
+	require.NoError(t, err)
+
+	ctab := New(tmp.Name(), time.Hour, nil)
+	_, err = ctab.List()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse YAML")
+}
+
+func TestParser_ListYAMLEmptyFields(t *testing.T) {
+	// test YAML with empty fields
+	tmp, err := os.CreateTemp("", "crontab*.yml")
+	require.NoError(t, err)
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+
+	// write YAML with empty spec
+	_, err = tmp.WriteString(`jobs:
+  - spec: ""
+    command: "test"`)
+	require.NoError(t, err)
+
+	ctab := New(tmp.Name(), time.Hour, nil)
+	_, err = ctab.List()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty spec")
+
+	// write YAML with empty command
+	_ = tmp.Truncate(0)
+	_, _ = tmp.Seek(0, 0)
+	_, err = tmp.WriteString(`jobs:
+  - spec: "* * * * *"
+    command: ""`)
+	require.NoError(t, err)
+
+	ctab = New(tmp.Name(), time.Hour, nil)
+	_, err = ctab.List()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty command")
+}
+
 func TestParser_Changes(t *testing.T) {
 	tmp, err := os.CreateTemp("", "crontab")
 	require.NoError(t, err)

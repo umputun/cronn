@@ -21,6 +21,39 @@ import (
 	"github.com/umputun/cronn/app/service/mocks"
 )
 
+func TestScheduler_JobDescription(t *testing.T) {
+	s := &Scheduler{}
+
+	tests := []struct {
+		name     string
+		jobSpec  crontab.JobSpec
+		expected string
+	}{
+		{
+			name:     "with name",
+			jobSpec:  crontab.JobSpec{Command: "echo test", Name: "Test job"},
+			expected: `"echo test" (Test job)`,
+		},
+		{
+			name:     "without name",
+			jobSpec:  crontab.JobSpec{Command: "ls -la"},
+			expected: `"ls -la"`,
+		},
+		{
+			name:     "empty name",
+			jobSpec:  crontab.JobSpec{Command: "date", Name: ""},
+			expected: `"date"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := s.jobDescription(tt.jobSpec)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestScheduler_Do(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -164,6 +197,33 @@ func TestScheduler_jobFunc(t *testing.T) {
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
 	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+}
+
+func TestScheduler_jobFuncWithName(t *testing.T) {
+	resmr := &mocks.ResumerMock{
+		OnStartFunc: func(cmd string) (string, error) {
+			assert.Equal(t, "echo test", cmd)
+			return "resume.file", nil
+		},
+		OnFinishFunc: func(fname string) error {
+			assert.Equal(t, "resume.file", fname)
+			return nil
+		},
+	}
+	scheduleMock := &mocks.ScheduleMock{
+		NextFunc: func(timeMoqParam time.Time) time.Time {
+			return time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)
+		},
+	}
+	wr := bytes.NewBuffer(nil)
+	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr,
+		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true), EnableLogPrefix: true}
+
+	// test with name field set
+	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "echo test", Name: "Test job"}, scheduleMock).Run()
+	assert.Equal(t, "{echo test} test\n", wr.String())
+
 	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
 }
 

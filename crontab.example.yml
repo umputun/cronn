@@ -5,20 +5,26 @@ jobs:
   # Standard cron format: minute hour day month weekday
   - spec: "*/5 * * * *"
     command: "ls -la ."
+    name: "Directory listing"  # optional: descriptive name shown in logs
   
   - spec: "*/2 1-18 * * *"
     command: "export"
+    # name is optional, if not provided only command is shown
   
   # Template support works the same way
   - spec: "*/1 * * * *"
     command: "echo {{.YYYYMMDD}}"
+    name: "Daily date output"
   
   # Special @-descriptors are supported
   - spec: "@every 1h15m"
     command: "something blah bad"
+    name: "Regular task"
   
   - spec: "@midnight"
     command: "backup /data"
+    name: "Nightly backup"
   
   - spec: "@hourly"
     command: "check system health"
+    name: "Health check"

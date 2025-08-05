@@ -1,9 +1,12 @@
 jobs:
   - spec: "*/5 * * * *"
     command: "ls -la ."
+    name: "Directory listing"
   - spec: "*/2 1-18 * * *"
     command: "export"
   - spec: "@every 2h30m"
     command: "echo test"
+    name: "Test echo job"
   - spec: "@midnight"
     command: "backup /data"
+    name: "Nightly backup"

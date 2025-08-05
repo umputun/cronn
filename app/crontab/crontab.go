@@ -29,6 +29,7 @@ type Parser struct {
 type JobSpec struct {
 	Spec    string `yaml:"spec"`
 	Command string `yaml:"command"`
+	Name    string `yaml:"name,omitempty"`
 }
 
 // yamlConfig represents the YAML configuration structure
@@ -42,16 +43,16 @@ func New(file string, updInterval time.Duration, hupCh <-chan struct{}) *Parser 
 	if updInterval == time.Duration(math.MaxInt64) {
 		updIntervalStr = "no updates"
 	}
-	
+
 	// detect format by file extension
 	ext := strings.ToLower(filepath.Ext(file))
 	isYAML := ext == ".yml" || ext == ".yaml"
-	
+
 	format := "crontab"
 	if isYAML {
 		format = "yaml"
 	}
-	
+
 	log.Printf("[INFO] config file %s (%s format), %s", file, format, updIntervalStr)
 	return &Parser{file: file, updInterval: updInterval, hupCh: hupCh, isYAML: isYAML}
 }
@@ -62,11 +63,11 @@ func (p Parser) List() (result []JobSpec, err error) {
 	if err != nil {
 		return []JobSpec{}, err
 	}
-	
+
 	if p.isYAML {
 		return p.parseYAML(bs)
 	}
-	
+
 	// parse as traditional crontab
 	lines := strings.Split(string(bs), "\n")
 	for _, l := range lines {
@@ -83,7 +84,7 @@ func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
-	
+
 	// validate each job
 	for i, job := range config.Jobs {
 		if job.Spec == "" {
@@ -93,7 +94,7 @@ func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
 			return nil, fmt.Errorf("job %d has empty command", i+1)
 		}
 	}
-	
+
 	return config.Jobs, nil
 }
 

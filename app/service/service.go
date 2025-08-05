@@ -121,14 +121,15 @@ func (s *Scheduler) Do(ctx context.Context) {
 
 // schedule makes new cron job from crontab.JobSpec and adds to cron
 func (s *Scheduler) schedule(r crontab.JobSpec) error {
-	log.Printf("[INFO] new cron, command %q", r.Command)
+	jobDesc := s.jobDescription(r)
+	log.Printf("[INFO] new cron, %s", jobDesc)
 	sched, e := cron.ParseStandard(r.Spec)
 	if e != nil {
 		return fmt.Errorf("can't parse %s: %w", r.Spec, e)
 	}
 
 	id := s.Schedule(sched, s.jobFunc(r, sched))
-	log.Printf("[INFO] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.Command, id)
+	log.Printf("[INFO] first: %s, %s (%v)", sched.Next(time.Now()).Format(time.RFC3339), jobDesc, id)
 	return nil
 }
 
@@ -175,13 +176,14 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 	}
 
 	return func() {
-		log.Printf("[INFO] executing: %q", r.Command)
+		jobDesc := s.jobDescription(r)
+		log.Printf("[INFO] executing: %s", jobDesc)
 		if err := runJob(r); err != nil {
-			log.Printf("[WARN] job failed: %s, %v", r.Command, err)
+			log.Printf("[WARN] job failed: %s, %v", jobDesc, err)
 		} else {
-			log.Printf("[INFO] completed %v", r.Command)
+			log.Printf("[INFO] completed %s", jobDesc)
 		}
-		log.Printf("[INFO] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.Command)
+		log.Printf("[INFO] next: %s, %s", sched.Next(time.Now()).Format(time.RFC3339), jobDesc)
 	}
 }
 
@@ -245,7 +247,7 @@ func (s *Scheduler) loadFromFileParser() error {
 	}
 
 	for _, js := range jss {
-		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command}
+		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Name: js.Name}
 		if err = s.schedule(req); err != nil {
 			return fmt.Errorf("can't add %s, %s: %w", js.Spec, js.Command, err)
 		}
@@ -303,4 +305,12 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			})
 		}
 	}()
+}
+
+// jobDescription returns a formatted job description with name if available
+func (s *Scheduler) jobDescription(r crontab.JobSpec) string {
+	if r.Name != "" {
+		return fmt.Sprintf("%q (%s)", r.Command, r.Name)
+	}
+	return fmt.Sprintf("%q", r.Command)
 }

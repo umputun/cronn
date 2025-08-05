@@ -56,10 +56,10 @@ func TestParser_ListYAML(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, jobs, 4)
 	assert.Equal(t, []JobSpec{
-		{Spec: "*/5 * * * *", Command: "ls -la ."},
-		{Spec: "*/2 1-18 * * *", Command: "export"},
-		{Spec: "@every 2h30m", Command: "echo test"},
-		{Spec: "@midnight", Command: "backup /data"},
+		{Spec: "*/5 * * * *", Command: "ls -la .", Name: "Directory listing"},
+		{Spec: "*/2 1-18 * * *", Command: "export", Name: ""},
+		{Spec: "@every 2h30m", Command: "echo test", Name: "Test echo job"},
+		{Spec: "@midnight", Command: "backup /data", Name: "Nightly backup"},
 	}, jobs)
 	assert.Equal(t, "testfiles/crontab.yml", ctab.String())
 	assert.True(t, ctab.isYAML)

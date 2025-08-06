@@ -34,12 +34,23 @@ type Schedule struct {
 	Weekday string `yaml:"weekday,omitempty"`
 }
 
+// RepeaterConfig defines job-specific retry settings.
+// Uses pointers to distinguish between unset (nil) and explicitly set values,
+// allowing proper merging with global defaults from CLI parameters.
+type RepeaterConfig struct {
+	Attempts *int           `yaml:"attempts,omitempty"`
+	Duration *time.Duration `yaml:"duration,omitempty"`
+	Factor   *float64       `yaml:"factor,omitempty"`
+	Jitter   *bool          `yaml:"jitter,omitempty"`
+}
+
 // JobSpec for spec and cmd + params
 type JobSpec struct {
-	Spec    string   `yaml:"spec,omitempty"`
-	Sched   Schedule `yaml:"sched,omitempty"`
-	Command string   `yaml:"command"`
-	Name    string   `yaml:"name,omitempty"`
+	Spec     string          `yaml:"spec,omitempty"`
+	Sched    Schedule        `yaml:"sched,omitempty"`
+	Command  string          `yaml:"command"`
+	Name     string          `yaml:"name,omitempty"`
+	Repeater *RepeaterConfig `yaml:"repeater,omitempty"`
 }
 
 // yamlConfig represents the YAML configuration structure

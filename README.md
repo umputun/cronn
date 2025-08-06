@@ -99,11 +99,27 @@ jobs:
     command: "cleanup temp"
 ```
 
-The YAML format supports two ways to define scheduling:
-- `spec`: Traditional cron string or @-descriptors
-- `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
+The YAML format supports:
+- Two ways to define scheduling:
+  - `spec`: Traditional cron string or @-descriptors
+  - `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
+- Optional `name` field for job description
+- Optional `repeater` field for job-specific retry configuration
 
 Note: `spec` and `sched` are mutually exclusive - use only one per job. Empty `sched` fields default to `*`.
+
+Example with repeater configuration:
+```yaml
+jobs:
+  - spec: "0 * * * *"
+    command: "critical-backup.sh"
+    name: "Hourly backup"
+    repeater:
+      attempts: 5       # Try 5 times instead of global default
+      duration: 2s      # Initial delay of 2 seconds
+      factor: 2.5       # Multiply delay by 2.5 on each retry
+      jitter: true      # Add random jitter to delays
+```
 
 Both formats support the same template variables.
  
@@ -147,6 +163,12 @@ However, it will survive container's restart.
 - Optional repeater retries failed job multiple times. It uses backoff strategy with an exponential interval. 
 - Duration interval goes in steps with `last * math.Pow(factor, attempt)` increments. 
 - Optional jitter randomizes intervals a little bit. Factor = 1 effectively makes this strategy fixed with `duration` delay.
+- Global repeater settings can be configured via CLI flags or environment variables
+- Individual jobs in YAML format can override global settings with the `repeater` field:
+  - `attempts`: Number of retry attempts
+  - `duration`: Initial retry delay
+  - `factor`: Backoff multiplication factor
+  - `jitter`: Enable/disable jitter (true/false)
 
 ### Deduplication
 

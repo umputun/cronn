@@ -12,6 +12,8 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"github.com/go-pkgz/repeater"
+	"github.com/go-pkgz/repeater/strategy"
 	"github.com/go-pkgz/syncs"
 	"github.com/robfig/cron/v3"
 
@@ -135,7 +137,7 @@ func (s *Scheduler) schedule(r crontab.JobSpec) error {
 
 func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
-	runJob := func(r crontab.JobSpec) error {
+	runJob := func(r crontab.JobSpec, rptr Repeater) error {
 		cmd, err := NewDayTemplate(time.Now()).Parse(r.Command)
 		if err != nil {
 			return err
@@ -153,7 +155,7 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 		}
 
-		err = s.executeCommand(cmd, s.Stdout)
+		err = s.executeCommand(cmd, s.Stdout, rptr)
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), s.NotifyTimeout)
 		defer cancel()
 		var errMsg string
@@ -177,8 +179,9 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
 	return func() {
 		jobDesc := s.jobDescription(r)
+		jobRepeater := s.getJobRepeater(r.Repeater)
 		log.Printf("[INFO] executing: %s", jobDesc)
-		if err := runJob(r); err != nil {
+		if err := runJob(r, jobRepeater); err != nil {
 			log.Printf("[WARN] job failed: %s, %v", jobDesc, err)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)
@@ -187,12 +190,12 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 	}
 }
 
-func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
+func (s *Scheduler) executeCommand(command string, logWriter io.Writer, rptr Repeater) error {
 	if s.Jitter > 0 {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
 
-	err := s.Repeater.Do(context.Background(), func() error {
+	err := rptr.Do(context.Background(), func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		serr := NewErrorWriter(s.MaxLogLines)
 		logWithErr := io.MultiWriter(logWriter, serr)
@@ -247,7 +250,7 @@ func (s *Scheduler) loadFromFileParser() error {
 	}
 
 	for _, js := range jss {
-		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Name: js.Name}
+		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Name: js.Name, Repeater: js.Repeater}
 		if err = s.schedule(req); err != nil {
 			return fmt.Errorf("can't add %s, %s: %w", js.Spec, js.Command, err)
 		}
@@ -290,7 +293,7 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			cmd := cmd
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
-				if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
+				if err := s.executeCommand(cmd.Command, s.Stdout, s.Repeater); err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 					defer cancel()
@@ -313,4 +316,52 @@ func (s *Scheduler) jobDescription(r crontab.JobSpec) string {
 		return fmt.Sprintf("%q (%s)", r.Command, r.Name)
 	}
 	return fmt.Sprintf("%q", r.Command)
+}
+
+// getJobRepeater returns a repeater for the job, merging job-specific settings with global defaults
+func (s *Scheduler) getJobRepeater(jobConfig *crontab.RepeaterConfig) Repeater {
+	// if no job-specific config, use global repeater
+	if jobConfig == nil {
+		return s.Repeater
+	}
+
+	// extract global settings from the scheduler's repeater
+	// we need to type assert to get the underlying strategy
+	globalStrategy, ok := s.Repeater.(*repeater.Repeater)
+	if !ok {
+		// if we can't get the global strategy, just use the global repeater
+		return s.Repeater
+	}
+
+	// get the backoff strategy from the global repeater
+	globalBackoff, ok := globalStrategy.Strategy.(*strategy.Backoff)
+	if !ok {
+		// if not using backoff strategy, just use the global repeater
+		return s.Repeater
+	}
+
+	// create new backoff strategy with merged settings
+	mergedBackoff := &strategy.Backoff{
+		Repeats:  globalBackoff.Repeats,
+		Duration: globalBackoff.Duration,
+		Factor:   globalBackoff.Factor,
+		Jitter:   globalBackoff.Jitter,
+	}
+
+	// override with job-specific settings if provided
+	if jobConfig.Attempts != nil {
+		mergedBackoff.Repeats = *jobConfig.Attempts
+	}
+	if jobConfig.Duration != nil {
+		mergedBackoff.Duration = *jobConfig.Duration
+	}
+	if jobConfig.Factor != nil {
+		mergedBackoff.Factor = *jobConfig.Factor
+	}
+	if jobConfig.Jitter != nil {
+		mergedBackoff.Jitter = *jobConfig.Jitter
+	}
+
+	// create and return new repeater with merged settings
+	return repeater.New(mergedBackoff)
 }

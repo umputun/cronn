@@ -1,0 +1,19 @@
+jobs:
+  - spec: "0 * * * *"
+    command: "echo 'hourly job with custom repeater'"
+    name: "custom repeater job"
+    repeater:
+      attempts: 5
+      duration: 2s
+      factor: 2.5
+      jitter: true
+
+  - spec: "*/5 * * * *"
+    command: "echo 'job with partial repeater'"
+    name: "partial repeater"
+    repeater:
+      attempts: 3
+
+  - spec: "@daily"
+    command: "echo 'daily job without repeater'"
+    name: "default repeater"

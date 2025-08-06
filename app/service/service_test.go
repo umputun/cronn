@@ -141,31 +141,34 @@ func TestScheduler_DoIntegration(t *testing.T) {
 }
 
 func TestScheduler_execute(t *testing.T) {
-	svc := Scheduler{Repeater: repeater.New(&strategy.Once{}), EnableLogPrefix: true}
+	rep := repeater.New(&strategy.Once{})
+	svc := Scheduler{EnableLogPrefix: true}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("echo 123", wr)
+	err := svc.executeCommand("echo 123", wr, rep)
 	require.NoError(t, err)
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
-	svc = Scheduler{Repeater: repeater.New(&strategy.Once{}), EnableLogPrefix: false}
+	svc = Scheduler{EnableLogPrefix: false}
 	wr = bytes.NewBuffer(nil)
-	err = svc.executeCommand("echo 123", wr)
+	err = svc.executeCommand("echo 123", wr, rep)
 	require.NoError(t, err)
 	assert.Equal(t, "123\n", wr.String())
 }
 
 func TestScheduler_executeFailedNotFound(t *testing.T) {
-	svc := Scheduler{Repeater: repeater.New(&strategy.Once{})}
+	rep := repeater.New(&strategy.Once{})
+	svc := Scheduler{}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("no-such-command", wr)
+	err := svc.executeCommand("no-such-command", wr, rep)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "not found")
 }
 
 func TestScheduler_executeFailedExitCode(t *testing.T) {
-	svc := Scheduler{MaxLogLines: 10, Repeater: repeater.New(&strategy.Once{})}
+	rep := repeater.New(&strategy.Once{})
+	svc := Scheduler{MaxLogLines: 10}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("testfiles/fail.sh", wr)
+	err := svc.executeCommand("testfiles/fail.sh", wr, rep)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "TestScheduler_executeFailed")
 	t.Log(err)
@@ -452,4 +455,95 @@ func TestScheduler_DoWithResume(t *testing.T) {
 	assert.Equal(t, 1, len(cr.StartCalls()))
 	assert.Equal(t, 1, len(cr.StopCalls()))
 	assert.Equal(t, 1, len(parser.ListCalls()))
+}
+
+func TestScheduler_getJobRepeater(t *testing.T) {
+	// create global repeater with specific settings
+	globalRepeater := repeater.New(&strategy.Backoff{
+		Repeats:  3,
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   false,
+	})
+
+	svc := Scheduler{
+		Repeater: globalRepeater,
+	}
+
+	t.Run("nil config returns global repeater", func(t *testing.T) {
+		result := svc.getJobRepeater(nil)
+		assert.Equal(t, globalRepeater, result)
+	})
+
+	t.Run("full override", func(t *testing.T) {
+		attempts := 5
+		duration := 2 * time.Second
+		factor := 3.0
+		jitter := true
+		
+		config := &crontab.RepeaterConfig{
+			Attempts: &attempts,
+			Duration: &duration,
+			Factor:   &factor,
+			Jitter:   &jitter,
+		}
+		
+		result := svc.getJobRepeater(config)
+		assert.NotEqual(t, globalRepeater, result)
+		
+		// verify the new repeater has the overridden settings
+		resultRepeater, ok := result.(*repeater.Repeater)
+		require.True(t, ok)
+		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
+		require.True(t, ok)
+		
+		assert.Equal(t, 5, resultBackoff.Repeats)
+		assert.Equal(t, 2*time.Second, resultBackoff.Duration)
+		assert.Equal(t, 3.0, resultBackoff.Factor)
+		assert.Equal(t, true, resultBackoff.Jitter)
+	})
+
+	t.Run("partial override", func(t *testing.T) {
+		attempts := 10
+		
+		config := &crontab.RepeaterConfig{
+			Attempts: &attempts,
+		}
+		
+		result := svc.getJobRepeater(config)
+		assert.NotEqual(t, globalRepeater, result)
+		
+		// verify the new repeater has merged settings
+		resultRepeater, ok := result.(*repeater.Repeater)
+		require.True(t, ok)
+		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
+		require.True(t, ok)
+		
+		assert.Equal(t, 10, resultBackoff.Repeats) // overridden
+		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
+		assert.Equal(t, 2.0, resultBackoff.Factor) // from global
+		assert.Equal(t, false, resultBackoff.Jitter) // from global
+	})
+
+	t.Run("only jitter override", func(t *testing.T) {
+		jitter := true
+		
+		config := &crontab.RepeaterConfig{
+			Jitter: &jitter,
+		}
+		
+		result := svc.getJobRepeater(config)
+		assert.NotEqual(t, globalRepeater, result)
+		
+		// verify the new repeater has merged settings
+		resultRepeater, ok := result.(*repeater.Repeater)
+		require.True(t, ok)
+		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
+		require.True(t, ok)
+		
+		assert.Equal(t, 3, resultBackoff.Repeats) // from global
+		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
+		assert.Equal(t, 2.0, resultBackoff.Factor) // from global
+		assert.Equal(t, true, resultBackoff.Jitter) // overridden
+	})
 }

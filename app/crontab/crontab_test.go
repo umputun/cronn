@@ -257,3 +257,36 @@ func TestParser_ChangesHup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, jobs, 3)
 }
+
+func TestParseYAMLWithRepeater(t *testing.T) {
+	p := New("testfiles/crontab-repeater.yml", time.Hour, nil)
+	jobs, err := p.List()
+	require.NoError(t, err)
+	require.Len(t, jobs, 3)
+
+	// job with full repeater config
+	assert.Equal(t, "0 * * * *", jobs[0].Spec)
+	assert.Equal(t, "echo 'hourly job with custom repeater'", jobs[0].Command)
+	assert.Equal(t, "custom repeater job", jobs[0].Name)
+	require.NotNil(t, jobs[0].Repeater)
+	assert.Equal(t, 5, *jobs[0].Repeater.Attempts)
+	assert.Equal(t, 2*time.Second, *jobs[0].Repeater.Duration)
+	assert.Equal(t, 2.5, *jobs[0].Repeater.Factor)
+	assert.Equal(t, true, *jobs[0].Repeater.Jitter)
+
+	// job with partial repeater config
+	assert.Equal(t, "*/5 * * * *", jobs[1].Spec)
+	assert.Equal(t, "echo 'job with partial repeater'", jobs[1].Command)
+	assert.Equal(t, "partial repeater", jobs[1].Name)
+	require.NotNil(t, jobs[1].Repeater)
+	assert.Equal(t, 3, *jobs[1].Repeater.Attempts)
+	assert.Nil(t, jobs[1].Repeater.Duration)
+	assert.Nil(t, jobs[1].Repeater.Factor)
+	assert.Nil(t, jobs[1].Repeater.Jitter)
+
+	// job without repeater config
+	assert.Equal(t, "@daily", jobs[2].Spec)
+	assert.Equal(t, "echo 'daily job without repeater'", jobs[2].Command)
+	assert.Equal(t, "default repeater", jobs[2].Name)
+	assert.Nil(t, jobs[2].Repeater)
+}

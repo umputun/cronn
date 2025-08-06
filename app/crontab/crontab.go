@@ -232,12 +232,12 @@ func Parse(line string) (result JobSpec, err error) {
 	if strings.HasPrefix(strings.TrimSpace(line), "#") {
 		return JobSpec{}, errors.New("comment line " + line)
 	}
-	
+
 	// strip inline comments (# and everything after)
 	if idx := strings.Index(line, " #"); idx != -1 {
 		line = line[:idx]
 	}
-	
+
 	reWhtSpaces := regexp.MustCompile(`[\s\p{Zs}]{2,}`)
 	l := strings.TrimSpace(line)
 	l = strings.ReplaceAll(l, "\t", " ")

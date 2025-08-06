@@ -2,6 +2,8 @@
 // also supports @descriptors like
 package crontab
 
+//go:generate go run internal/schema/main.go schema.json
+
 import (
 	"context"
 	"errors"
@@ -27,35 +29,35 @@ type Parser struct {
 
 // Schedule represents structured cron schedule with separate fields
 type Schedule struct {
-	Minute  string `yaml:"minute,omitempty"`
-	Hour    string `yaml:"hour,omitempty"`
-	Day     string `yaml:"day,omitempty"`
-	Month   string `yaml:"month,omitempty"`
-	Weekday string `yaml:"weekday,omitempty"`
+	Minute  string `yaml:"minute,omitempty" json:"minute,omitempty" jsonschema:"description=Minute field (0-59 or * or */n),pattern=^([0-5]?[0-9]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
+	Hour    string `yaml:"hour,omitempty" json:"hour,omitempty" jsonschema:"description=Hour field (0-23 or * or */n),pattern=^([01]?[0-9]|2[0-3]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
+	Day     string `yaml:"day,omitempty" json:"day,omitempty" jsonschema:"description=Day of month field (1-31 or * or */n),pattern=^([1-9]|[12][0-9]|3[01]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
+	Month   string `yaml:"month,omitempty" json:"month,omitempty" jsonschema:"description=Month field (1-12 or * or */n),pattern=^([1-9]|1[0-2]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
+	Weekday string `yaml:"weekday,omitempty" json:"weekday,omitempty" jsonschema:"description=Weekday field (0-7 where 0 and 7 are Sunday or * or */n),pattern=^([0-7]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
 }
 
 // RepeaterConfig defines job-specific retry settings.
 // Uses pointers to distinguish between unset (nil) and explicitly set values,
 // allowing proper merging with global defaults from CLI parameters.
 type RepeaterConfig struct {
-	Attempts *int           `yaml:"attempts,omitempty"`
-	Duration *time.Duration `yaml:"duration,omitempty"`
-	Factor   *float64       `yaml:"factor,omitempty"`
-	Jitter   *bool          `yaml:"jitter,omitempty"`
+	Attempts *int           `yaml:"attempts,omitempty" json:"attempts,omitempty" jsonschema:"description=Number of retry attempts,minimum=1,maximum=100"`
+	Duration *time.Duration `yaml:"duration,omitempty" json:"duration,omitempty" jsonschema:"description=Initial retry delay (e.g. 1s or 500ms)"`
+	Factor   *float64       `yaml:"factor,omitempty" json:"factor,omitempty" jsonschema:"description=Backoff multiplication factor,minimum=1.0,maximum=10.0"`
+	Jitter   *bool          `yaml:"jitter,omitempty" json:"jitter,omitempty" jsonschema:"description=Enable random jitter to avoid thundering herd"`
 }
 
 // JobSpec for spec and cmd + params
 type JobSpec struct {
-	Spec     string          `yaml:"spec,omitempty"`
-	Sched    Schedule        `yaml:"sched,omitempty"`
-	Command  string          `yaml:"command"`
-	Name     string          `yaml:"name,omitempty"`
-	Repeater *RepeaterConfig `yaml:"repeater,omitempty"`
+	Spec     string          `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string (e.g. '0 * * * *' or '@daily'),pattern=^(@(yearly|annually|monthly|weekly|daily|midnight|hourly|every\\s+[0-9]+[smh])|([0-9*,-/]+\\s+){4}[0-9*,-/]+)$"`
+	Sched    Schedule        `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"`
+	Command  string          `yaml:"command" json:"command" jsonschema:"required,description=Command to execute,minLength=1"`
+	Name     string          `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description for better logging"`
+	Repeater *RepeaterConfig `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration to override global settings"`
 }
 
-// yamlConfig represents the YAML configuration structure
-type yamlConfig struct {
-	Jobs []JobSpec `yaml:"jobs"`
+// YamlConfig represents the YAML configuration structure
+type YamlConfig struct {
+	Jobs []JobSpec `yaml:"jobs" json:"jobs" jsonschema:"required,description=List of cron jobs to execute,minItems=1"`
 }
 
 // New creates Parser for file, but not parsing yet
@@ -101,9 +103,15 @@ func (p Parser) List() (result []JobSpec, err error) {
 
 // parseYAML parses YAML configuration
 func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
-	var config yamlConfig
+	var config YamlConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	// verify against embedded schema (non-fatal warnings)
+	if err := VerifyAgainstEmbeddedSchema(&config); err != nil {
+		// log warning but don't fail - schema validation is supplementary
+		log.Printf("[WARN] schema validation warning: %v", err)
 	}
 
 	// validate and process each job

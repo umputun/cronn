@@ -105,8 +105,15 @@ The YAML format supports:
   - `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
 - Optional `name` field for job description
 - Optional `repeater` field for job-specific retry configuration
+- JSON Schema validation for configuration correctness
 
 Note: `spec` and `sched` are mutually exclusive - use only one per job. Empty `sched` fields default to `*`.
+
+The YAML configuration is validated against an embedded JSON schema that ensures:
+- Required fields are present
+- Field values meet constraints (e.g., valid cron patterns, reasonable retry attempts)
+- Configuration conflicts are detected (e.g., both spec and sched defined)
+- Schema validation issues are logged as warnings but don't prevent execution
 
 Example with repeater configuration:
 ```yaml

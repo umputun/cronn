@@ -1,0 +1,20 @@
+# Test YAML for conditional job execution
+- name: "test-cpu-condition"
+  command: "echo 'CPU test passed'"
+  schedule: "*/1 * * * *"  # Every minute for testing
+  conditions:
+    cpu_below: 90  # Should pass on most systems
+
+- name: "test-postpone"
+  command: "echo 'Postponed job executed'"
+  schedule: "*/1 * * * *"
+  conditions:
+    cpu_below: 1  # Will likely fail and need postponement
+    max_postpone: "30s"
+    check_interval: "5s"
+
+- name: "test-skip"
+  command: "echo 'This should be skipped'"
+  schedule: "*/1 * * * *"
+  conditions:
+    cpu_below: 0  # Will always fail, no postpone = skip

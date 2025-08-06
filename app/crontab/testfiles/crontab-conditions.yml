@@ -1,0 +1,43 @@
+# Test YAML with conditions
+- name: "cpu check"
+  command: "echo 'cpu test'"
+  schedule: "0 * * * *"
+  conditions:
+    cpu_below: 50
+
+- name: "memory check with postpone"
+  command: "echo 'memory test'"
+  schedule: "*/30 * * * *"
+  conditions:
+    memory_below: 70
+    max_postpone: "1h"
+    check_interval: "5m"
+
+- name: "disk and custom check"
+  command: "echo 'disk test'"
+  schedule: "0 2 * * *"
+  conditions:
+    disk_free_above: 20
+    disk_free_path: "/var/log"
+    custom: "/usr/local/bin/check.sh"
+
+- name: "all conditions"
+  command: "echo 'all conditions'"
+  schedule: "0 3 * * *"
+  conditions:
+    cpu_below: 40
+    memory_below: 60
+    load_avg_below: 2.5
+    disk_free_above: 15
+    disk_free_path: "/"
+    custom: "/bin/true"
+    max_postpone: "2h"
+    check_interval: "1m"
+
+- name: "conditions and repeater"
+  command: "echo 'both'"
+  schedule: "0 4 * * *"
+  conditions:
+    cpu_below: 50
+  repeater:
+    attempts: 3

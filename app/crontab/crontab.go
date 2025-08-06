@@ -25,11 +25,21 @@ type Parser struct {
 	isYAML      bool
 }
 
+// Schedule represents structured cron schedule with separate fields
+type Schedule struct {
+	Minute  string `yaml:"minute,omitempty"`
+	Hour    string `yaml:"hour,omitempty"`
+	Day     string `yaml:"day,omitempty"`
+	Month   string `yaml:"month,omitempty"`
+	Weekday string `yaml:"weekday,omitempty"`
+}
+
 // JobSpec for spec and cmd + params
 type JobSpec struct {
-	Spec    string `yaml:"spec"`
-	Command string `yaml:"command"`
-	Name    string `yaml:"name,omitempty"`
+	Spec    string   `yaml:"spec,omitempty"`
+	Sched   Schedule `yaml:"sched,omitempty"`
+	Command string   `yaml:"command"`
+	Name    string   `yaml:"name,omitempty"`
 }
 
 // yamlConfig represents the YAML configuration structure
@@ -85,17 +95,63 @@ func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	// validate each job
+	// validate and process each job
 	for i, job := range config.Jobs {
-		if job.Spec == "" {
-			return nil, fmt.Errorf("job %d has empty spec", i+1)
+		// check for conflict between spec and sched
+		hasSpec := job.Spec != ""
+		hasSched := job.Sched.Minute != "" || job.Sched.Hour != "" || job.Sched.Day != "" || 
+			job.Sched.Month != "" || job.Sched.Weekday != ""
+		
+		if hasSpec && hasSched {
+			return nil, fmt.Errorf("job %d has both 'spec' and 'sched' fields, use only one", i+1)
 		}
+		
+		if !hasSpec && !hasSched {
+			return nil, fmt.Errorf("job %d has neither 'spec' nor 'sched' field", i+1)
+		}
+		
+		// convert sched to spec if needed
+		if hasSched {
+			spec := p.schedToSpec(job.Sched)
+			config.Jobs[i].Spec = spec
+		}
+		
 		if job.Command == "" {
 			return nil, fmt.Errorf("job %d has empty command", i+1)
 		}
 	}
 
 	return config.Jobs, nil
+}
+
+// schedToSpec converts Schedule struct to cron spec string
+func (p Parser) schedToSpec(sched Schedule) string {
+	minute := sched.Minute
+	if minute == "" {
+		minute = "*"
+	}
+	
+	hour := sched.Hour
+	if hour == "" {
+		hour = "*"
+	}
+	
+	day := sched.Day
+	if day == "" {
+		day = "*"
+	}
+	
+	month := sched.Month
+	if month == "" {
+		month = "*"
+	}
+	
+	weekday := sched.Weekday
+	if weekday == "" {
+		weekday = "*"
+	}
+	
+	return fmt.Sprintf("%s %s %s %s %s", minute, hour, day, month, weekday)
 }
 
 func (p Parser) String() string {

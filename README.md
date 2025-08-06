@@ -74,17 +74,38 @@ Any file without `.yml` or `.yaml` extension is treated as traditional crontab:
 Files with `.yml` or `.yaml` extension are parsed as YAML:
 ```yaml
 jobs:
+  # Using traditional spec field
   - spec: "*/5 * * * *"
     command: "ls -la ."
+    name: "Directory listing"  # optional descriptive name
   
-  - spec: "@every 1h15m"
-    command: "something blah bad"
-  
-  - spec: "@midnight"
+  # Using structured sched field (alternative to spec)
+  - sched:
+      minute: "0"
+      hour: "2"
     command: "backup /data"
+    name: "Nightly backup"
+  
+  # More complex sched example
+  - sched:
+      minute: "0,30"
+      hour: "9-17"
+      weekday: "1-5"
+    command: "sync files"
+    name: "Business hours sync"
+  
+  # @-descriptors work with spec field
+  - spec: "@midnight"
+    command: "cleanup temp"
 ```
 
-Both formats support the same scheduling specifications and template variables.
+The YAML format supports two ways to define scheduling:
+- `spec`: Traditional cron string or @-descriptors
+- `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
+
+Note: `spec` and `sched` are mutually exclusive - use only one per job. Empty `sched` fields default to `*`.
+
+Both formats support the same template variables.
  
 ## Optional modes
 

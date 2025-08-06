@@ -93,16 +93,15 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 		_ = os.Remove(tmp.Name())
 	}()
 
-	// write YAML with empty spec
+	// write YAML with neither spec nor sched
 	_, err = tmp.WriteString(`jobs:
-  - spec: ""
-    command: "test"`)
+  - command: "test"`)
 	require.NoError(t, err)
 
 	ctab := New(tmp.Name(), time.Hour, nil)
 	_, err = ctab.List()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "empty spec")
+	assert.Contains(t, err.Error(), "neither 'spec' nor 'sched'")
 
 	// write YAML with empty command
 	_ = tmp.Truncate(0)
@@ -116,6 +115,75 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 	_, err = ctab.List()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "empty command")
+}
+
+func TestParser_ListYAMLSched(t *testing.T) {
+	ctab := New("testfiles/crontab-sched.yml", time.Hour, nil)
+	jobs, err := ctab.List()
+	require.NoError(t, err)
+	assert.Len(t, jobs, 4)
+	
+	// verify sched fields are converted to spec
+	assert.Equal(t, "0 2 * * *", jobs[0].Spec)
+	assert.Equal(t, "backup /data", jobs[0].Command)
+	assert.Equal(t, "Nightly backup", jobs[0].Name)
+	
+	assert.Equal(t, "0,30 9-17 1-15 */2 1-5", jobs[1].Spec)
+	assert.Equal(t, "sync files", jobs[1].Command)
+	assert.Equal(t, "Business hours sync", jobs[1].Name)
+	
+	assert.Equal(t, "15 * * * *", jobs[2].Spec)
+	assert.Equal(t, "check health", jobs[2].Command)
+	assert.Equal(t, "Every hour at 15 minutes", jobs[2].Name)
+	
+	assert.Equal(t, "@midnight", jobs[3].Spec)
+	assert.Equal(t, "cleanup temp", jobs[3].Command)
+	assert.Equal(t, "Midnight cleanup", jobs[3].Name)
+}
+
+func TestParser_ListYAMLSchedConflict(t *testing.T) {
+	ctab := New("testfiles/crontab-conflict.yml", time.Hour, nil)
+	_, err := ctab.List()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "both 'spec' and 'sched'")
+}
+
+func TestParser_SchedToSpec(t *testing.T) {
+	p := Parser{}
+	
+	tests := []struct {
+		name     string
+		sched    Schedule
+		expected string
+	}{
+		{
+			name:     "all fields",
+			sched:    Schedule{Minute: "0", Hour: "2", Day: "15", Month: "*/3", Weekday: "1-5"},
+			expected: "0 2 15 */3 1-5",
+		},
+		{
+			name:     "partial fields",
+			sched:    Schedule{Minute: "30", Hour: "9"},
+			expected: "30 9 * * *",
+		},
+		{
+			name:     "empty fields default to *",
+			sched:    Schedule{},
+			expected: "* * * * *",
+		},
+		{
+			name:     "complex patterns",
+			sched:    Schedule{Minute: "0,15,30,45", Hour: "*/2", Day: "1-7,15-21"},
+			expected: "0,15,30,45 */2 1-7,15-21 * *",
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := p.schedToSpec(tt.sched)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }
 
 func TestParser_Changes(t *testing.T) {

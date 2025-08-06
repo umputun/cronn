@@ -97,6 +97,16 @@ jobs:
     command: "sync files"
     name: "Business hours sync"
   
+  # Job with custom retry configuration (per-job repeater)
+  - spec: "0 */4 * * *"
+    command: "backup.sh"
+    name: "Database backup"
+    repeater:
+      attempts: 5        # Retry up to 5 times (overrides global setting)
+      duration: 30s      # Start with 30 second delay
+      factor: 2.0        # Double the delay each time
+      jitter: true       # Add randomization to delays
+  
   # @-descriptors work with spec field
   - spec: "@midnight"
     command: "cleanup temp"
@@ -197,6 +207,8 @@ However, it will survive container's restart.
 ### Conditional Execution
 
 Jobs can be configured to run only when certain system conditions are met. This is useful for resource-intensive tasks that should only run when the system is idle or has sufficient resources. Conditions are only supported in YAML configuration format.
+
+To control how many condition checks can run simultaneously, use the `--max-concurrent-checks` flag (default: 10) or set the `CRONN_MAX_CONCURRENT_CHECKS` environment variable. This prevents resource exhaustion when multiple jobs with conditions are scheduled.
 
 Available conditions:
 - `cpu_below`: Maximum CPU usage percentage (0-100)

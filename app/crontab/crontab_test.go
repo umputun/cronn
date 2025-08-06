@@ -23,6 +23,8 @@ func TestParse(t *testing.T) {
 		{"@reboot echo", JobSpec{Spec: "@reboot", Command: "echo"}, false},
 		{"@midnight echo 123", JobSpec{Spec: "@midnight", Command: "echo 123"}, false},
 		{"@every 2h30m echo 123", JobSpec{Spec: "@every 2h30m", Command: "echo 123"}, false},
+		// inline comment should be stripped
+		{"* * * * * echo foo # bar baz", JobSpec{Spec: "* * * * *", Command: "echo foo"}, false},
 	}
 
 	for _, tt := range tbl {

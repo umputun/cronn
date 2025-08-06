@@ -44,8 +44,14 @@ type Scheduler struct {
 	MaxLogLines       int
 	EnableLogPrefix   bool
 	Repeater          Repeater
-	Stdout            io.Writer
-	NotifyTimeout     time.Duration
+	RepeaterDefaults  struct {
+		Attempts int
+		Duration time.Duration
+		Factor   float64
+		Jitter   bool
+	}
+	Stdout        io.Writer
+	NotifyTimeout time.Duration
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -324,48 +330,27 @@ func (s *Scheduler) getJobRepeater(jobConfig *crontab.RepeaterConfig) Repeater {
 		return s.Repeater
 	}
 
-	backoff := s.extractGlobalBackoff()
-	if backoff == nil {
-		return s.Repeater
+	// start with defaults from CLI
+	backoff := &strategy.Backoff{
+		Repeats:  s.RepeaterDefaults.Attempts,
+		Duration: s.RepeaterDefaults.Duration,
+		Factor:   s.RepeaterDefaults.Factor,
+		Jitter:   s.RepeaterDefaults.Jitter,
 	}
 
-	s.applyJobConfig(backoff, jobConfig)
+	// apply job-specific overrides
+	if jobConfig.Attempts != nil {
+		backoff.Repeats = *jobConfig.Attempts
+	}
+	if jobConfig.Duration != nil {
+		backoff.Duration = *jobConfig.Duration
+	}
+	if jobConfig.Factor != nil {
+		backoff.Factor = *jobConfig.Factor
+	}
+	if jobConfig.Jitter != nil {
+		backoff.Jitter = *jobConfig.Jitter
+	}
+
 	return repeater.New(backoff)
-}
-
-// extractGlobalBackoff attempts to extract backoff configuration from the global repeater
-func (s *Scheduler) extractGlobalBackoff() *strategy.Backoff {
-	globalStrategy, ok := s.Repeater.(*repeater.Repeater)
-	if !ok {
-		return nil
-	}
-
-	globalBackoff, ok := globalStrategy.Strategy.(*strategy.Backoff)
-	if !ok {
-		return nil
-	}
-
-	// create a copy of the global backoff settings
-	return &strategy.Backoff{
-		Repeats:  globalBackoff.Repeats,
-		Duration: globalBackoff.Duration,
-		Factor:   globalBackoff.Factor,
-		Jitter:   globalBackoff.Jitter,
-	}
-}
-
-// applyJobConfig applies job-specific configuration to the backoff strategy
-func (s *Scheduler) applyJobConfig(backoff *strategy.Backoff, config *crontab.RepeaterConfig) {
-	if config.Attempts != nil {
-		backoff.Repeats = *config.Attempts
-	}
-	if config.Duration != nil {
-		backoff.Duration = *config.Duration
-	}
-	if config.Factor != nil {
-		backoff.Factor = *config.Factor
-	}
-	if config.Jitter != nil {
-		backoff.Jitter = *config.Jitter
-	}
 }

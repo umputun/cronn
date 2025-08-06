@@ -469,6 +469,10 @@ func TestScheduler_getJobRepeater(t *testing.T) {
 	svc := Scheduler{
 		Repeater: globalRepeater,
 	}
+	svc.RepeaterDefaults.Attempts = 3
+	svc.RepeaterDefaults.Duration = 1 * time.Second
+	svc.RepeaterDefaults.Factor = 2.0
+	svc.RepeaterDefaults.Jitter = false
 
 	t.Run("nil config returns global repeater", func(t *testing.T) {
 		result := svc.getJobRepeater(nil)

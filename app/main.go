@@ -19,6 +19,7 @@ import (
 	"github.com/umputun/go-flags"
 	"gopkg.in/natefinch/lumberjack.v2"
 
+	"github.com/umputun/cronn/app/conditions"
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/notify"
 	"github.com/umputun/cronn/app/resumer"
@@ -35,6 +36,7 @@ var opts struct {
 	JitterEnable   bool          `short:"j" long:"jitter" env:"CRONN_JITTER" description:"enable jitter"`
 	JitterDuration time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
 	DeDup          bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
+	MaxConcurrentChecks int      `long:"max-concurrent-checks" env:"CRONN_MAX_CONCURRENT_CHECKS" default:"10" description:"max concurrent condition checks"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -137,6 +139,7 @@ func main() {
 		Jitter:            jitterDuration,
 		Repeater:          rptr,
 		Notifier:          makeNotifier(),
+		ConditionChecker:  conditions.NewChecker(opts.MaxConcurrentChecks),
 		HostName:          makeHostName(),
 		MaxLogLines:       opts.Notify.MaxLogLines,
 		EnableLogPrefix:   opts.Log.EnablePrefix,

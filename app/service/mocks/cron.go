@@ -12,31 +12,31 @@ import (
 
 // CronMock is a mock implementation of service.Cron.
 //
-// 	func TestSomethingThatUsesCron(t *testing.T) {
+//	func TestSomethingThatUsesCron(t *testing.T) {
 //
-// 		// make and configure a mocked service.Cron
-// 		mockedCron := &CronMock{
-// 			EntriesFunc: func() []cron.Entry {
-// 				panic("mock out the Entries method")
-// 			},
-// 			RemoveFunc: func(id cron.EntryID)  {
-// 				panic("mock out the Remove method")
-// 			},
-// 			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
-// 				panic("mock out the Schedule method")
-// 			},
-// 			StartFunc: func()  {
-// 				panic("mock out the Start method")
-// 			},
-// 			StopFunc: func() context.Context {
-// 				panic("mock out the Stop method")
-// 			},
-// 		}
+//		// make and configure a mocked service.Cron
+//		mockedCron := &CronMock{
+//			EntriesFunc: func() []cron.Entry {
+//				panic("mock out the Entries method")
+//			},
+//			RemoveFunc: func(id cron.EntryID)  {
+//				panic("mock out the Remove method")
+//			},
+//			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+//				panic("mock out the Schedule method")
+//			},
+//			StartFunc: func()  {
+//				panic("mock out the Start method")
+//			},
+//			StopFunc: func() context.Context {
+//				panic("mock out the Stop method")
+//			},
+//		}
 //
-// 		// use mockedCron in code that requires service.Cron
-// 		// and then make assertions.
+//		// use mockedCron in code that requires service.Cron
+//		// and then make assertions.
 //
-// 	}
+//	}
 type CronMock struct {
 	// EntriesFunc mocks the Entries method.
 	EntriesFunc func() []cron.Entry
@@ -99,7 +99,8 @@ func (mock *CronMock) Entries() []cron.Entry {
 
 // EntriesCalls gets all the calls that were made to Entries.
 // Check the length with:
-//     len(mockedCron.EntriesCalls())
+//
+//	len(mockedCron.EntriesCalls())
 func (mock *CronMock) EntriesCalls() []struct {
 } {
 	var calls []struct {
@@ -128,7 +129,8 @@ func (mock *CronMock) Remove(id cron.EntryID) {
 
 // RemoveCalls gets all the calls that were made to Remove.
 // Check the length with:
-//     len(mockedCron.RemoveCalls())
+//
+//	len(mockedCron.RemoveCalls())
 func (mock *CronMock) RemoveCalls() []struct {
 	ID cron.EntryID
 } {
@@ -161,7 +163,8 @@ func (mock *CronMock) Schedule(schedule cron.Schedule, cmd cron.Job) cron.EntryI
 
 // ScheduleCalls gets all the calls that were made to Schedule.
 // Check the length with:
-//     len(mockedCron.ScheduleCalls())
+//
+//	len(mockedCron.ScheduleCalls())
 func (mock *CronMock) ScheduleCalls() []struct {
 	Schedule cron.Schedule
 	Cmd      cron.Job
@@ -191,7 +194,8 @@ func (mock *CronMock) Start() {
 
 // StartCalls gets all the calls that were made to Start.
 // Check the length with:
-//     len(mockedCron.StartCalls())
+//
+//	len(mockedCron.StartCalls())
 func (mock *CronMock) StartCalls() []struct {
 } {
 	var calls []struct {
@@ -217,7 +221,8 @@ func (mock *CronMock) Stop() context.Context {
 
 // StopCalls gets all the calls that were made to Stop.
 // Check the length with:
-//     len(mockedCron.StopCalls())
+//
+//	len(mockedCron.StopCalls())
 func (mock *CronMock) StopCalls() []struct {
 } {
 	var calls []struct {

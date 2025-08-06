@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/cronn/app/conditions"
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/resumer"
 	"github.com/umputun/cronn/app/service/mocks"
@@ -58,15 +59,15 @@ func TestScheduler_Do(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	scCalls := 0
+	var scheduleCallCount int32
 	cr := &mocks.CronMock{
 		EntriesFunc: func() []cron.Entry { return []cron.Entry{{}, {}, {}} },
 		RemoveFunc:  func(id cron.EntryID) {},
 		StartFunc:   func() {},
 		StopFunc:    func() context.Context { return ctx },
 		ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
-			scCalls++
-			return cron.EntryID(scCalls)
+			calls := atomic.AddInt32(&scheduleCallCount, 1)
+			return cron.EntryID(calls)
 		},
 	}
 
@@ -144,13 +145,13 @@ func TestScheduler_execute(t *testing.T) {
 	rep := repeater.New(&strategy.Once{})
 	svc := Scheduler{EnableLogPrefix: true}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("echo 123", wr, rep)
+	err := svc.executeCommand(context.Background(), "echo 123", wr, rep)
 	require.NoError(t, err)
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
 	svc = Scheduler{EnableLogPrefix: false}
 	wr = bytes.NewBuffer(nil)
-	err = svc.executeCommand("echo 123", wr, rep)
+	err = svc.executeCommand(context.Background(), "echo 123", wr, rep)
 	require.NoError(t, err)
 	assert.Equal(t, "123\n", wr.String())
 }
@@ -159,7 +160,7 @@ func TestScheduler_executeFailedNotFound(t *testing.T) {
 	rep := repeater.New(&strategy.Once{})
 	svc := Scheduler{}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("no-such-command", wr, rep)
+	err := svc.executeCommand(context.Background(), "no-such-command", wr, rep)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "not found")
 }
@@ -168,7 +169,7 @@ func TestScheduler_executeFailedExitCode(t *testing.T) {
 	rep := repeater.New(&strategy.Once{})
 	svc := Scheduler{MaxLogLines: 10}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("testfiles/fail.sh", wr, rep)
+	err := svc.executeCommand(context.Background(), "testfiles/fail.sh", wr, rep)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "TestScheduler_executeFailed")
 	t.Log(err)
@@ -196,7 +197,7 @@ func TestScheduler_jobFunc(t *testing.T) {
 	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr,
 		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true), EnableLogPrefix: true}
 
-	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "echo 123"}, scheduleMock).Run()
+	svc.jobFunc(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "echo 123"}, scheduleMock).Run()
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
 	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
@@ -224,7 +225,7 @@ func TestScheduler_jobFuncWithName(t *testing.T) {
 		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true), EnableLogPrefix: true}
 
 	// test with name field set
-	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "echo test", Name: "Test job"}, scheduleMock).Run()
+	svc.jobFunc(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "echo test", Name: "Test job"}, scheduleMock).Run()
 	assert.Equal(t, "{echo test} test\n", wr.String())
 
 	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
@@ -259,7 +260,7 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr, Notifier: notif,
 		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true)}
 
-	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, scheduleMock).Run()
+	svc.jobFunc(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, scheduleMock).Run()
 	assert.Contains(t, wr.String(), "not found")
 
 	assert.Equal(t, 1, len(resmr.OnStartCalls()))
@@ -349,15 +350,15 @@ func TestScheduler_DoWithReload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	scCalls := 0
+	var scheduleCallCount int32
 	cr := &mocks.CronMock{
 		EntriesFunc: func() []cron.Entry { return []cron.Entry{{}, {}, {}} },
 		RemoveFunc:  func(id cron.EntryID) {},
 		StartFunc:   func() {},
 		StopFunc:    func() context.Context { return ctx },
 		ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
-			scCalls++
-			switch scCalls {
+			calls := atomic.AddInt32(&scheduleCallCount, 1)
+			switch calls {
 			case 1, 2:
 				return cron.EntryID(1)
 			case 3:
@@ -550,4 +551,192 @@ func TestScheduler_getJobRepeater(t *testing.T) {
 		assert.Equal(t, 2.0, resultBackoff.Factor)             // from global
 		assert.Equal(t, true, resultBackoff.Jitter)            // overridden
 	})
+}
+
+func TestScheduler_WaitForConditions(t *testing.T) {
+	t.Run("no condition checker - always execute", func(t *testing.T) {
+		svc := &Scheduler{}
+
+		cond := conditions.Config{
+			CPUBelow: intPtr(50),
+		}
+
+		result := svc.waitForConditions(context.Background(), cond, "test job")
+		assert.True(t, result, "should execute when no condition checker")
+	})
+
+	t.Run("conditions met - execute immediately", func(t *testing.T) {
+		mockChecker := &mocks.ConditionCheckerMock{
+			CheckFunc: func(conditions conditions.Config) (bool, string) {
+				return true, ""
+			},
+		}
+
+		svc := &Scheduler{
+			ConditionChecker: mockChecker,
+		}
+
+		cond := conditions.Config{
+			CPUBelow: intPtr(50),
+		}
+
+		result := svc.waitForConditions(context.Background(), cond, "test job")
+		assert.True(t, result)
+		assert.Equal(t, 1, len(mockChecker.CheckCalls()))
+	})
+
+	t.Run("conditions not met - skip job when no max_postpone", func(t *testing.T) {
+		mockChecker := &mocks.ConditionCheckerMock{
+			CheckFunc: func(conditions conditions.Config) (bool, string) {
+				return false, "CPU at 80%, threshold 50%"
+			},
+		}
+
+		svc := &Scheduler{
+			ConditionChecker: mockChecker,
+		}
+
+		cond := conditions.Config{
+			CPUBelow: intPtr(50),
+		}
+
+		result := svc.waitForConditions(context.Background(), cond, "test job")
+		assert.False(t, result)
+		assert.Equal(t, 1, len(mockChecker.CheckCalls()))
+	})
+
+	t.Run("conditions not met - wait and succeed", func(t *testing.T) {
+		callCount := 0
+		mockChecker := &mocks.ConditionCheckerMock{
+			CheckFunc: func(conditions conditions.Config) (bool, string) {
+				callCount++
+				if callCount >= 2 {
+					return true, ""
+				}
+				return false, "CPU at 80%, threshold 50%"
+			},
+		}
+
+		svc := &Scheduler{
+			ConditionChecker: mockChecker,
+		}
+
+		maxPostpone := 2 * time.Second
+		checkInterval := 100 * time.Millisecond
+		cond := conditions.Config{
+			CPUBelow:      intPtr(50),
+			MaxPostpone:   &maxPostpone,
+			CheckInterval: &checkInterval,
+		}
+
+		start := time.Now()
+		result := svc.waitForConditions(context.Background(), cond, "test job")
+		duration := time.Since(start)
+
+		assert.True(t, result)
+		assert.True(t, duration >= 100*time.Millisecond)
+		assert.True(t, duration < 300*time.Millisecond)
+		assert.GreaterOrEqual(t, len(mockChecker.CheckCalls()), 2)
+	})
+
+	t.Run("max postpone reached - execute anyway", func(t *testing.T) {
+		mockChecker := &mocks.ConditionCheckerMock{
+			CheckFunc: func(conditions conditions.Config) (bool, string) {
+				return false, "CPU at 80%, threshold 50%"
+			},
+		}
+
+		svc := &Scheduler{
+			ConditionChecker: mockChecker,
+		}
+
+		maxPostpone := 200 * time.Millisecond
+		checkInterval := 100 * time.Millisecond
+		cond := conditions.Config{
+			CPUBelow:      intPtr(50),
+			MaxPostpone:   &maxPostpone,
+			CheckInterval: &checkInterval,
+		}
+
+		start := time.Now()
+		result := svc.waitForConditions(context.Background(), cond, "test job")
+		duration := time.Since(start)
+
+		assert.True(t, result, "should execute after max postpone")
+		assert.True(t, duration >= 200*time.Millisecond)
+		assert.True(t, duration < 400*time.Millisecond)
+	})
+
+	t.Run("context canceled - stop waiting", func(t *testing.T) {
+		mockChecker := &mocks.ConditionCheckerMock{
+			CheckFunc: func(conditions conditions.Config) (bool, string) {
+				return false, "CPU at 80%, threshold 50%"
+			},
+		}
+
+		svc := &Scheduler{
+			ConditionChecker: mockChecker,
+		}
+
+		maxPostpone := 10 * time.Second
+		checkInterval := 100 * time.Millisecond
+		cond := conditions.Config{
+			CPUBelow:      intPtr(50),
+			MaxPostpone:   &maxPostpone,
+			CheckInterval: &checkInterval,
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// cancel context after short delay
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			cancel()
+		}()
+
+		start := time.Now()
+		result := svc.waitForConditions(ctx, cond, "test job")
+		duration := time.Since(start)
+
+		assert.False(t, result, "should not execute when canceled")
+		assert.True(t, duration >= 150*time.Millisecond)
+		assert.True(t, duration < 300*time.Millisecond)
+	})
+
+	t.Run("default check interval", func(t *testing.T) {
+		callCount := 0
+		mockChecker := &mocks.ConditionCheckerMock{
+			CheckFunc: func(conditions conditions.Config) (bool, string) {
+				callCount++
+				if callCount >= 2 {
+					return true, ""
+				}
+				return false, "CPU at 80%, threshold 50%"
+			},
+		}
+
+		svc := &Scheduler{
+			ConditionChecker: mockChecker,
+		}
+
+		maxPostpone := 100 * time.Millisecond
+		cond := conditions.Config{
+			CPUBelow:    intPtr(50),
+			MaxPostpone: &maxPostpone,
+			// CheckInterval not set - should default to 30s but max postpone will trigger first
+		}
+
+		start := time.Now()
+		result := svc.waitForConditions(context.Background(), cond, "test job")
+		duration := time.Since(start)
+
+		assert.True(t, result, "should execute after max postpone")
+		assert.True(t, duration >= 100*time.Millisecond)
+		assert.True(t, duration < 200*time.Millisecond)
+	})
+}
+
+// helper function for tests
+func intPtr(i int) *int {
+	return &i
 }

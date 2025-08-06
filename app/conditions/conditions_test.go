@@ -378,8 +378,8 @@ func TestMaxConcurrentChecks(t *testing.T) {
 			// try to check conditions
 			ok, reason := checker.Check(cond)
 			
-			// if we got "too many concurrent checks", that's expected
-			if !ok && reason == "too many concurrent condition checks" {
+			// if we got concurrency limit error, that's expected
+			if !ok && reason == "condition check limit reached, try increasing --max-concurrent-checks or wait for running checks to complete" {
 				atomic.AddInt32(&completed, 1)
 				done <- struct{}{}
 				return

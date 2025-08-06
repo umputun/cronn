@@ -54,7 +54,7 @@ func (c *Checker) Check(conditions Config) (bool, string) {
 	default:
 		// if we can't acquire immediately, still proceed but log warning
 		// this prevents deadlock while still providing protection
-		return false, "too many concurrent condition checks"
+		return false, "condition check limit reached, try increasing --max-concurrent-checks or wait for running checks to complete"
 	}
 
 	// validate thresholds

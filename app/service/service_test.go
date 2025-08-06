@@ -59,14 +59,14 @@ func TestScheduler_Do(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	var scCalls int32
+	var scheduleCallCount int32
 	cr := &mocks.CronMock{
 		EntriesFunc: func() []cron.Entry { return []cron.Entry{{}, {}, {}} },
 		RemoveFunc:  func(id cron.EntryID) {},
 		StartFunc:   func() {},
 		StopFunc:    func() context.Context { return ctx },
 		ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
-			calls := atomic.AddInt32(&scCalls, 1)
+			calls := atomic.AddInt32(&scheduleCallCount, 1)
 			return cron.EntryID(calls)
 		},
 	}
@@ -350,14 +350,14 @@ func TestScheduler_DoWithReload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	var scCalls int32
+	var scheduleCallCount int32
 	cr := &mocks.CronMock{
 		EntriesFunc: func() []cron.Entry { return []cron.Entry{{}, {}, {}} },
 		RemoveFunc:  func(id cron.EntryID) {},
 		StartFunc:   func() {},
 		StopFunc:    func() context.Context { return ctx },
 		ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
-			calls := atomic.AddInt32(&scCalls, 1)
+			calls := atomic.AddInt32(&scheduleCallCount, 1)
 			switch calls {
 			case 1, 2:
 				return cron.EntryID(1)

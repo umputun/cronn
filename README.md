@@ -113,7 +113,7 @@ The YAML configuration is validated against an embedded JSON schema that ensures
 - Required fields are present
 - Field values meet constraints (e.g., valid cron patterns, reasonable retry attempts)
 - Configuration conflicts are detected (e.g., both spec and sched defined)
-- Schema validation issues are logged as warnings but don't prevent execution
+- Invalid configurations will prevent cronn from starting
 
 Example with repeater configuration:
 ```yaml

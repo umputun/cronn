@@ -2,7 +2,6 @@ package crontab
 
 import (
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -27,13 +26,12 @@ var embeddedSchemaData []byte
 
 // VerifyAgainstEmbeddedSchema validates the config against the embedded JSON schema
 func VerifyAgainstEmbeddedSchema(cfg *YamlConfig) error {
-	// parse embedded schema
-	var schema map[string]interface{}
-	if err := json.Unmarshal(embeddedSchemaData, &schema); err != nil {
-		return fmt.Errorf("parse embedded schema: %w", err)
+	// ensure schema is embedded (will fail at compile time if not)
+	if len(embeddedSchemaData) == 0 {
+		return fmt.Errorf("embedded schema is empty")
 	}
 
-	// basic validation using embedded schema data
+	// validate configuration according to schema rules
 	if err := validateRequiredFields(cfg); err != nil {
 		return fmt.Errorf("config validation failed: %w", err)
 	}

@@ -145,6 +145,11 @@ func main() {
 		NotifyTimeout:     opts.Notify.TimeOut,
 	}
 
+	cronService.RepeaterDefaults.Attempts = opts.Repeater.Attempts
+	cronService.RepeaterDefaults.Duration = opts.Repeater.Duration
+	cronService.RepeaterDefaults.Factor = opts.Repeater.Factor
+	cronService.RepeaterDefaults.Jitter = opts.Repeater.Jitter
+
 	cronService.Do(ctx)
 }
 

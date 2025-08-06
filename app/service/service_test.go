@@ -21,6 +21,39 @@ import (
 	"github.com/umputun/cronn/app/service/mocks"
 )
 
+func TestScheduler_JobDescription(t *testing.T) {
+	s := &Scheduler{}
+
+	tests := []struct {
+		name     string
+		jobSpec  crontab.JobSpec
+		expected string
+	}{
+		{
+			name:     "with name",
+			jobSpec:  crontab.JobSpec{Command: "echo test", Name: "Test job"},
+			expected: `"echo test" (Test job)`,
+		},
+		{
+			name:     "without name",
+			jobSpec:  crontab.JobSpec{Command: "ls -la"},
+			expected: `"ls -la"`,
+		},
+		{
+			name:     "empty name",
+			jobSpec:  crontab.JobSpec{Command: "date", Name: ""},
+			expected: `"date"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := s.jobDescription(tt.jobSpec)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestScheduler_Do(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -108,31 +141,34 @@ func TestScheduler_DoIntegration(t *testing.T) {
 }
 
 func TestScheduler_execute(t *testing.T) {
-	svc := Scheduler{Repeater: repeater.New(&strategy.Once{}), EnableLogPrefix: true}
+	rep := repeater.New(&strategy.Once{})
+	svc := Scheduler{EnableLogPrefix: true}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("echo 123", wr)
+	err := svc.executeCommand("echo 123", wr, rep)
 	require.NoError(t, err)
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
-	svc = Scheduler{Repeater: repeater.New(&strategy.Once{}), EnableLogPrefix: false}
+	svc = Scheduler{EnableLogPrefix: false}
 	wr = bytes.NewBuffer(nil)
-	err = svc.executeCommand("echo 123", wr)
+	err = svc.executeCommand("echo 123", wr, rep)
 	require.NoError(t, err)
 	assert.Equal(t, "123\n", wr.String())
 }
 
 func TestScheduler_executeFailedNotFound(t *testing.T) {
-	svc := Scheduler{Repeater: repeater.New(&strategy.Once{})}
+	rep := repeater.New(&strategy.Once{})
+	svc := Scheduler{}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("no-such-command", wr)
+	err := svc.executeCommand("no-such-command", wr, rep)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "not found")
 }
 
 func TestScheduler_executeFailedExitCode(t *testing.T) {
-	svc := Scheduler{MaxLogLines: 10, Repeater: repeater.New(&strategy.Once{})}
+	rep := repeater.New(&strategy.Once{})
+	svc := Scheduler{MaxLogLines: 10}
 	wr := bytes.NewBuffer(nil)
-	err := svc.executeCommand("testfiles/fail.sh", wr)
+	err := svc.executeCommand("testfiles/fail.sh", wr, rep)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "TestScheduler_executeFailed")
 	t.Log(err)
@@ -164,6 +200,33 @@ func TestScheduler_jobFunc(t *testing.T) {
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
 	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+}
+
+func TestScheduler_jobFuncWithName(t *testing.T) {
+	resmr := &mocks.ResumerMock{
+		OnStartFunc: func(cmd string) (string, error) {
+			assert.Equal(t, "echo test", cmd)
+			return "resume.file", nil
+		},
+		OnFinishFunc: func(fname string) error {
+			assert.Equal(t, "resume.file", fname)
+			return nil
+		},
+	}
+	scheduleMock := &mocks.ScheduleMock{
+		NextFunc: func(timeMoqParam time.Time) time.Time {
+			return time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)
+		},
+	}
+	wr := bytes.NewBuffer(nil)
+	svc := Scheduler{MaxLogLines: 10, Stdout: wr, Resumer: resmr,
+		Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true), EnableLogPrefix: true}
+
+	// test with name field set
+	svc.jobFunc(crontab.JobSpec{Spec: "@startup", Command: "echo test", Name: "Test job"}, scheduleMock).Run()
+	assert.Equal(t, "{echo test} test\n", wr.String())
+
 	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
 }
 
@@ -392,4 +455,99 @@ func TestScheduler_DoWithResume(t *testing.T) {
 	assert.Equal(t, 1, len(cr.StartCalls()))
 	assert.Equal(t, 1, len(cr.StopCalls()))
 	assert.Equal(t, 1, len(parser.ListCalls()))
+}
+
+func TestScheduler_getJobRepeater(t *testing.T) {
+	// create global repeater with specific settings
+	globalRepeater := repeater.New(&strategy.Backoff{
+		Repeats:  3,
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   false,
+	})
+
+	svc := Scheduler{
+		Repeater: globalRepeater,
+	}
+	svc.RepeaterDefaults.Attempts = 3
+	svc.RepeaterDefaults.Duration = 1 * time.Second
+	svc.RepeaterDefaults.Factor = 2.0
+	svc.RepeaterDefaults.Jitter = false
+
+	t.Run("nil config returns global repeater", func(t *testing.T) {
+		result := svc.getJobRepeater(nil)
+		assert.Equal(t, globalRepeater, result)
+	})
+
+	t.Run("full override", func(t *testing.T) {
+		attempts := 5
+		duration := 2 * time.Second
+		factor := 3.0
+		jitter := true
+
+		config := &crontab.RepeaterConfig{
+			Attempts: &attempts,
+			Duration: &duration,
+			Factor:   &factor,
+			Jitter:   &jitter,
+		}
+
+		result := svc.getJobRepeater(config)
+		assert.NotEqual(t, globalRepeater, result)
+
+		// verify the new repeater has the overridden settings
+		resultRepeater, ok := result.(*repeater.Repeater)
+		require.True(t, ok)
+		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
+		require.True(t, ok)
+
+		assert.Equal(t, 5, resultBackoff.Repeats)
+		assert.Equal(t, 2*time.Second, resultBackoff.Duration)
+		assert.Equal(t, 3.0, resultBackoff.Factor)
+		assert.Equal(t, true, resultBackoff.Jitter)
+	})
+
+	t.Run("partial override", func(t *testing.T) {
+		attempts := 10
+
+		config := &crontab.RepeaterConfig{
+			Attempts: &attempts,
+		}
+
+		result := svc.getJobRepeater(config)
+		assert.NotEqual(t, globalRepeater, result)
+
+		// verify the new repeater has merged settings
+		resultRepeater, ok := result.(*repeater.Repeater)
+		require.True(t, ok)
+		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
+		require.True(t, ok)
+
+		assert.Equal(t, 10, resultBackoff.Repeats)             // overridden
+		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
+		assert.Equal(t, 2.0, resultBackoff.Factor)             // from global
+		assert.Equal(t, false, resultBackoff.Jitter)           // from global
+	})
+
+	t.Run("only jitter override", func(t *testing.T) {
+		jitter := true
+
+		config := &crontab.RepeaterConfig{
+			Jitter: &jitter,
+		}
+
+		result := svc.getJobRepeater(config)
+		assert.NotEqual(t, globalRepeater, result)
+
+		// verify the new repeater has merged settings
+		resultRepeater, ok := result.(*repeater.Repeater)
+		require.True(t, ok)
+		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
+		require.True(t, ok)
+
+		assert.Equal(t, 3, resultBackoff.Repeats)              // from global
+		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
+		assert.Equal(t, 2.0, resultBackoff.Factor)             // from global
+		assert.Equal(t, true, resultBackoff.Jitter)            // overridden
+	})
 }

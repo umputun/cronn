@@ -2,17 +2,21 @@
 // also supports @descriptors like
 package crontab
 
+//go:generate go run internal/schema/main.go schema.json
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"gopkg.in/yaml.v3"
 )
 
 // Parser file, thread safe
@@ -20,12 +24,40 @@ type Parser struct {
 	file        string
 	updInterval time.Duration
 	hupCh       <-chan struct{}
+	isYAML      bool
+}
+
+// Schedule represents structured cron schedule with separate fields
+type Schedule struct {
+	Minute  string `yaml:"minute,omitempty" json:"minute,omitempty" jsonschema:"description=Minute field (0-59)"`
+	Hour    string `yaml:"hour,omitempty" json:"hour,omitempty" jsonschema:"description=Hour field (0-23)"`
+	Day     string `yaml:"day,omitempty" json:"day,omitempty" jsonschema:"description=Day of month field (1-31)"`
+	Month   string `yaml:"month,omitempty" json:"month,omitempty" jsonschema:"description=Month field (1-12)"`
+	Weekday string `yaml:"weekday,omitempty" json:"weekday,omitempty" jsonschema:"description=Weekday field (0-7 where 0 and 7 are Sunday)"`
+}
+
+// RepeaterConfig defines job-specific retry settings using pointers to distinguish
+// between unset (nil) and explicitly set values, allowing proper merging with global
+// defaults from CLI parameters.
+type RepeaterConfig struct {
+	Attempts *int           `yaml:"attempts,omitempty" json:"attempts,omitempty" jsonschema:"description=Number of retry attempts"`
+	Duration *time.Duration `yaml:"duration,omitempty" json:"duration,omitempty" jsonschema:"description=Initial retry delay"`
+	Factor   *float64       `yaml:"factor,omitempty" json:"factor,omitempty" jsonschema:"description=Backoff multiplication factor"`
+	Jitter   *bool          `yaml:"jitter,omitempty" json:"jitter,omitempty" jsonschema:"description=Enable random jitter"`
 }
 
 // JobSpec for spec and cmd + params
 type JobSpec struct {
-	Spec    string
-	Command string
+	Spec     string          `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string"`
+	Sched    Schedule        `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"`
+	Command  string          `yaml:"command" json:"command" jsonschema:"required,description=Command to execute"`
+	Name     string          `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description"`
+	Repeater *RepeaterConfig `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration"`
+}
+
+// YamlConfig represents the YAML configuration structure
+type YamlConfig struct {
+	Jobs []JobSpec `yaml:"jobs" json:"jobs" jsonschema:"required,description=List of cron jobs to execute,minItems=1"`
 }
 
 // New creates Parser for file, but not parsing yet
@@ -34,8 +66,18 @@ func New(file string, updInterval time.Duration, hupCh <-chan struct{}) *Parser 
 	if updInterval == time.Duration(math.MaxInt64) {
 		updIntervalStr = "no updates"
 	}
-	log.Printf("[INFO] crontab file %s, %s", file, updIntervalStr)
-	return &Parser{file: file, updInterval: updInterval, hupCh: hupCh}
+
+	// detect format by file extension
+	ext := strings.ToLower(filepath.Ext(file))
+	isYAML := ext == ".yml" || ext == ".yaml"
+
+	format := "crontab"
+	if isYAML {
+		format = "yaml"
+	}
+
+	log.Printf("[INFO] config file %s (%s format), %s", file, format, updIntervalStr)
+	return &Parser{file: file, updInterval: updInterval, hupCh: hupCh, isYAML: isYAML}
 }
 
 // List parses crontab and returns lit of jobs
@@ -44,6 +86,12 @@ func (p Parser) List() (result []JobSpec, err error) {
 	if err != nil {
 		return []JobSpec{}, err
 	}
+
+	if p.isYAML {
+		return p.parseYAML(bs)
+	}
+
+	// parse as traditional crontab
 	lines := strings.Split(string(bs), "\n")
 	for _, l := range lines {
 		if js, err := Parse(l); err == nil {
@@ -51,6 +99,65 @@ func (p Parser) List() (result []JobSpec, err error) {
 		}
 	}
 	return result, nil
+}
+
+// parseYAML parses YAML configuration
+func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
+	var config YamlConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	// validate configuration
+	if err := VerifyAgainstEmbeddedSchema(&config); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	// convert sched to spec if needed
+	for i := range config.Jobs {
+		if hasSchedule(config.Jobs[i].Sched) {
+			spec := p.schedToSpec(config.Jobs[i].Sched)
+			config.Jobs[i].Spec = spec
+		}
+	}
+
+	return config.Jobs, nil
+}
+
+// hasSchedule checks if Schedule has any fields set
+func hasSchedule(sched Schedule) bool {
+	return sched.Minute != "" || sched.Hour != "" || sched.Day != "" ||
+		sched.Month != "" || sched.Weekday != ""
+}
+
+// schedToSpec converts Schedule struct to cron spec string
+func (p Parser) schedToSpec(sched Schedule) string {
+	minute := sched.Minute
+	if minute == "" {
+		minute = "*"
+	}
+
+	hour := sched.Hour
+	if hour == "" {
+		hour = "*"
+	}
+
+	day := sched.Day
+	if day == "" {
+		day = "*"
+	}
+
+	month := sched.Month
+	if month == "" {
+		month = "*"
+	}
+
+	weekday := sched.Weekday
+	if weekday == "" {
+		weekday = "*"
+	}
+
+	return fmt.Sprintf("%s %s %s %s %s", minute, hour, day, month, weekday)
 }
 
 func (p Parser) String() string {
@@ -125,6 +232,12 @@ func Parse(line string) (result JobSpec, err error) {
 	if strings.HasPrefix(strings.TrimSpace(line), "#") {
 		return JobSpec{}, errors.New("comment line " + line)
 	}
+
+	// strip inline comments (# and everything after)
+	if idx := strings.Index(line, " #"); idx != -1 {
+		line = line[:idx]
+	}
+
 	reWhtSpaces := regexp.MustCompile(`[\s\p{Zs}]{2,}`)
 	l := strings.TrimSpace(line)
 	l = strings.ReplaceAll(l, "\t", " ")

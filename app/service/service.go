@@ -12,6 +12,8 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"github.com/go-pkgz/repeater"
+	"github.com/go-pkgz/repeater/strategy"
 	"github.com/go-pkgz/syncs"
 	"github.com/robfig/cron/v3"
 
@@ -42,8 +44,14 @@ type Scheduler struct {
 	MaxLogLines       int
 	EnableLogPrefix   bool
 	Repeater          Repeater
-	Stdout            io.Writer
-	NotifyTimeout     time.Duration
+	RepeaterDefaults  struct {
+		Attempts int
+		Duration time.Duration
+		Factor   float64
+		Jitter   bool
+	}
+	Stdout        io.Writer
+	NotifyTimeout time.Duration
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -121,20 +129,21 @@ func (s *Scheduler) Do(ctx context.Context) {
 
 // schedule makes new cron job from crontab.JobSpec and adds to cron
 func (s *Scheduler) schedule(r crontab.JobSpec) error {
-	log.Printf("[INFO] new cron, command %q", r.Command)
+	jobDesc := s.jobDescription(r)
+	log.Printf("[INFO] new cron, %s", jobDesc)
 	sched, e := cron.ParseStandard(r.Spec)
 	if e != nil {
 		return fmt.Errorf("can't parse %s: %w", r.Spec, e)
 	}
 
 	id := s.Schedule(sched, s.jobFunc(r, sched))
-	log.Printf("[INFO] first: %s, %q (%v)", sched.Next(time.Now()).Format(time.RFC3339), r.Command, id)
+	log.Printf("[INFO] first: %s, %s (%v)", sched.Next(time.Now()).Format(time.RFC3339), jobDesc, id)
 	return nil
 }
 
 func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
-	runJob := func(r crontab.JobSpec) error {
+	runJob := func(r crontab.JobSpec, rptr Repeater) error {
 		cmd, err := NewDayTemplate(time.Now()).Parse(r.Command)
 		if err != nil {
 			return err
@@ -152,7 +161,7 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 		}
 
-		err = s.executeCommand(cmd, s.Stdout)
+		err = s.executeCommand(cmd, s.Stdout, rptr)
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), s.NotifyTimeout)
 		defer cancel()
 		var errMsg string
@@ -175,22 +184,24 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 	}
 
 	return func() {
-		log.Printf("[INFO] executing: %q", r.Command)
-		if err := runJob(r); err != nil {
-			log.Printf("[WARN] job failed: %s, %v", r.Command, err)
+		jobDesc := s.jobDescription(r)
+		jobRepeater := s.getJobRepeater(r.Repeater)
+		log.Printf("[INFO] executing: %s", jobDesc)
+		if err := runJob(r, jobRepeater); err != nil {
+			log.Printf("[WARN] job failed: %s, %v", jobDesc, err)
 		} else {
-			log.Printf("[INFO] completed %v", r.Command)
+			log.Printf("[INFO] completed %s", jobDesc)
 		}
-		log.Printf("[INFO] next: %s, %q", sched.Next(time.Now()).Format(time.RFC3339), r.Command)
+		log.Printf("[INFO] next: %s, %s", sched.Next(time.Now()).Format(time.RFC3339), jobDesc)
 	}
 }
 
-func (s *Scheduler) executeCommand(command string, logWriter io.Writer) error {
+func (s *Scheduler) executeCommand(command string, logWriter io.Writer, rptr Repeater) error {
 	if s.Jitter > 0 {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
 
-	err := s.Repeater.Do(context.Background(), func() error {
+	err := rptr.Do(context.Background(), func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		serr := NewErrorWriter(s.MaxLogLines)
 		logWithErr := io.MultiWriter(logWriter, serr)
@@ -245,7 +256,7 @@ func (s *Scheduler) loadFromFileParser() error {
 	}
 
 	for _, js := range jss {
-		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command}
+		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Name: js.Name, Repeater: js.Repeater}
 		if err = s.schedule(req); err != nil {
 			return fmt.Errorf("can't add %s, %s: %w", js.Spec, js.Command, err)
 		}
@@ -288,7 +299,7 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			cmd := cmd
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
-				if err := s.executeCommand(cmd.Command, s.Stdout); err != nil {
+				if err := s.executeCommand(cmd.Command, s.Stdout, s.Repeater); err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 					defer cancel()
@@ -303,4 +314,43 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			})
 		}
 	}()
+}
+
+// jobDescription returns a formatted job description with name if available
+func (s *Scheduler) jobDescription(r crontab.JobSpec) string {
+	if r.Name != "" {
+		return fmt.Sprintf("%q (%s)", r.Command, r.Name)
+	}
+	return fmt.Sprintf("%q", r.Command)
+}
+
+// getJobRepeater returns a repeater for the job, merging job-specific settings with global defaults
+func (s *Scheduler) getJobRepeater(jobConfig *crontab.RepeaterConfig) Repeater {
+	if jobConfig == nil {
+		return s.Repeater
+	}
+
+	// start with defaults from CLI
+	backoff := &strategy.Backoff{
+		Repeats:  s.RepeaterDefaults.Attempts,
+		Duration: s.RepeaterDefaults.Duration,
+		Factor:   s.RepeaterDefaults.Factor,
+		Jitter:   s.RepeaterDefaults.Jitter,
+	}
+
+	// apply job-specific overrides
+	if jobConfig.Attempts != nil {
+		backoff.Repeats = *jobConfig.Attempts
+	}
+	if jobConfig.Duration != nil {
+		backoff.Duration = *jobConfig.Duration
+	}
+	if jobConfig.Factor != nil {
+		backoff.Factor = *jobConfig.Factor
+	}
+	if jobConfig.Jitter != nil {
+		backoff.Jitter = *jobConfig.Jitter
+	}
+
+	return repeater.New(backoff)
 }

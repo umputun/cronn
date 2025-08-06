@@ -1,0 +1,8 @@
+jobs:
+  # This should cause an error - both spec and sched present
+  - spec: "*/5 * * * *"
+    sched:
+      minute: "0"
+      hour: "2"
+    command: "test command"
+    name: "Conflicting job"

@@ -1,0 +1,103 @@
+{
+  "$schema": "1.0.0",
+  "$id": "https://github.com/umputun/cronn/app/crontab/yaml-config",
+  "$ref": "#/$defs/YamlConfig",
+  "$defs": {
+    "JobSpec": {
+      "properties": {
+        "spec": {
+          "type": "string",
+          "description": "Cron specification string"
+        },
+        "sched": {
+          "$ref": "#/$defs/Schedule",
+          "description": "Structured schedule format (alternative to spec)"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to execute"
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional job name or description"
+        },
+        "repeater": {
+          "$ref": "#/$defs/RepeaterConfig",
+          "description": "Job-specific repeater configuration"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "command"
+      ]
+    },
+    "RepeaterConfig": {
+      "properties": {
+        "attempts": {
+          "type": "integer",
+          "description": "Number of retry attempts"
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Initial retry delay"
+        },
+        "factor": {
+          "type": "number",
+          "description": "Backoff multiplication factor"
+        },
+        "jitter": {
+          "type": "boolean",
+          "description": "Enable random jitter"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Schedule": {
+      "properties": {
+        "minute": {
+          "type": "string",
+          "description": "Minute field (0-59)"
+        },
+        "hour": {
+          "type": "string",
+          "description": "Hour field (0-23)"
+        },
+        "day": {
+          "type": "string",
+          "description": "Day of month field (1-31)"
+        },
+        "month": {
+          "type": "string",
+          "description": "Month field (1-12)"
+        },
+        "weekday": {
+          "type": "string",
+          "description": "Weekday field (0-7 where 0 and 7 are Sunday)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "YamlConfig": {
+      "properties": {
+        "jobs": {
+          "items": {
+            "$ref": "#/$defs/JobSpec"
+          },
+          "type": "array",
+          "minItems": 1,
+          "description": "List of cron jobs to execute"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "jobs"
+      ]
+    }
+  },
+  "title": "Cronn YAML Configuration Schema",
+  "description": "Schema for cronn YAML configuration file"
+}

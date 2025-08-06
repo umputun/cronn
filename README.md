@@ -32,7 +32,8 @@ In addition `cronn` provides:
  
 - `cronn -c "30 23 * * 1-5 command arg1 arg2 ..."` - runs `command` with `arg1` and `arg2` every day at 23:30
 - `cronn -c "@every 5s ls -la"` - runs `ls -la` every 5 seconds
-- `cronn -f crontab` - runs jobs from the `crontab` file
+- `cronn -f crontab` - runs jobs from the `crontab` file (traditional crontab format)
+- `cronn -f config.yml` - runs jobs from the `config.yml` file (YAML format, auto-detected by extension)
 
 Scheduling can be defined as:
 
@@ -55,6 +56,79 @@ Cronn also understands various day-realted templates evaluated at the time of jo
 Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
 cronn executes the command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight.
+
+### Configuration file formats
+
+Cronn supports two configuration file formats, automatically detected by file extension:
+
+#### Traditional crontab format (default)
+Any file without `.yml` or `.yaml` extension is treated as traditional crontab:
+```
+# crontab format
+*/5 * * * * ls -la .
+*/2 1-18 * * * export
+@every 1h15m something blah bad
+```
+
+#### YAML format
+Files with `.yml` or `.yaml` extension are parsed as YAML:
+```yaml
+jobs:
+  # Using traditional spec field
+  - spec: "*/5 * * * *"
+    command: "ls -la ."
+    name: "Directory listing"  # optional descriptive name
+  
+  # Using structured sched field (alternative to spec)
+  - sched:
+      minute: "0"
+      hour: "2"
+    command: "backup /data"
+    name: "Nightly backup"
+  
+  # More complex sched example
+  - sched:
+      minute: "0,30"
+      hour: "9-17"
+      weekday: "1-5"
+    command: "sync files"
+    name: "Business hours sync"
+  
+  # @-descriptors work with spec field
+  - spec: "@midnight"
+    command: "cleanup temp"
+```
+
+The YAML format supports:
+- Two ways to define scheduling:
+  - `spec`: Traditional cron string or @-descriptors
+  - `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
+- Optional `name` field for job description
+- Optional `repeater` field for job-specific retry configuration
+- JSON Schema validation for configuration correctness
+
+Note: `spec` and `sched` are mutually exclusive - use only one per job. Empty `sched` fields default to `*`.
+
+The YAML configuration is validated against an embedded JSON schema that ensures:
+- Required fields are present
+- Field values meet constraints (e.g., valid cron patterns, reasonable retry attempts)
+- Configuration conflicts are detected (e.g., both spec and sched defined)
+- Invalid configurations will prevent cronn from starting
+
+Example with repeater configuration:
+```yaml
+jobs:
+  - spec: "0 * * * *"
+    command: "critical-backup.sh"
+    name: "Hourly backup"
+    repeater:
+      attempts: 5       # Try 5 times instead of global default
+      duration: 2s      # Initial delay of 2 seconds
+      factor: 2.5       # Multiply delay by 2.5 on each retry
+      jitter: true      # Add random jitter to delays
+```
+
+Both formats support the same template variables.
  
 ## Optional modes
 
@@ -96,6 +170,12 @@ However, it will survive container's restart.
 - Optional repeater retries failed job multiple times. It uses backoff strategy with an exponential interval. 
 - Duration interval goes in steps with `last * math.Pow(factor, attempt)` increments. 
 - Optional jitter randomizes intervals a little bit. Factor = 1 effectively makes this strategy fixed with `duration` delay.
+- Global repeater settings can be configured via CLI flags or environment variables
+- Individual jobs in YAML format can override global settings with the `repeater` field:
+  - `attempts`: Number of retry attempts
+  - `duration`: Initial retry delay
+  - `factor`: Backoff multiplication factor
+  - `jitter`: Enable/disable jitter (true/false)
 
 ### Deduplication
 

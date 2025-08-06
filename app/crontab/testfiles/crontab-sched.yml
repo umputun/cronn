@@ -1,0 +1,28 @@
+jobs:
+  # Using structured sched - minimal
+  - sched:
+      minute: "0"
+      hour: "2"
+    command: "backup /data"
+    name: "Nightly backup"
+  
+  # Using structured sched - all fields
+  - sched:
+      minute: "0,30"
+      hour: "9-17"
+      day: "1-15"
+      month: "*/2"
+      weekday: "1-5"
+    command: "sync files"
+    name: "Business hours sync"
+  
+  # Using structured sched - defaults to * for missing fields
+  - sched:
+      minute: "15"
+    command: "check health"
+    name: "Every hour at 15 minutes"
+  
+  # Traditional spec still works
+  - spec: "@midnight"
+    command: "cleanup temp"
+    name: "Midnight cleanup"

@@ -1,0 +1,51 @@
+# Example YAML configuration for cronn
+# This format is automatically detected by .yml or .yaml extension
+
+jobs:
+  # Using traditional spec field
+  - spec: "*/5 * * * *"
+    command: "ls -la ."
+    name: "Directory listing"  # optional: descriptive name shown in logs
+  
+  # Using structured sched field (alternative to spec)
+  - sched:
+      minute: "0"
+      hour: "2"
+    command: "backup /data"
+    name: "Nightly backup"
+  
+  # More complex sched with all fields
+  - sched:
+      minute: "0,30"      # at 0 and 30 minutes
+      hour: "9-17"        # from 9am to 5pm
+      day: "1-15"         # first half of month
+      month: "*/2"        # every other month
+      weekday: "1-5"      # Monday to Friday
+    command: "sync files"
+    name: "Business hours sync"
+  
+  # Partial sched - unspecified fields default to "*"
+  - sched:
+      minute: "15"
+    command: "check health"
+    name: "Every hour at 15 minutes"
+  
+  # Template support works with both spec and sched
+  - spec: "*/1 * * * *"
+    command: "echo {{.YYYYMMDD}}"
+    name: "Daily date output"
+  
+  # Special @-descriptors only work with spec field
+  - spec: "@every 1h15m"
+    command: "something blah bad"
+    name: "Regular task"
+  
+  - spec: "@midnight"
+    command: "cleanup temp"
+    name: "Midnight cleanup"
+  
+  - spec: "@hourly"
+    command: "check system health"
+    name: "Health check"
+  
+  # Note: spec and sched are mutually exclusive - use only one per job

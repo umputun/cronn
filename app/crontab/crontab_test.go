@@ -101,7 +101,7 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 	ctab := New(tmp.Name(), time.Hour, nil)
 	_, err = ctab.List()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "neither 'spec' nor 'sched'")
+	assert.Contains(t, err.Error(), "either 'spec' or 'sched' field is required")
 
 	// write YAML with empty command
 	_ = tmp.Truncate(0)
@@ -114,7 +114,7 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 	ctab = New(tmp.Name(), time.Hour, nil)
 	_, err = ctab.List()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "empty command")
+	assert.Contains(t, err.Error(), "command is required")
 }
 
 func TestParser_ListYAMLSched(t *testing.T) {
@@ -122,20 +122,20 @@ func TestParser_ListYAMLSched(t *testing.T) {
 	jobs, err := ctab.List()
 	require.NoError(t, err)
 	assert.Len(t, jobs, 4)
-	
+
 	// verify sched fields are converted to spec
 	assert.Equal(t, "0 2 * * *", jobs[0].Spec)
 	assert.Equal(t, "backup /data", jobs[0].Command)
 	assert.Equal(t, "Nightly backup", jobs[0].Name)
-	
+
 	assert.Equal(t, "0,30 9-17 1-15 */2 1-5", jobs[1].Spec)
 	assert.Equal(t, "sync files", jobs[1].Command)
 	assert.Equal(t, "Business hours sync", jobs[1].Name)
-	
+
 	assert.Equal(t, "15 * * * *", jobs[2].Spec)
 	assert.Equal(t, "check health", jobs[2].Command)
 	assert.Equal(t, "Every hour at 15 minutes", jobs[2].Name)
-	
+
 	assert.Equal(t, "@midnight", jobs[3].Spec)
 	assert.Equal(t, "cleanup temp", jobs[3].Command)
 	assert.Equal(t, "Midnight cleanup", jobs[3].Name)
@@ -145,12 +145,12 @@ func TestParser_ListYAMLSchedConflict(t *testing.T) {
 	ctab := New("testfiles/crontab-conflict.yml", time.Hour, nil)
 	_, err := ctab.List()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "both 'spec' and 'sched'")
+	assert.Contains(t, err.Error(), "'spec' and 'sched' fields are mutually exclusive")
 }
 
 func TestParser_SchedToSpec(t *testing.T) {
 	p := Parser{}
-	
+
 	tests := []struct {
 		name     string
 		sched    Schedule
@@ -177,7 +177,7 @@ func TestParser_SchedToSpec(t *testing.T) {
 			expected: "0,15,30,45 */2 1-7,15-21 * *",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := p.schedToSpec(tt.sched)

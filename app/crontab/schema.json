@@ -7,8 +7,7 @@
       "properties": {
         "spec": {
           "type": "string",
-          "pattern": "^(@(yearly|annually|monthly|weekly|daily|midnight|hourly|every\\s+[0-9]+[smh])|([0-9*",
-          "description": "Cron specification string (e.g. '0 * * * *' or '@daily')"
+          "description": "Cron specification string"
         },
         "sched": {
           "$ref": "#/$defs/Schedule",
@@ -16,16 +15,15 @@
         },
         "command": {
           "type": "string",
-          "minLength": 1,
           "description": "Command to execute"
         },
         "name": {
           "type": "string",
-          "description": "Optional job name or description for better logging"
+          "description": "Optional job name or description"
         },
         "repeater": {
           "$ref": "#/$defs/RepeaterConfig",
-          "description": "Job-specific repeater configuration to override global settings"
+          "description": "Job-specific repeater configuration"
         }
       },
       "additionalProperties": false,
@@ -38,23 +36,19 @@
       "properties": {
         "attempts": {
           "type": "integer",
-          "maximum": 100,
-          "minimum": 1,
           "description": "Number of retry attempts"
         },
         "duration": {
           "type": "integer",
-          "description": "Initial retry delay (e.g. 1s or 500ms)"
+          "description": "Initial retry delay"
         },
         "factor": {
           "type": "number",
-          "maximum": 10.0,
-          "minimum": 1.0,
           "description": "Backoff multiplication factor"
         },
         "jitter": {
           "type": "boolean",
-          "description": "Enable random jitter to avoid thundering herd"
+          "description": "Enable random jitter"
         }
       },
       "additionalProperties": false,
@@ -64,28 +58,23 @@
       "properties": {
         "minute": {
           "type": "string",
-          "pattern": "^([0-5]?[0-9]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+",
-          "description": "Minute field (0-59 or * or */n)"
+          "description": "Minute field (0-59)"
         },
         "hour": {
           "type": "string",
-          "pattern": "^([01]?[0-9]|2[0-3]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+",
-          "description": "Hour field (0-23 or * or */n)"
+          "description": "Hour field (0-23)"
         },
         "day": {
           "type": "string",
-          "pattern": "^([1-9]|[12][0-9]|3[01]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+",
-          "description": "Day of month field (1-31 or * or */n)"
+          "description": "Day of month field (1-31)"
         },
         "month": {
           "type": "string",
-          "pattern": "^([1-9]|1[0-2]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+",
-          "description": "Month field (1-12 or * or */n)"
+          "description": "Month field (1-12)"
         },
         "weekday": {
           "type": "string",
-          "pattern": "^([0-7]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+",
-          "description": "Weekday field (0-7 where 0 and 7 are Sunday or * or */n)"
+          "description": "Weekday field (0-7 where 0 and 7 are Sunday)"
         }
       },
       "additionalProperties": false,

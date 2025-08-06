@@ -480,23 +480,23 @@ func TestScheduler_getJobRepeater(t *testing.T) {
 		duration := 2 * time.Second
 		factor := 3.0
 		jitter := true
-		
+
 		config := &crontab.RepeaterConfig{
 			Attempts: &attempts,
 			Duration: &duration,
 			Factor:   &factor,
 			Jitter:   &jitter,
 		}
-		
+
 		result := svc.getJobRepeater(config)
 		assert.NotEqual(t, globalRepeater, result)
-		
+
 		// verify the new repeater has the overridden settings
 		resultRepeater, ok := result.(*repeater.Repeater)
 		require.True(t, ok)
 		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
 		require.True(t, ok)
-		
+
 		assert.Equal(t, 5, resultBackoff.Repeats)
 		assert.Equal(t, 2*time.Second, resultBackoff.Duration)
 		assert.Equal(t, 3.0, resultBackoff.Factor)
@@ -505,45 +505,45 @@ func TestScheduler_getJobRepeater(t *testing.T) {
 
 	t.Run("partial override", func(t *testing.T) {
 		attempts := 10
-		
+
 		config := &crontab.RepeaterConfig{
 			Attempts: &attempts,
 		}
-		
+
 		result := svc.getJobRepeater(config)
 		assert.NotEqual(t, globalRepeater, result)
-		
+
 		// verify the new repeater has merged settings
 		resultRepeater, ok := result.(*repeater.Repeater)
 		require.True(t, ok)
 		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
 		require.True(t, ok)
-		
-		assert.Equal(t, 10, resultBackoff.Repeats) // overridden
+
+		assert.Equal(t, 10, resultBackoff.Repeats)             // overridden
 		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
-		assert.Equal(t, 2.0, resultBackoff.Factor) // from global
-		assert.Equal(t, false, resultBackoff.Jitter) // from global
+		assert.Equal(t, 2.0, resultBackoff.Factor)             // from global
+		assert.Equal(t, false, resultBackoff.Jitter)           // from global
 	})
 
 	t.Run("only jitter override", func(t *testing.T) {
 		jitter := true
-		
+
 		config := &crontab.RepeaterConfig{
 			Jitter: &jitter,
 		}
-		
+
 		result := svc.getJobRepeater(config)
 		assert.NotEqual(t, globalRepeater, result)
-		
+
 		// verify the new repeater has merged settings
 		resultRepeater, ok := result.(*repeater.Repeater)
 		require.True(t, ok)
 		resultBackoff, ok := resultRepeater.Strategy.(*strategy.Backoff)
 		require.True(t, ok)
-		
-		assert.Equal(t, 3, resultBackoff.Repeats) // from global
+
+		assert.Equal(t, 3, resultBackoff.Repeats)              // from global
 		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
-		assert.Equal(t, 2.0, resultBackoff.Factor) // from global
-		assert.Equal(t, true, resultBackoff.Jitter) // overridden
+		assert.Equal(t, 2.0, resultBackoff.Factor)             // from global
+		assert.Equal(t, true, resultBackoff.Jitter)            // overridden
 	})
 }

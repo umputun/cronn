@@ -44,7 +44,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 		{
 			name: "sched with all fields",
 			config: &YamlConfig{Jobs: []JobSpec{{
-				Sched: Schedule{Minute: "*/5", Hour: "9-17", Day: "1-5", Month: "*", Weekday: "MON-FRI"},
+				Sched:   Schedule{Minute: "*/5", Hour: "9-17", Day: "1-5", Month: "*", Weekday: "MON-FRI"},
 				Command: "business hours job",
 			}}},
 			wantErr: false,
@@ -115,7 +115,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Duration: durationPtr(2 * time.Hour)},
 			}}},
 			wantErr: true,
-			errMsg:  "duration must not exceed 1 hour",
+			errMsg:  "duration must not exceed 1h0m0s",
 		},
 		{
 			name: "invalid repeater factor low",
@@ -290,7 +290,7 @@ func TestValidateRepeaterConfig(t *testing.T) {
 			config:  &RepeaterConfig{Duration: durationPtr(time.Hour + time.Second)},
 			jobNum:  2,
 			wantErr: true,
-			errMsg:  "duration must not exceed 1 hour",
+			errMsg:  "duration must not exceed 1h0m0s",
 		},
 		{
 			name:    "factor too low",

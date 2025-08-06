@@ -320,48 +320,52 @@ func (s *Scheduler) jobDescription(r crontab.JobSpec) string {
 
 // getJobRepeater returns a repeater for the job, merging job-specific settings with global defaults
 func (s *Scheduler) getJobRepeater(jobConfig *crontab.RepeaterConfig) Repeater {
-	// if no job-specific config, use global repeater
 	if jobConfig == nil {
 		return s.Repeater
 	}
 
-	// extract global settings from the scheduler's repeater
-	// we need to type assert to get the underlying strategy
+	backoff := s.extractGlobalBackoff()
+	if backoff == nil {
+		return s.Repeater
+	}
+
+	s.applyJobConfig(backoff, jobConfig)
+	return repeater.New(backoff)
+}
+
+// extractGlobalBackoff attempts to extract backoff configuration from the global repeater
+func (s *Scheduler) extractGlobalBackoff() *strategy.Backoff {
 	globalStrategy, ok := s.Repeater.(*repeater.Repeater)
 	if !ok {
-		// if we can't get the global strategy, just use the global repeater
-		return s.Repeater
+		return nil
 	}
 
-	// get the backoff strategy from the global repeater
 	globalBackoff, ok := globalStrategy.Strategy.(*strategy.Backoff)
 	if !ok {
-		// if not using backoff strategy, just use the global repeater
-		return s.Repeater
+		return nil
 	}
 
-	// create new backoff strategy with merged settings
-	mergedBackoff := &strategy.Backoff{
+	// create a copy of the global backoff settings
+	return &strategy.Backoff{
 		Repeats:  globalBackoff.Repeats,
 		Duration: globalBackoff.Duration,
 		Factor:   globalBackoff.Factor,
 		Jitter:   globalBackoff.Jitter,
 	}
+}
 
-	// override with job-specific settings if provided
-	if jobConfig.Attempts != nil {
-		mergedBackoff.Repeats = *jobConfig.Attempts
+// applyJobConfig applies job-specific configuration to the backoff strategy
+func (s *Scheduler) applyJobConfig(backoff *strategy.Backoff, config *crontab.RepeaterConfig) {
+	if config.Attempts != nil {
+		backoff.Repeats = *config.Attempts
 	}
-	if jobConfig.Duration != nil {
-		mergedBackoff.Duration = *jobConfig.Duration
+	if config.Duration != nil {
+		backoff.Duration = *config.Duration
 	}
-	if jobConfig.Factor != nil {
-		mergedBackoff.Factor = *jobConfig.Factor
+	if config.Factor != nil {
+		backoff.Factor = *config.Factor
 	}
-	if jobConfig.Jitter != nil {
-		mergedBackoff.Jitter = *jobConfig.Jitter
+	if config.Jitter != nil {
+		backoff.Jitter = *config.Jitter
 	}
-
-	// create and return new repeater with merged settings
-	return repeater.New(mergedBackoff)
 }

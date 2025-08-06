@@ -29,30 +29,30 @@ type Parser struct {
 
 // Schedule represents structured cron schedule with separate fields
 type Schedule struct {
-	Minute  string `yaml:"minute,omitempty" json:"minute,omitempty" jsonschema:"description=Minute field (0-59 or * or */n),pattern=^([0-5]?[0-9]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
-	Hour    string `yaml:"hour,omitempty" json:"hour,omitempty" jsonschema:"description=Hour field (0-23 or * or */n),pattern=^([01]?[0-9]|2[0-3]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
-	Day     string `yaml:"day,omitempty" json:"day,omitempty" jsonschema:"description=Day of month field (1-31 or * or */n),pattern=^([1-9]|[12][0-9]|3[01]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
-	Month   string `yaml:"month,omitempty" json:"month,omitempty" jsonschema:"description=Month field (1-12 or * or */n),pattern=^([1-9]|1[0-2]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
-	Weekday string `yaml:"weekday,omitempty" json:"weekday,omitempty" jsonschema:"description=Weekday field (0-7 where 0 and 7 are Sunday or * or */n),pattern=^([0-7]|\\*|\\*/[0-9]+|[0-9]+-[0-9]+|[0-9]+,[0-9]+.*)$"`
+	Minute  string `yaml:"minute,omitempty" json:"minute,omitempty" jsonschema:"description=Minute field (0-59)"`
+	Hour    string `yaml:"hour,omitempty" json:"hour,omitempty" jsonschema:"description=Hour field (0-23)"`
+	Day     string `yaml:"day,omitempty" json:"day,omitempty" jsonschema:"description=Day of month field (1-31)"`
+	Month   string `yaml:"month,omitempty" json:"month,omitempty" jsonschema:"description=Month field (1-12)"`
+	Weekday string `yaml:"weekday,omitempty" json:"weekday,omitempty" jsonschema:"description=Weekday field (0-7 where 0 and 7 are Sunday)"`
 }
 
-// RepeaterConfig defines job-specific retry settings.
-// Uses pointers to distinguish between unset (nil) and explicitly set values,
-// allowing proper merging with global defaults from CLI parameters.
+// RepeaterConfig defines job-specific retry settings using pointers to distinguish
+// between unset (nil) and explicitly set values, allowing proper merging with global
+// defaults from CLI parameters.
 type RepeaterConfig struct {
-	Attempts *int           `yaml:"attempts,omitempty" json:"attempts,omitempty" jsonschema:"description=Number of retry attempts,minimum=1,maximum=100"`
-	Duration *time.Duration `yaml:"duration,omitempty" json:"duration,omitempty" jsonschema:"description=Initial retry delay (e.g. 1s or 500ms)"`
-	Factor   *float64       `yaml:"factor,omitempty" json:"factor,omitempty" jsonschema:"description=Backoff multiplication factor,minimum=1.0,maximum=10.0"`
-	Jitter   *bool          `yaml:"jitter,omitempty" json:"jitter,omitempty" jsonschema:"description=Enable random jitter to avoid thundering herd"`
+	Attempts *int           `yaml:"attempts,omitempty" json:"attempts,omitempty" jsonschema:"description=Number of retry attempts"`
+	Duration *time.Duration `yaml:"duration,omitempty" json:"duration,omitempty" jsonschema:"description=Initial retry delay"`
+	Factor   *float64       `yaml:"factor,omitempty" json:"factor,omitempty" jsonschema:"description=Backoff multiplication factor"`
+	Jitter   *bool          `yaml:"jitter,omitempty" json:"jitter,omitempty" jsonschema:"description=Enable random jitter"`
 }
 
 // JobSpec for spec and cmd + params
 type JobSpec struct {
-	Spec     string          `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string (e.g. '0 * * * *' or '@daily'),pattern=^(@(yearly|annually|monthly|weekly|daily|midnight|hourly|every\\s+[0-9]+[smh])|([0-9*,-/]+\\s+){4}[0-9*,-/]+)$"`
+	Spec     string          `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string"`
 	Sched    Schedule        `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"`
-	Command  string          `yaml:"command" json:"command" jsonschema:"required,description=Command to execute,minLength=1"`
-	Name     string          `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description for better logging"`
-	Repeater *RepeaterConfig `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration to override global settings"`
+	Command  string          `yaml:"command" json:"command" jsonschema:"required,description=Command to execute"`
+	Name     string          `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description"`
+	Repeater *RepeaterConfig `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration"`
 }
 
 // YamlConfig represents the YAML configuration structure
@@ -108,39 +108,26 @@ func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	// verify against embedded schema (non-fatal warnings)
+	// validate configuration
 	if err := VerifyAgainstEmbeddedSchema(&config); err != nil {
-		// log warning but don't fail - schema validation is supplementary
-		log.Printf("[WARN] schema validation warning: %v", err)
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	// validate and process each job
-	for i, job := range config.Jobs {
-		// check for conflict between spec and sched
-		hasSpec := job.Spec != ""
-		hasSched := job.Sched.Minute != "" || job.Sched.Hour != "" || job.Sched.Day != "" || 
-			job.Sched.Month != "" || job.Sched.Weekday != ""
-		
-		if hasSpec && hasSched {
-			return nil, fmt.Errorf("job %d has both 'spec' and 'sched' fields, use only one", i+1)
-		}
-		
-		if !hasSpec && !hasSched {
-			return nil, fmt.Errorf("job %d has neither 'spec' nor 'sched' field", i+1)
-		}
-		
-		// convert sched to spec if needed
-		if hasSched {
-			spec := p.schedToSpec(job.Sched)
+	// convert sched to spec if needed
+	for i := range config.Jobs {
+		if hasSchedule(config.Jobs[i].Sched) {
+			spec := p.schedToSpec(config.Jobs[i].Sched)
 			config.Jobs[i].Spec = spec
-		}
-		
-		if job.Command == "" {
-			return nil, fmt.Errorf("job %d has empty command", i+1)
 		}
 	}
 
 	return config.Jobs, nil
+}
+
+// hasSchedule checks if Schedule has any fields set
+func hasSchedule(sched Schedule) bool {
+	return sched.Minute != "" || sched.Hour != "" || sched.Day != "" ||
+		sched.Month != "" || sched.Weekday != ""
 }
 
 // schedToSpec converts Schedule struct to cron spec string
@@ -149,27 +136,27 @@ func (p Parser) schedToSpec(sched Schedule) string {
 	if minute == "" {
 		minute = "*"
 	}
-	
+
 	hour := sched.Hour
 	if hour == "" {
 		hour = "*"
 	}
-	
+
 	day := sched.Day
 	if day == "" {
 		day = "*"
 	}
-	
+
 	month := sched.Month
 	if month == "" {
 		month = "*"
 	}
-	
+
 	weekday := sched.Weekday
 	if weekday == "" {
 		weekday = "*"
 	}
-	
+
 	return fmt.Sprintf("%s %s %s %s %s", minute, hour, day, month, weekday)
 }
 

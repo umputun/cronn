@@ -12,6 +12,16 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
+const (
+	// repeater validation limits
+	minAttempts = 1
+	maxAttempts = 100
+	minFactor   = 1.0
+	maxFactor   = 10.0
+	minDuration = time.Millisecond
+	maxDuration = time.Hour
+)
+
 //go:embed schema.json
 var embeddedSchemaData []byte
 
@@ -127,73 +137,84 @@ func isWeekdayName(s string) bool {
 
 // validateCronField validates a single cron field value
 func validateCronField(value string, minVal, maxVal int, fieldName string) error {
-	// handle step values like */5
 	if strings.HasPrefix(value, "*/") {
-		stepStr := value[2:]
-		step, err := strconv.Atoi(stepStr)
-		if err != nil || step <= 0 {
-			return fmt.Errorf("invalid step value")
-		}
-		return nil
+		return validateStepValue(value[2:])
 	}
 
-	// handle ranges with optional step like 1-5 or 1-5/2
 	if strings.Contains(value, "-") && !strings.Contains(value, ",") {
-		rangeStr := value
-		
-		// check if there's a step value
-		if strings.Contains(value, "/") {
-			parts := strings.Split(value, "/")
-			if len(parts) != 2 {
-				return fmt.Errorf("invalid range/step format")
-			}
-			rangeStr = parts[0]
-			step, err := strconv.Atoi(parts[1])
-			if err != nil || step <= 0 {
-				return fmt.Errorf("invalid step value in range")
-			}
-		}
-		
-		parts := strings.Split(rangeStr, "-")
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid range format")
-		}
-		start, err1 := strconv.Atoi(parts[0])
-		end, err2 := strconv.Atoi(parts[1])
-		if err1 != nil || err2 != nil {
-			return fmt.Errorf("invalid range values")
-		}
-		if start < minVal || start > maxVal || end < minVal || end > maxVal || start > end {
-			return fmt.Errorf("range values out of bounds (%d-%d)", minVal, maxVal)
-		}
-		return nil
+		return validateRange(value, minVal, maxVal)
 	}
 
-	// handle lists like 1,5,10
 	if strings.Contains(value, ",") {
-		parts := strings.Split(value, ",")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			// check if part is a range
-			if strings.Contains(part, "-") {
-				if err := validateCronField(part, minVal, maxVal, fieldName); err != nil {
-					return err
-				}
-			} else {
-				// check single value
-				val, err := strconv.Atoi(part)
-				if err != nil {
-					return fmt.Errorf("invalid value in list")
-				}
-				if val < minVal || val > maxVal {
-					return fmt.Errorf("value %d out of bounds (%d-%d)", val, minVal, maxVal)
-				}
-			}
-		}
-		return nil
+		return validateList(value, minVal, maxVal, fieldName)
 	}
 
-	// handle single values
+	return validateSingleValue(value, minVal, maxVal, fieldName)
+}
+
+// validateStepValue validates step values like */5
+func validateStepValue(stepStr string) error {
+	step, err := strconv.Atoi(stepStr)
+	if err != nil || step <= 0 {
+		return fmt.Errorf("invalid step value")
+	}
+	return nil
+}
+
+// validateRange validates range values like 1-5 or 1-5/2
+func validateRange(value string, minVal, maxVal int) error {
+	rangeStr := value
+
+	// check for step value in range
+	if strings.Contains(value, "/") {
+		parts := strings.Split(value, "/")
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid range/step format")
+		}
+		rangeStr = parts[0]
+		if err := validateStepValue(parts[1]); err != nil {
+			return fmt.Errorf("invalid step value in range")
+		}
+	}
+
+	parts := strings.Split(rangeStr, "-")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid range format")
+	}
+
+	start, err1 := strconv.Atoi(parts[0])
+	end, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return fmt.Errorf("invalid range values")
+	}
+
+	if start < minVal || start > maxVal || end < minVal || end > maxVal || start > end {
+		return fmt.Errorf("range values out of bounds (%d-%d)", minVal, maxVal)
+	}
+
+	return nil
+}
+
+// validateList validates comma-separated lists like 1,5,10
+func validateList(value string, minVal, maxVal int, fieldName string) error {
+	parts := strings.Split(value, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.Contains(part, "-") {
+			if err := validateCronField(part, minVal, maxVal, fieldName); err != nil {
+				return err
+			}
+		} else {
+			if err := validateSingleValue(part, minVal, maxVal, fieldName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateSingleValue validates a single numeric value
+func validateSingleValue(value string, minVal, maxVal int, fieldName string) error {
 	val, err := strconv.Atoi(value)
 	if err != nil {
 		return fmt.Errorf("invalid %s value", fieldName)
@@ -201,30 +222,29 @@ func validateCronField(value string, minVal, maxVal int, fieldName string) error
 	if val < minVal || val > maxVal {
 		return fmt.Errorf("%s value %d out of bounds (%d-%d)", fieldName, val, minVal, maxVal)
 	}
-
 	return nil
 }
 
 // validateRepeaterConfig validates repeater configuration
 func validateRepeaterConfig(cfg *RepeaterConfig, jobNum int) error {
 	if cfg.Attempts != nil {
-		if *cfg.Attempts < 1 || *cfg.Attempts > 100 {
-			return fmt.Errorf("job %d: repeater.attempts must be between 1 and 100", jobNum)
+		if *cfg.Attempts < minAttempts || *cfg.Attempts > maxAttempts {
+			return fmt.Errorf("job %d: repeater.attempts must be between %d and %d", jobNum, minAttempts, maxAttempts)
 		}
 	}
 
 	if cfg.Duration != nil {
-		if *cfg.Duration < time.Millisecond {
-			return fmt.Errorf("job %d: repeater.duration must be at least 1ms", jobNum)
+		if *cfg.Duration < minDuration {
+			return fmt.Errorf("job %d: repeater.duration must be at least %v", jobNum, minDuration)
 		}
-		if *cfg.Duration > time.Hour {
-			return fmt.Errorf("job %d: repeater.duration must not exceed 1 hour", jobNum)
+		if *cfg.Duration > maxDuration {
+			return fmt.Errorf("job %d: repeater.duration must not exceed %v", jobNum, maxDuration)
 		}
 	}
 
 	if cfg.Factor != nil {
-		if *cfg.Factor < 1.0 || *cfg.Factor > 10.0 {
-			return fmt.Errorf("job %d: repeater.factor must be between 1.0 and 10.0", jobNum)
+		if *cfg.Factor < minFactor || *cfg.Factor > maxFactor {
+			return fmt.Errorf("job %d: repeater.factor must be between %.1f and %.1f", jobNum, minFactor, maxFactor)
 		}
 	}
 

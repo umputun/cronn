@@ -11,28 +11,28 @@ import (
 
 // ResumerMock is a mock implementation of service.Resumer.
 //
-// 	func TestSomethingThatUsesResumer(t *testing.T) {
+//	func TestSomethingThatUsesResumer(t *testing.T) {
 //
-// 		// make and configure a mocked service.Resumer
-// 		mockedResumer := &ResumerMock{
-// 			ListFunc: func() []resumer.Cmd {
-// 				panic("mock out the List method")
-// 			},
-// 			OnFinishFunc: func(fname string) error {
-// 				panic("mock out the OnFinish method")
-// 			},
-// 			OnStartFunc: func(cmd string) (string, error) {
-// 				panic("mock out the OnStart method")
-// 			},
-// 			StringFunc: func() string {
-// 				panic("mock out the String method")
-// 			},
-// 		}
+//		// make and configure a mocked service.Resumer
+//		mockedResumer := &ResumerMock{
+//			ListFunc: func() []resumer.Cmd {
+//				panic("mock out the List method")
+//			},
+//			OnFinishFunc: func(fname string) error {
+//				panic("mock out the OnFinish method")
+//			},
+//			OnStartFunc: func(cmd string) (string, error) {
+//				panic("mock out the OnStart method")
+//			},
+//			StringFunc: func() string {
+//				panic("mock out the String method")
+//			},
+//		}
 //
-// 		// use mockedResumer in code that requires service.Resumer
-// 		// and then make assertions.
+//		// use mockedResumer in code that requires service.Resumer
+//		// and then make assertions.
 //
-// 	}
+//	}
 type ResumerMock struct {
 	// ListFunc mocks the List method.
 	ListFunc func() []resumer.Cmd
@@ -86,7 +86,8 @@ func (mock *ResumerMock) List() []resumer.Cmd {
 
 // ListCalls gets all the calls that were made to List.
 // Check the length with:
-//     len(mockedResumer.ListCalls())
+//
+//	len(mockedResumer.ListCalls())
 func (mock *ResumerMock) ListCalls() []struct {
 } {
 	var calls []struct {
@@ -115,7 +116,8 @@ func (mock *ResumerMock) OnFinish(fname string) error {
 
 // OnFinishCalls gets all the calls that were made to OnFinish.
 // Check the length with:
-//     len(mockedResumer.OnFinishCalls())
+//
+//	len(mockedResumer.OnFinishCalls())
 func (mock *ResumerMock) OnFinishCalls() []struct {
 	Fname string
 } {
@@ -146,7 +148,8 @@ func (mock *ResumerMock) OnStart(cmd string) (string, error) {
 
 // OnStartCalls gets all the calls that were made to OnStart.
 // Check the length with:
-//     len(mockedResumer.OnStartCalls())
+//
+//	len(mockedResumer.OnStartCalls())
 func (mock *ResumerMock) OnStartCalls() []struct {
 	Cmd string
 } {
@@ -174,7 +177,8 @@ func (mock *ResumerMock) String() string {
 
 // StringCalls gets all the calls that were made to String.
 // Check the length with:
-//     len(mockedResumer.StringCalls())
+//
+//	len(mockedResumer.StringCalls())
 func (mock *ResumerMock) StringCalls() []struct {
 } {
 	var calls []struct {

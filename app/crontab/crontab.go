@@ -17,6 +17,8 @@ import (
 
 	log "github.com/go-pkgz/lgr"
 	"gopkg.in/yaml.v3"
+
+	"github.com/umputun/cronn/app/conditions"
 )
 
 // Parser file, thread safe
@@ -41,18 +43,20 @@ type Schedule struct {
 // defaults from CLI parameters.
 type RepeaterConfig struct {
 	Attempts *int           `yaml:"attempts,omitempty" json:"attempts,omitempty" jsonschema:"description=Number of retry attempts"`
-	Duration *time.Duration `yaml:"duration,omitempty" json:"duration,omitempty" jsonschema:"description=Initial retry delay"`
+	Duration *time.Duration `yaml:"duration,omitempty" json:"duration,omitempty" jsonschema:"type=string,description=Initial retry delay"`
 	Factor   *float64       `yaml:"factor,omitempty" json:"factor,omitempty" jsonschema:"description=Backoff multiplication factor"`
 	Jitter   *bool          `yaml:"jitter,omitempty" json:"jitter,omitempty" jsonschema:"description=Enable random jitter"`
 }
 
+
 // JobSpec for spec and cmd + params
 type JobSpec struct {
-	Spec     string          `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string"`
-	Sched    Schedule        `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"`
-	Command  string          `yaml:"command" json:"command" jsonschema:"required,description=Command to execute"`
-	Name     string          `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description"`
-	Repeater *RepeaterConfig `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration"`
+	Spec       string             `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string"`
+	Sched      Schedule           `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"`
+	Command    string             `yaml:"command" json:"command" jsonschema:"required,description=Command to execute"`
+	Name       string             `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description"`
+	Repeater   *RepeaterConfig    `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration"`
+	Conditions *conditions.Config `yaml:"conditions,omitempty" json:"conditions,omitempty" jsonschema:"description=Resource thresholds for conditional execution"`
 }
 
 // YamlConfig represents the YAML configuration structure

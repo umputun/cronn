@@ -10,19 +10,19 @@ import (
 
 // RepeaterMock is a mock implementation of service.Repeater.
 //
-// 	func TestSomethingThatUsesRepeater(t *testing.T) {
+//	func TestSomethingThatUsesRepeater(t *testing.T) {
 //
-// 		// make and configure a mocked service.Repeater
-// 		mockedRepeater := &RepeaterMock{
-// 			DoFunc: func(ctx context.Context, fun func() error, errors ...error) error {
-// 				panic("mock out the Do method")
-// 			},
-// 		}
+//		// make and configure a mocked service.Repeater
+//		mockedRepeater := &RepeaterMock{
+//			DoFunc: func(ctx context.Context, fun func() error, errors ...error) error {
+//				panic("mock out the Do method")
+//			},
+//		}
 //
-// 		// use mockedRepeater in code that requires service.Repeater
-// 		// and then make assertions.
+//		// use mockedRepeater in code that requires service.Repeater
+//		// and then make assertions.
 //
-// 	}
+//	}
 type RepeaterMock struct {
 	// DoFunc mocks the Do method.
 	DoFunc func(ctx context.Context, fun func() error, errors ...error) error
@@ -64,7 +64,8 @@ func (mock *RepeaterMock) Do(ctx context.Context, fun func() error, errors ...er
 
 // DoCalls gets all the calls that were made to Do.
 // Check the length with:
-//     len(mockedRepeater.DoCalls())
+//
+//	len(mockedRepeater.DoCalls())
 func (mock *RepeaterMock) DoCalls() []struct {
 	Ctx    context.Context
 	Fun    func() error

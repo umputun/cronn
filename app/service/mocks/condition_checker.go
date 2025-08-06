@@ -6,7 +6,7 @@ package mocks
 import (
 	"sync"
 
-	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/conditions"
 )
 
 // ConditionCheckerMock is a mock implementation of service.ConditionChecker.
@@ -15,7 +15,7 @@ import (
 //
 //		// make and configure a mocked service.ConditionChecker
 //		mockedConditionChecker := &ConditionCheckerMock{
-//			CheckFunc: func(conditions crontab.ConditionsConfig) (bool, string) {
+//			CheckFunc: func(conditionsMoqParam conditions.Config) (bool, string) {
 //				panic("mock out the Check method")
 //			},
 //		}
@@ -26,33 +26,33 @@ import (
 //	}
 type ConditionCheckerMock struct {
 	// CheckFunc mocks the Check method.
-	CheckFunc func(conditions crontab.ConditionsConfig) (bool, string)
+	CheckFunc func(conditionsMoqParam conditions.Config) (bool, string)
 
 	// calls tracks calls to the methods.
 	calls struct {
 		// Check holds details about calls to the Check method.
 		Check []struct {
-			// Conditions is the conditions argument value.
-			Conditions crontab.ConditionsConfig
+			// ConditionsMoqParam is the conditionsMoqParam argument value.
+			ConditionsMoqParam conditions.Config
 		}
 	}
 	lockCheck sync.RWMutex
 }
 
 // Check calls CheckFunc.
-func (mock *ConditionCheckerMock) Check(conditions crontab.ConditionsConfig) (bool, string) {
+func (mock *ConditionCheckerMock) Check(conditionsMoqParam conditions.Config) (bool, string) {
 	if mock.CheckFunc == nil {
 		panic("ConditionCheckerMock.CheckFunc: method is nil but ConditionChecker.Check was just called")
 	}
 	callInfo := struct {
-		Conditions crontab.ConditionsConfig
+		ConditionsMoqParam conditions.Config
 	}{
-		Conditions: conditions,
+		ConditionsMoqParam: conditionsMoqParam,
 	}
 	mock.lockCheck.Lock()
 	mock.calls.Check = append(mock.calls.Check, callInfo)
 	mock.lockCheck.Unlock()
-	return mock.CheckFunc(conditions)
+	return mock.CheckFunc(conditionsMoqParam)
 }
 
 // CheckCalls gets all the calls that were made to Check.
@@ -60,10 +60,10 @@ func (mock *ConditionCheckerMock) Check(conditions crontab.ConditionsConfig) (bo
 //
 //	len(mockedConditionChecker.CheckCalls())
 func (mock *ConditionCheckerMock) CheckCalls() []struct {
-	Conditions crontab.ConditionsConfig
+	ConditionsMoqParam conditions.Config
 } {
 	var calls []struct {
-		Conditions crontab.ConditionsConfig
+		ConditionsMoqParam conditions.Config
 	}
 	mock.lockCheck.RLock()
 	calls = mock.calls.Check

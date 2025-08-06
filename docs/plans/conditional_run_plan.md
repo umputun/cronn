@@ -89,26 +89,64 @@ type JobSpec struct {
 }
 ```
 
-### 2. Condition Checker
+### 2. Condition Checker Package
 
 ```go
-// app/service/conditions.go
-type ConditionChecker struct {
-    lastDiskStats map[string]disk.IOCountersStat
-    lastCheckTime time.Time
-    mu            sync.RWMutex
-}
+// app/conditions/conditions.go
+package conditions
 
-func NewConditionChecker() *ConditionChecker {
-    return &ConditionChecker{
-        lastDiskStats: make(map[string]disk.IOCountersStat),
+import (
+    "fmt"
+    "os/exec"
+    "time"
+    
+    "github.com/shirou/gopsutil/v3/cpu"
+    "github.com/shirou/gopsutil/v3/disk"
+    "github.com/shirou/gopsutil/v3/load"
+    "github.com/shirou/gopsutil/v3/mem"
+    
+    "github.com/umputun/cronn/app/crontab"
+)
+
+// Check verifies if all conditions are met
+// Returns true if conditions are satisfied, false with reason otherwise
+func Check(conditions crontab.ConditionsConfig) (bool, string) {
+    // Check CPU
+    if conditions.CPUBelow != nil {
+        if ok, reason := checkCPU(*conditions.CPUBelow); !ok {
+            return false, reason
+        }
     }
-}
-
-func (c *ConditionChecker) Check(conditions crontab.ConditionsConfig) (bool, string) {
-    // Check each condition if specified
-    // Return false with reason on first failure
-    // Return true if all conditions met
+    
+    // Check Memory
+    if conditions.MemoryBelow != nil {
+        if ok, reason := checkMemory(*conditions.MemoryBelow); !ok {
+            return false, reason
+        }
+    }
+    
+    // Check Load Average
+    if conditions.LoadAvgBelow != nil {
+        if ok, reason := checkLoadAvg(*conditions.LoadAvgBelow); !ok {
+            return false, reason
+        }
+    }
+    
+    // Check Disk I/O (simplified - current rate)
+    if conditions.DiskIOBelow != nil {
+        if ok, reason := checkDiskIO(*conditions.DiskIOBelow); !ok {
+            return false, reason
+        }
+    }
+    
+    // Check custom script
+    if conditions.Custom != "" {
+        if ok, reason := checkCustom(conditions.Custom); !ok {
+            return false, reason
+        }
+    }
+    
+    return true, ""
 }
 ```
 
@@ -162,38 +200,38 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
     }
 }
 
-func (s *Scheduler) waitForConditions(ctx context.Context, conditions crontab.ConditionsConfig, jobDesc string) bool {
-    met, reason := s.ConditionChecker.Check(conditions)
+func (s *Scheduler) waitForConditions(ctx context.Context, cond crontab.ConditionsConfig, jobDesc string) bool {
+    met, reason := conditions.Check(cond)
     if met {
         return true
     }
     
     // No postpone configured - skip job
-    if conditions.MaxPostpone == nil {
+    if cond.MaxPostpone == nil {
         log.Printf("[INFO] job skipped: %s, reason: %s", jobDesc, reason)
         return false
     }
     
     // Set up postponement
-    deadline := time.Now().Add(*conditions.MaxPostpone)
+    deadline := time.Now().Add(*cond.MaxPostpone)
     log.Printf("[INFO] job postponed: %s, reason: %s, deadline: %s", 
         jobDesc, reason, deadline.Format(time.RFC3339))
     
     checkInterval := 30 * time.Second
-    if conditions.CheckInterval != nil {
-        checkInterval = *conditions.CheckInterval
+    if cond.CheckInterval != nil {
+        checkInterval = *cond.CheckInterval
     }
     
     ticker := time.NewTicker(checkInterval)
     defer ticker.Stop()
     
-    deadlineTimer := time.NewTimer(*conditions.MaxPostpone)
+    deadlineTimer := time.NewTimer(*cond.MaxPostpone)
     defer deadlineTimer.Stop()
     
     for {
         select {
         case <-ticker.C:
-            met, reason = s.ConditionChecker.Check(conditions)
+            met, reason = conditions.Check(cond)
             if met {
                 log.Printf("[INFO] conditions met, executing postponed job: %s", jobDesc)
                 return true
@@ -215,7 +253,7 @@ func (s *Scheduler) waitForConditions(ctx context.Context, conditions crontab.Co
 
 ```go
 // Check CPU usage
-func (c *ConditionChecker) checkCPU(threshold int) (bool, string) {
+func checkCPU(threshold int) (bool, string) {
     cpuPercent, err := cpu.Percent(time.Second, false)
     if err != nil {
         return false, fmt.Sprintf("failed to get CPU: %v", err)
@@ -228,7 +266,7 @@ func (c *ConditionChecker) checkCPU(threshold int) (bool, string) {
 }
 
 // Check memory usage
-func (c *ConditionChecker) checkMemory(threshold int) (bool, string) {
+func checkMemory(threshold int) (bool, string) {
     v, err := mem.VirtualMemory()
     if err != nil {
         return false, fmt.Sprintf("failed to get memory: %v", err)
@@ -240,42 +278,51 @@ func (c *ConditionChecker) checkMemory(threshold int) (bool, string) {
     return true, ""
 }
 
-// Check disk I/O rate (MB/s)
-func (c *ConditionChecker) checkDiskIO(threshold int) (bool, string) {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    
-    stats, err := disk.IOCounters()
+// Check load average
+func checkLoadAvg(threshold float64) (bool, string) {
+    loads, err := load.Avg()
+    if err != nil {
+        return false, fmt.Sprintf("failed to get load average: %v", err)
+    }
+    if loads.Load1 >= threshold {
+        return false, fmt.Sprintf("load at %.2f, threshold %.2f", loads.Load1, threshold)
+    }
+    return true, ""
+}
+
+// Check disk I/O rate (simplified - instantaneous rate)
+// Note: For disk I/O, we take two measurements 1 second apart
+func checkDiskIO(threshold int) (bool, string) {
+    stats1, err := disk.IOCounters()
     if err != nil {
         return false, fmt.Sprintf("failed to get disk I/O: %v", err)
     }
     
-    now := time.Now()
-    if !c.lastCheckTime.IsZero() {
-        elapsed := now.Sub(c.lastCheckTime).Seconds()
-        var totalRate float64
-        
-        for name, stat := range stats {
-            if last, ok := c.lastDiskStats[name]; ok {
-                bytesRead := stat.ReadBytes - last.ReadBytes
-                bytesWritten := stat.WriteBytes - last.WriteBytes
-                rate := float64(bytesRead+bytesWritten) / elapsed / (1024 * 1024) // MB/s
-                totalRate += rate
-            }
-        }
-        
-        if int(totalRate) >= threshold {
-            return false, fmt.Sprintf("disk I/O at %dMB/s, threshold %dMB/s", int(totalRate), threshold)
+    time.Sleep(time.Second)
+    
+    stats2, err := disk.IOCounters()
+    if err != nil {
+        return false, fmt.Sprintf("failed to get disk I/O: %v", err)
+    }
+    
+    var totalRate float64
+    for name, stat2 := range stats2 {
+        if stat1, ok := stats1[name]; ok {
+            bytesRead := stat2.ReadBytes - stat1.ReadBytes
+            bytesWritten := stat2.WriteBytes - stat1.WriteBytes
+            rate := float64(bytesRead+bytesWritten) / (1024 * 1024) // MB/s
+            totalRate += rate
         }
     }
     
-    c.lastDiskStats = stats
-    c.lastCheckTime = now
+    if int(totalRate) >= threshold {
+        return false, fmt.Sprintf("disk I/O at %dMB/s, threshold %dMB/s", int(totalRate), threshold)
+    }
     return true, ""
 }
 
 // Check custom script
-func (c *ConditionChecker) checkCustom(script string) (bool, string) {
+func checkCustom(script string) (bool, string) {
     cmd := exec.Command("sh", "-c", script)
     if err := cmd.Run(); err != nil {
         return false, fmt.Sprintf("custom check failed: %v", err)
@@ -295,7 +342,7 @@ github.com/shirou/gopsutil/v3 v3.24.1
 
 ### Unit Tests
 
-1. **ConditionChecker Tests** (`app/service/conditions_test.go`)
+1. **Conditions Package Tests** (`app/conditions/conditions_test.go`)
    - Mock gopsutil functions
    - Test each condition type independently
    - Test combined conditions

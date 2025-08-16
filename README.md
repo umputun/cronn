@@ -217,6 +217,7 @@ Available conditions:
 - `disk_free_above`: Minimum free disk space percentage (0-100)
 - `disk_free_path`: Path to check for disk space (defaults to "/")
 - `custom`: Path to custom check script (exit 0 to allow, non-zero to block)
+- `custom_timeout`: Timeout for custom script execution (defaults to 30s)
 
 Postponement options:
 - `max_postpone`: Maximum duration to wait for conditions (e.g., "2h", "30m")
@@ -250,6 +251,7 @@ jobs:
     command: "sync.sh"
     conditions:
       custom: "/usr/local/bin/check-network.sh"
+      custom_timeout: "60s"  # Give custom script more time (default: 30s)
       disk_free_above: 10
       disk_free_path: "/backup"
 ```

@@ -28,6 +28,9 @@
         },
         "custom": {
           "type": "string"
+        },
+        "custom_timeout": {
+          "type": "string"
         }
       },
       "additionalProperties": false,

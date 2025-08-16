@@ -24,6 +24,7 @@ type Config struct {
 	DiskFreeAbove *int           `yaml:"disk_free_above,omitempty" json:"disk_free_above,omitempty"`
 	DiskFreePath  string         `yaml:"disk_free_path,omitempty" json:"disk_free_path,omitempty"`
 	Custom        string         `yaml:"custom,omitempty" json:"custom,omitempty"`
+	CustomTimeout *time.Duration `yaml:"custom_timeout,omitempty" json:"custom_timeout,omitempty" jsonschema:"type=string"`
 }
 
 // Checker provides system condition checking with concurrency control
@@ -57,18 +58,9 @@ func (c *Checker) Check(conditions Config) (bool, string) {
 		return false, "condition check limit reached, try increasing --max-concurrent-checks or wait for running checks to complete"
 	}
 
-	// validate thresholds
-	if conditions.CPUBelow != nil && (*conditions.CPUBelow < 0 || *conditions.CPUBelow > 100) {
-		return false, fmt.Sprintf("invalid CPU threshold: %d (must be 0-100)", *conditions.CPUBelow)
-	}
-	if conditions.MemoryBelow != nil && (*conditions.MemoryBelow < 0 || *conditions.MemoryBelow > 100) {
-		return false, fmt.Sprintf("invalid memory threshold: %d (must be 0-100)", *conditions.MemoryBelow)
-	}
-	if conditions.LoadAvgBelow != nil && *conditions.LoadAvgBelow < 0 {
-		return false, fmt.Sprintf("invalid load average threshold: %.2f (must be >= 0)", *conditions.LoadAvgBelow)
-	}
-	if conditions.DiskFreeAbove != nil && (*conditions.DiskFreeAbove < 0 || *conditions.DiskFreeAbove > 100) {
-		return false, fmt.Sprintf("invalid disk free threshold: %d (must be 0-100)", *conditions.DiskFreeAbove)
+	// validate all thresholds
+	if err := c.validateThresholds(conditions); err != nil {
+		return false, err.Error()
 	}
 
 	// check CPU
@@ -105,12 +97,33 @@ func (c *Checker) Check(conditions Config) (bool, string) {
 
 	// check custom script
 	if conditions.Custom != "" {
-		if ok, reason := c.checkCustom(conditions.Custom); !ok {
+		timeout := 30 * time.Second // default timeout
+		if conditions.CustomTimeout != nil {
+			timeout = *conditions.CustomTimeout
+		}
+		if ok, reason := c.checkCustom(conditions.Custom, timeout); !ok {
 			return false, reason
 		}
 	}
 
 	return true, ""
+}
+
+// validateThresholds validates all condition thresholds
+func (c *Checker) validateThresholds(conditions Config) error {
+	if conditions.CPUBelow != nil && (*conditions.CPUBelow < 0 || *conditions.CPUBelow > 100) {
+		return fmt.Errorf("invalid CPU threshold: %d (must be 0-100)", *conditions.CPUBelow)
+	}
+	if conditions.MemoryBelow != nil && (*conditions.MemoryBelow < 0 || *conditions.MemoryBelow > 100) {
+		return fmt.Errorf("invalid memory threshold: %d (must be 0-100)", *conditions.MemoryBelow)
+	}
+	if conditions.LoadAvgBelow != nil && *conditions.LoadAvgBelow < 0 {
+		return fmt.Errorf("invalid load average threshold: %.2f (must be >= 0)", *conditions.LoadAvgBelow)
+	}
+	if conditions.DiskFreeAbove != nil && (*conditions.DiskFreeAbove < 0 || *conditions.DiskFreeAbove > 100) {
+		return fmt.Errorf("invalid disk free threshold: %d (must be 0-100)", *conditions.DiskFreeAbove)
+	}
+	return nil
 }
 
 // checkCPU checks if CPU usage is below threshold
@@ -125,7 +138,7 @@ func (c *Checker) checkCPU(threshold int) (bool, string) {
 	}
 	current := int(cpuPercent[0])
 	if current >= threshold {
-		return false, fmt.Sprintf("CPU at %d%%, threshold %d%%", current, threshold)
+		return false, fmt.Sprintf("CPU: current=%d%%, threshold=%d%%", current, threshold)
 	}
 	return true, ""
 }
@@ -138,7 +151,7 @@ func (c *Checker) checkMemory(threshold int) (bool, string) {
 	}
 	current := int(v.UsedPercent)
 	if current >= threshold {
-		return false, fmt.Sprintf("memory at %d%%, threshold %d%%", current, threshold)
+		return false, fmt.Sprintf("memory: current=%d%%, threshold=%d%%", current, threshold)
 	}
 	return true, ""
 }
@@ -150,7 +163,7 @@ func (c *Checker) checkLoadAvg(threshold float64) (bool, string) {
 		return false, fmt.Sprintf("failed to get load average: %v", err)
 	}
 	if loads.Load1 >= threshold {
-		return false, fmt.Sprintf("load at %.2f, threshold %.2f", loads.Load1, threshold)
+		return false, fmt.Sprintf("load average: current=%.2f, threshold=%.2f", loads.Load1, threshold)
 	}
 	return true, ""
 }
@@ -163,21 +176,21 @@ func (c *Checker) checkDiskFree(minFreePercent int, path string) (bool, string) 
 	}
 	freePercent := 100 - int(usage.UsedPercent)
 	if freePercent < minFreePercent {
-		return false, fmt.Sprintf("disk free at %d%%, need %d%% on %s", freePercent, minFreePercent, path)
+		return false, fmt.Sprintf("disk free: current=%d%%, threshold=%d%%, path=%s", freePercent, minFreePercent, path)
 	}
 	return true, ""
 }
 
 // checkCustom runs a custom script and checks its exit code
-func (c *Checker) checkCustom(script string) (bool, string) {
+func (c *Checker) checkCustom(script string, timeout time.Duration) (bool, string) {
 	// add timeout to prevent scripts from hanging indefinitely
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return false, "custom check timed out after 30 seconds"
+			return false, fmt.Sprintf("custom check timed out after %v", timeout)
 		}
 		return false, fmt.Sprintf("custom check failed: %v", err)
 	}

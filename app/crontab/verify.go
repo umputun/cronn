@@ -86,41 +86,34 @@ func validateRequiredFields(cfg *YamlConfig) error {
 
 // validateSchedFields validates the Schedule struct fields
 func validateSchedFields(sched Schedule, jobNum int) error {
-	// validate minute field (0-59)
-	if sched.Minute != "" && sched.Minute != "*" {
-		if err := validateCronField(sched.Minute, 0, 59, "minute"); err != nil {
-			return fmt.Errorf("job %d: invalid minute field '%s': %w", jobNum, sched.Minute, err)
-		}
+	type fieldValidator struct {
+		value     string
+		fieldName string
+		minVal    int
+		maxVal    int
+		allowName bool
 	}
 
-	// validate hour field (0-23)
-	if sched.Hour != "" && sched.Hour != "*" {
-		if err := validateCronField(sched.Hour, 0, 23, "hour"); err != nil {
-			return fmt.Errorf("job %d: invalid hour field '%s': %w", jobNum, sched.Hour, err)
-		}
+	validators := []fieldValidator{
+		{sched.Minute, "minute", 0, 59, false},
+		{sched.Hour, "hour", 0, 23, false},
+		{sched.Day, "day", 1, 31, false},
+		{sched.Month, "month", 1, 12, false},
+		{sched.Weekday, "weekday", 0, 7, true},
 	}
 
-	// validate day field (1-31)
-	if sched.Day != "" && sched.Day != "*" {
-		if err := validateCronField(sched.Day, 1, 31, "day"); err != nil {
-			return fmt.Errorf("job %d: invalid day field '%s': %w", jobNum, sched.Day, err)
+	for _, v := range validators {
+		if v.value == "" || v.value == "*" {
+			continue
 		}
-	}
 
-	// validate month field (1-12)
-	if sched.Month != "" && sched.Month != "*" {
-		if err := validateCronField(sched.Month, 1, 12, "month"); err != nil {
-			return fmt.Errorf("job %d: invalid month field '%s': %w", jobNum, sched.Month, err)
+		// special handling for weekday names
+		if v.allowName && isWeekdayName(v.value) {
+			continue
 		}
-	}
 
-	// validate weekday field (0-7, where 0 and 7 are Sunday)
-	if sched.Weekday != "" && sched.Weekday != "*" {
-		// allow weekday names like MON-FRI
-		if !isWeekdayName(sched.Weekday) {
-			if err := validateCronField(sched.Weekday, 0, 7, "weekday"); err != nil {
-				return fmt.Errorf("job %d: invalid weekday field '%s': %w", jobNum, sched.Weekday, err)
-			}
+		if err := validateCronField(v.value, v.minVal, v.maxVal, v.fieldName); err != nil {
+			return fmt.Errorf("job %d: invalid %s field '%s': %w", jobNum, v.fieldName, v.value, err)
 		}
 	}
 

@@ -3,6 +3,7 @@ package conditions
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -120,6 +121,106 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+func TestCheck_ValidationBoundaries(t *testing.T) {
+	checker := NewChecker(0)
+
+	tests := []struct {
+		name       string
+		conditions Config
+		wantOK     bool
+		wantReason string
+	}{
+		{
+			name:       "invalid CPU below negative",
+			conditions: Config{CPUBelow: intPtr(-1)},
+			wantOK:     false,
+			wantReason: "invalid CPU threshold: -1 (must be 0-100)",
+		},
+		{
+			name:       "invalid CPU below over 100",
+			conditions: Config{CPUBelow: intPtr(101)},
+			wantOK:     false,
+			wantReason: "invalid CPU threshold: 101 (must be 0-100)",
+		},
+		{
+			name:       "valid CPU at boundary 0",
+			conditions: Config{CPUBelow: intPtr(0)},
+			wantOK:     false, // will fail because CPU is always > 0
+			wantReason: "CPU: current=",
+		},
+		{
+			name:       "valid CPU at boundary 100",
+			conditions: Config{CPUBelow: intPtr(100)},
+			wantOK:     true,
+			wantReason: "",
+		},
+		{
+			name:       "invalid memory below negative",
+			conditions: Config{MemoryBelow: intPtr(-1)},
+			wantOK:     false,
+			wantReason: "invalid memory threshold: -1 (must be 0-100)",
+		},
+		{
+			name:       "invalid memory below over 100",
+			conditions: Config{MemoryBelow: intPtr(101)},
+			wantOK:     false,
+			wantReason: "invalid memory threshold: 101 (must be 0-100)",
+		},
+		{
+			name:       "invalid load average negative",
+			conditions: Config{LoadAvgBelow: float64Ptr(-0.1)},
+			wantOK:     false,
+			wantReason: "invalid load average threshold: -0.10 (must be >= 0)",
+		},
+		{
+			name:       "valid load average at boundary 0",
+			conditions: Config{LoadAvgBelow: float64Ptr(0.0)},
+			wantOK:     false, // will fail because load is always > 0
+			wantReason: "load average: current=",
+		},
+		{
+			name:       "invalid disk free negative",
+			conditions: Config{DiskFreeAbove: intPtr(-1)},
+			wantOK:     false,
+			wantReason: "invalid disk free threshold: -1 (must be 0-100)",
+		},
+		{
+			name:       "invalid disk free over 100",
+			conditions: Config{DiskFreeAbove: intPtr(101)},
+			wantOK:     false,
+			wantReason: "invalid disk free threshold: 101 (must be 0-100)",
+		},
+		{
+			name:       "valid disk free at boundary 0",
+			conditions: Config{DiskFreeAbove: intPtr(0)},
+			wantOK:     true, // will pass because disk free is always >= 0
+			wantReason: "",
+		},
+		{
+			name:       "valid disk free at boundary 100",
+			conditions: Config{DiskFreeAbove: intPtr(100)},
+			wantOK:     false, // will fail because disk free is never 100%
+			wantReason: "disk free: current=",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotOK, gotReason := checker.Check(tt.conditions)
+			assert.Equal(t, tt.wantOK, gotOK)
+			if tt.wantReason != "" {
+				if strings.HasPrefix(tt.wantReason, "CPU: current=") || strings.HasPrefix(tt.wantReason, "load average: current=") || strings.HasPrefix(tt.wantReason, "disk free: current=") {
+					// for runtime checks, just verify it contains the expected prefix
+					assert.Contains(t, gotReason, tt.wantReason)
+				} else {
+					// for validation errors, expect exact match
+					assert.Equal(t, tt.wantReason, gotReason)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckCPU(t *testing.T) {
 	checker := NewChecker(0)
 
@@ -131,8 +232,8 @@ func TestCheckCPU(t *testing.T) {
 	// test with very low threshold - likely to fail
 	ok, reason = checker.checkCPU(0)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "CPU at")
-	assert.Contains(t, reason, "threshold 0%")
+	assert.Contains(t, reason, "CPU: current=")
+	assert.Contains(t, reason, "threshold=0%")
 }
 
 func TestCheckMemory(t *testing.T) {
@@ -146,8 +247,8 @@ func TestCheckMemory(t *testing.T) {
 	// test with very low threshold - likely to fail
 	ok, reason = checker.checkMemory(0)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "memory at")
-	assert.Contains(t, reason, "threshold 0%")
+	assert.Contains(t, reason, "memory: current=")
+	assert.Contains(t, reason, "threshold=0%")
 }
 
 func TestCheckLoadAvg(t *testing.T) {
@@ -161,8 +262,8 @@ func TestCheckLoadAvg(t *testing.T) {
 	// test with very low threshold - likely to fail on any system
 	ok, reason = checker.checkLoadAvg(0.0)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "load at")
-	assert.Contains(t, reason, "threshold 0.00")
+	assert.Contains(t, reason, "load average: current=")
+	assert.Contains(t, reason, "threshold=0.00")
 }
 
 func TestCheckDiskFree(t *testing.T) {
@@ -176,8 +277,8 @@ func TestCheckDiskFree(t *testing.T) {
 	// test with very high threshold - likely to fail
 	ok, reason = checker.checkDiskFree(100, "/")
 	assert.False(t, ok)
-	assert.Contains(t, reason, "disk free at")
-	assert.Contains(t, reason, "need 100%")
+	assert.Contains(t, reason, "disk free: current=")
+	assert.Contains(t, reason, "threshold=100%")
 
 	// test with non-existent path
 	ok, reason = checker.checkDiskFree(10, "/non/existent/path")
@@ -189,24 +290,53 @@ func TestCheckCustom(t *testing.T) {
 	checker := NewChecker(0)
 
 	// test successful script
-	ok, reason := checker.checkCustom("true")
+	ok, reason := checker.checkCustom("true", 30*time.Second)
 	assert.True(t, ok)
 	assert.Empty(t, reason)
 
 	// test failing script
-	ok, reason = checker.checkCustom("false")
+	ok, reason = checker.checkCustom("false", 30*time.Second)
 	assert.False(t, ok)
 	assert.Contains(t, reason, "custom check failed")
 
 	// test script with output (should still work)
-	ok, reason = checker.checkCustom("echo 'test' && exit 0")
+	ok, reason = checker.checkCustom("echo 'test' && exit 0", 30*time.Second)
 	assert.True(t, ok)
 	assert.Empty(t, reason)
 
 	// test non-existent command
-	ok, reason = checker.checkCustom("/non/existent/command")
+	ok, reason = checker.checkCustom("/non/existent/command", 30*time.Second)
 	assert.False(t, ok)
 	assert.Contains(t, reason, "custom check failed")
+}
+
+func TestCheckCustom_Timeout(t *testing.T) {
+	checker := NewChecker(0)
+
+	// test with default timeout
+	start := time.Now()
+	ok, reason := checker.checkCustom("sleep 2", 1*time.Second)
+	duration := time.Since(start)
+	
+	assert.False(t, ok)
+	assert.Equal(t, "custom check timed out after 1s", reason)
+	assert.True(t, duration >= 1*time.Second)
+	assert.True(t, duration < 2*time.Second)
+
+	// test with custom timeout from config
+	conditions := Config{
+		Custom:        "sleep 2",
+		CustomTimeout: durationPtr(500 * time.Millisecond),
+	}
+	
+	start = time.Now()
+	ok, reason = checker.Check(conditions)
+	duration = time.Since(start)
+	
+	assert.False(t, ok)
+	assert.Equal(t, "custom check timed out after 500ms", reason)
+	assert.True(t, duration >= 500*time.Millisecond)
+	assert.True(t, duration < 1*time.Second)
 }
 
 func TestCheckWithCustomScript(t *testing.T) {
@@ -268,28 +398,28 @@ func TestCheckMultipleConditions(t *testing.T) {
 	conditions.CPUBelow = intPtr(0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "CPU at")
+	assert.Contains(t, reason, "CPU: current=")
 
 	// test with memory failing
 	conditions.CPUBelow = intPtr(99)
 	conditions.MemoryBelow = intPtr(0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "memory at")
+	assert.Contains(t, reason, "memory: current=")
 
 	// test with load average failing
 	conditions.MemoryBelow = intPtr(99)
 	conditions.LoadAvgBelow = float64Ptr(0.0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "load at")
+	assert.Contains(t, reason, "load average: current=")
 
 	// test with disk free failing
 	conditions.LoadAvgBelow = float64Ptr(100.0)
 	conditions.DiskFreeAbove = intPtr(100)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "disk free at")
+	assert.Contains(t, reason, "disk free: current=")
 
 	// test with custom script failing
 	conditions.DiskFreeAbove = intPtr(1)
@@ -453,4 +583,8 @@ func intPtr(i int) *int {
 
 func float64Ptr(f float64) *float64 {
 	return &f
+}
+
+func durationPtr(d time.Duration) *time.Duration {
+	return &d
 }

@@ -1,3 +1,5 @@
+version: 2
+
 project_name: cronn
 dist: .bin
 builds:
@@ -42,12 +44,11 @@ archives:
     files:
       - LICENSE
       - README.md
-    rlcp: true
 
 brews:
   -
     name: cronn
-    tap:
+    repository:
       owner: umputun
       name: homebrew-apps
       branch: master

@@ -1,9 +1,9 @@
-FROM goreleaser/goreleaser:v1.25.1 as build
+FROM goreleaser/goreleaser:v2.11.2 as build
 
 WORKDIR /build
 ADD . /build
 
-RUN goreleaser --snapshot --skip-publish --rm-dist
+RUN goreleaser --snapshot --skip=publish --clean
 RUN ls -la /build/.bin/*
 
 FROM alpine

@@ -3,6 +3,39 @@
   "$id": "https://github.com/umputun/cronn/app/crontab/yaml-config",
   "$ref": "#/$defs/YamlConfig",
   "$defs": {
+    "Config": {
+      "properties": {
+        "max_postpone": {
+          "type": "string"
+        },
+        "check_interval": {
+          "type": "string"
+        },
+        "cpu_below": {
+          "type": "integer"
+        },
+        "memory_below": {
+          "type": "integer"
+        },
+        "load_avg_below": {
+          "type": "number"
+        },
+        "disk_free_above": {
+          "type": "integer"
+        },
+        "disk_free_path": {
+          "type": "string"
+        },
+        "custom": {
+          "type": "string"
+        },
+        "custom_timeout": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "JobSpec": {
       "properties": {
         "spec": {
@@ -24,6 +57,10 @@
         "repeater": {
           "$ref": "#/$defs/RepeaterConfig",
           "description": "Job-specific repeater configuration"
+        },
+        "conditions": {
+          "$ref": "#/$defs/Config",
+          "description": "Resource thresholds for conditional execution"
         }
       },
       "additionalProperties": false,
@@ -39,7 +76,7 @@
           "description": "Number of retry attempts"
         },
         "duration": {
-          "type": "integer",
+          "type": "string",
           "description": "Initial retry delay"
         },
         "factor": {

@@ -12,25 +12,25 @@ import (
 
 // CrontabParserMock is a mock implementation of service.CrontabParser.
 //
-// 	func TestSomethingThatUsesCrontabParser(t *testing.T) {
+//	func TestSomethingThatUsesCrontabParser(t *testing.T) {
 //
-// 		// make and configure a mocked service.CrontabParser
-// 		mockedCrontabParser := &CrontabParserMock{
-// 			ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
-// 				panic("mock out the Changes method")
-// 			},
-// 			ListFunc: func() ([]crontab.JobSpec, error) {
-// 				panic("mock out the List method")
-// 			},
-// 			StringFunc: func() string {
-// 				panic("mock out the String method")
-// 			},
-// 		}
+//		// make and configure a mocked service.CrontabParser
+//		mockedCrontabParser := &CrontabParserMock{
+//			ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+//				panic("mock out the Changes method")
+//			},
+//			ListFunc: func() ([]crontab.JobSpec, error) {
+//				panic("mock out the List method")
+//			},
+//			StringFunc: func() string {
+//				panic("mock out the String method")
+//			},
+//		}
 //
-// 		// use mockedCrontabParser in code that requires service.CrontabParser
-// 		// and then make assertions.
+//		// use mockedCrontabParser in code that requires service.CrontabParser
+//		// and then make assertions.
 //
-// 	}
+//	}
 type CrontabParserMock struct {
 	// ChangesFunc mocks the Changes method.
 	ChangesFunc func(ctx context.Context) (<-chan []crontab.JobSpec, error)
@@ -78,7 +78,8 @@ func (mock *CrontabParserMock) Changes(ctx context.Context) (<-chan []crontab.Jo
 
 // ChangesCalls gets all the calls that were made to Changes.
 // Check the length with:
-//     len(mockedCrontabParser.ChangesCalls())
+//
+//	len(mockedCrontabParser.ChangesCalls())
 func (mock *CrontabParserMock) ChangesCalls() []struct {
 	Ctx context.Context
 } {
@@ -106,7 +107,8 @@ func (mock *CrontabParserMock) List() ([]crontab.JobSpec, error) {
 
 // ListCalls gets all the calls that were made to List.
 // Check the length with:
-//     len(mockedCrontabParser.ListCalls())
+//
+//	len(mockedCrontabParser.ListCalls())
 func (mock *CrontabParserMock) ListCalls() []struct {
 } {
 	var calls []struct {
@@ -132,7 +134,8 @@ func (mock *CrontabParserMock) String() string {
 
 // StringCalls gets all the calls that were made to String.
 // Check the length with:
-//     len(mockedCrontabParser.StringCalls())
+//
+//	len(mockedCrontabParser.StringCalls())
 func (mock *CrontabParserMock) StringCalls() []struct {
 } {
 	var calls []struct {

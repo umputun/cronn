@@ -292,3 +292,72 @@ func TestParseYAMLWithRepeater(t *testing.T) {
 	assert.Equal(t, "default repeater", jobs[2].Name)
 	assert.Nil(t, jobs[2].Repeater)
 }
+
+func TestParseYAMLWithConditions(t *testing.T) {
+	p := New("testfiles/crontab-conditions.yml", time.Hour, nil)
+	jobs, err := p.List()
+	require.NoError(t, err)
+	require.Len(t, jobs, 5)
+
+	// job with cpu condition only
+	assert.Equal(t, "0 * * * *", jobs[0].Spec)
+	assert.Equal(t, "echo 'cpu test'", jobs[0].Command)
+	assert.Equal(t, "cpu check", jobs[0].Name)
+	require.NotNil(t, jobs[0].Conditions)
+	assert.NotNil(t, jobs[0].Conditions.CPUBelow)
+	assert.Equal(t, 50, *jobs[0].Conditions.CPUBelow)
+	assert.Nil(t, jobs[0].Conditions.MaxPostpone)
+
+	// job with memory and postponement
+	assert.Equal(t, "*/30 * * * *", jobs[1].Spec)
+	assert.Equal(t, "echo 'memory test'", jobs[1].Command)
+	assert.Equal(t, "memory check with postpone", jobs[1].Name)
+	require.NotNil(t, jobs[1].Conditions)
+	assert.NotNil(t, jobs[1].Conditions.MemoryBelow)
+	assert.Equal(t, 70, *jobs[1].Conditions.MemoryBelow)
+	assert.NotNil(t, jobs[1].Conditions.MaxPostpone)
+	assert.Equal(t, time.Hour, *jobs[1].Conditions.MaxPostpone)
+	assert.NotNil(t, jobs[1].Conditions.CheckInterval)
+	assert.Equal(t, 5*time.Minute, *jobs[1].Conditions.CheckInterval)
+
+	// job with disk and custom script
+	assert.Equal(t, "0 2 * * *", jobs[2].Spec)
+	assert.Equal(t, "echo 'disk test'", jobs[2].Command)
+	assert.Equal(t, "disk and custom check", jobs[2].Name)
+	require.NotNil(t, jobs[2].Conditions)
+	assert.NotNil(t, jobs[2].Conditions.DiskFreeAbove)
+	assert.Equal(t, 20, *jobs[2].Conditions.DiskFreeAbove)
+	assert.Equal(t, "/var/log", jobs[2].Conditions.DiskFreePath)
+	assert.Equal(t, "/usr/local/bin/check.sh", jobs[2].Conditions.Custom)
+
+	// job with all conditions
+	assert.Equal(t, "0 3 * * *", jobs[3].Spec)
+	assert.Equal(t, "echo 'all conditions'", jobs[3].Command)
+	assert.Equal(t, "all conditions", jobs[3].Name)
+	require.NotNil(t, jobs[3].Conditions)
+	assert.NotNil(t, jobs[3].Conditions.CPUBelow)
+	assert.Equal(t, 40, *jobs[3].Conditions.CPUBelow)
+	assert.NotNil(t, jobs[3].Conditions.MemoryBelow)
+	assert.Equal(t, 60, *jobs[3].Conditions.MemoryBelow)
+	assert.NotNil(t, jobs[3].Conditions.LoadAvgBelow)
+	assert.Equal(t, 2.5, *jobs[3].Conditions.LoadAvgBelow)
+	assert.NotNil(t, jobs[3].Conditions.DiskFreeAbove)
+	assert.Equal(t, 15, *jobs[3].Conditions.DiskFreeAbove)
+	assert.Equal(t, "/", jobs[3].Conditions.DiskFreePath)
+	assert.Equal(t, "/bin/true", jobs[3].Conditions.Custom)
+	assert.NotNil(t, jobs[3].Conditions.MaxPostpone)
+	assert.Equal(t, 2*time.Hour, *jobs[3].Conditions.MaxPostpone)
+	assert.NotNil(t, jobs[3].Conditions.CheckInterval)
+	assert.Equal(t, time.Minute, *jobs[3].Conditions.CheckInterval)
+
+	// job with conditions and repeater
+	assert.Equal(t, "0 4 * * *", jobs[4].Spec)
+	assert.Equal(t, "echo 'both'", jobs[4].Command)
+	assert.Equal(t, "conditions and repeater", jobs[4].Name)
+	require.NotNil(t, jobs[4].Conditions)
+	assert.NotNil(t, jobs[4].Conditions.CPUBelow)
+	assert.Equal(t, 50, *jobs[4].Conditions.CPUBelow)
+	require.NotNil(t, jobs[4].Repeater)
+	assert.NotNil(t, jobs[4].Repeater.Attempts)
+	assert.Equal(t, 3, *jobs[4].Repeater.Attempts)
+}

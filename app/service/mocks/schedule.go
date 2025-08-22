@@ -10,19 +10,19 @@ import (
 
 // ScheduleMock is a mock implementation of service.Schedule.
 //
-// 	func TestSomethingThatUsesSchedule(t *testing.T) {
+//	func TestSomethingThatUsesSchedule(t *testing.T) {
 //
-// 		// make and configure a mocked service.Schedule
-// 		mockedSchedule := &ScheduleMock{
-// 			NextFunc: func(timeMoqParam time.Time) time.Time {
-// 				panic("mock out the Next method")
-// 			},
-// 		}
+//		// make and configure a mocked service.Schedule
+//		mockedSchedule := &ScheduleMock{
+//			NextFunc: func(timeMoqParam time.Time) time.Time {
+//				panic("mock out the Next method")
+//			},
+//		}
 //
-// 		// use mockedSchedule in code that requires service.Schedule
-// 		// and then make assertions.
+//		// use mockedSchedule in code that requires service.Schedule
+//		// and then make assertions.
 //
-// 	}
+//	}
 type ScheduleMock struct {
 	// NextFunc mocks the Next method.
 	NextFunc func(timeMoqParam time.Time) time.Time
@@ -56,7 +56,8 @@ func (mock *ScheduleMock) Next(timeMoqParam time.Time) time.Time {
 
 // NextCalls gets all the calls that were made to Next.
 // Check the length with:
-//     len(mockedSchedule.NextCalls())
+//
+//	len(mockedSchedule.NextCalls())
 func (mock *ScheduleMock) NextCalls() []struct {
 	TimeMoqParam time.Time
 } {

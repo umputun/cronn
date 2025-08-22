@@ -1,0 +1,43 @@
+jobs:
+  - name: "cpu check"
+    spec: "0 * * * *"
+    command: "echo 'cpu test'"
+    conditions:
+      cpu_below: 50
+
+  - name: "memory check with postpone"
+    spec: "*/30 * * * *"
+    command: "echo 'memory test'"
+    conditions:
+      memory_below: 70
+      max_postpone: "1h"
+      check_interval: "5m"
+
+  - name: "disk and custom check"
+    spec: "0 2 * * *"
+    command: "echo 'disk test'"
+    conditions:
+      disk_free_above: 20
+      disk_free_path: "/var/log"
+      custom: "/usr/local/bin/check.sh"
+
+  - name: "all conditions"
+    spec: "0 3 * * *"
+    command: "echo 'all conditions'"
+    conditions:
+      cpu_below: 40
+      memory_below: 60
+      load_avg_below: 2.5
+      disk_free_above: 15
+      disk_free_path: "/"
+      custom: "/bin/true"
+      max_postpone: "2h"
+      check_interval: "1m"
+
+  - name: "conditions and repeater"
+    spec: "0 4 * * *"
+    command: "echo 'both'"
+    conditions:
+      cpu_below: 50
+    repeater:
+      attempts: 3

@@ -9,22 +9,22 @@ import (
 
 // DedupperMock is a mock implementation of service.Dedupper.
 //
-// 	func TestSomethingThatUsesDedupper(t *testing.T) {
+//	func TestSomethingThatUsesDedupper(t *testing.T) {
 //
-// 		// make and configure a mocked service.Dedupper
-// 		mockedDedupper := &DedupperMock{
-// 			AddFunc: func(key string) bool {
-// 				panic("mock out the Add method")
-// 			},
-// 			RemoveFunc: func(key string)  {
-// 				panic("mock out the Remove method")
-// 			},
-// 		}
+//		// make and configure a mocked service.Dedupper
+//		mockedDedupper := &DedupperMock{
+//			AddFunc: func(key string) bool {
+//				panic("mock out the Add method")
+//			},
+//			RemoveFunc: func(key string)  {
+//				panic("mock out the Remove method")
+//			},
+//		}
 //
-// 		// use mockedDedupper in code that requires service.Dedupper
-// 		// and then make assertions.
+//		// use mockedDedupper in code that requires service.Dedupper
+//		// and then make assertions.
 //
-// 	}
+//	}
 type DedupperMock struct {
 	// AddFunc mocks the Add method.
 	AddFunc func(key string) bool
@@ -67,7 +67,8 @@ func (mock *DedupperMock) Add(key string) bool {
 
 // AddCalls gets all the calls that were made to Add.
 // Check the length with:
-//     len(mockedDedupper.AddCalls())
+//
+//	len(mockedDedupper.AddCalls())
 func (mock *DedupperMock) AddCalls() []struct {
 	Key string
 } {
@@ -98,7 +99,8 @@ func (mock *DedupperMock) Remove(key string) {
 
 // RemoveCalls gets all the calls that were made to Remove.
 // Check the length with:
-//     len(mockedDedupper.RemoveCalls())
+//
+//	len(mockedDedupper.RemoveCalls())
 func (mock *DedupperMock) RemoveCalls() []struct {
 	Key string
 } {

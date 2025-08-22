@@ -17,6 +17,7 @@ import (
 	"github.com/go-pkgz/syncs"
 	"github.com/robfig/cron/v3"
 
+	"github.com/umputun/cronn/app/conditions"
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/resumer"
 )
@@ -28,6 +29,7 @@ import (
 //go:generate moq -out mocks/dedupper.go -pkg mocks -skip-ensure -fmt goimports . Dedupper
 //go:generate moq -out mocks/repeater.go -pkg mocks -skip-ensure -fmt goimports . Repeater
 //go:generate moq -out mocks/schedule.go -pkg mocks -skip-ensure -fmt goimports . Schedule
+//go:generate moq -out mocks/condition_checker.go -pkg mocks -skip-ensure -fmt goimports . ConditionChecker
 
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking)
 // to start the process
@@ -40,6 +42,7 @@ type Scheduler struct {
 	Jitter            time.Duration
 	Notifier          Notifier
 	DeDup             Dedupper
+	ConditionChecker  ConditionChecker
 	HostName          string
 	MaxLogLines       int
 	EnableLogPrefix   bool
@@ -103,6 +106,11 @@ type Schedule interface {
 	Next(time.Time) time.Time
 }
 
+// ConditionChecker defines interface for checking job execution conditions
+type ConditionChecker interface {
+	Check(conditions conditions.Config) (bool, string)
+}
+
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
 	if s.ResumeConcurrency <= 0 {
@@ -117,7 +125,7 @@ func (s *Scheduler) Do(ctx context.Context) {
 		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
 		go s.reload(ctx) // start background updater
 	}
-	if err := s.loadFromFileParser(); err != nil {
+	if err := s.loadFromFileParser(ctx); err != nil {
 		log.Printf("[WARN] can't load crontab file, %v", err)
 		return
 	}
@@ -128,7 +136,7 @@ func (s *Scheduler) Do(ctx context.Context) {
 }
 
 // schedule makes new cron job from crontab.JobSpec and adds to cron
-func (s *Scheduler) schedule(r crontab.JobSpec) error {
+func (s *Scheduler) schedule(ctx context.Context, r crontab.JobSpec) error {
 	jobDesc := s.jobDescription(r)
 	log.Printf("[INFO] new cron, %s", jobDesc)
 	sched, e := cron.ParseStandard(r.Spec)
@@ -136,14 +144,14 @@ func (s *Scheduler) schedule(r crontab.JobSpec) error {
 		return fmt.Errorf("can't parse %s: %w", r.Spec, e)
 	}
 
-	id := s.Schedule(sched, s.jobFunc(r, sched))
+	id := s.Schedule(sched, s.jobFunc(ctx, r, sched))
 	log.Printf("[INFO] first: %s, %s (%v)", sched.Next(time.Now()).Format(time.RFC3339), jobDesc, id)
 	return nil
 }
 
-func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
+func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
-	runJob := func(r crontab.JobSpec, rptr Repeater) error {
+	runJob := func(ctx context.Context, r crontab.JobSpec, rptr Repeater) error {
 		cmd, err := NewDayTemplate(time.Now()).Parse(r.Command)
 		if err != nil {
 			return err
@@ -161,15 +169,15 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 		}
 
-		err = s.executeCommand(cmd, s.Stdout, rptr)
-		ctxTimeout, cancel := context.WithTimeout(context.Background(), s.NotifyTimeout)
+		err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
+		ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 		defer cancel()
 		var errMsg string
 		if err != nil {
 			errMsg = err.Error()
 		}
 		if e := s.notify(ctxTimeout, r, errMsg); e != nil {
-			return fmt.Errorf("failed to notify: %w", err)
+			return fmt.Errorf("failed to notify: %w", e)
 		}
 		if err != nil {
 			return err
@@ -186,8 +194,17 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 	return func() {
 		jobDesc := s.jobDescription(r)
 		jobRepeater := s.getJobRepeater(r.Repeater)
+
+		// check conditions if configured
+		if r.Conditions != nil {
+			shouldExecute := s.waitForConditions(ctx, *r.Conditions, jobDesc)
+			if !shouldExecute {
+				return
+			}
+		}
+
 		log.Printf("[INFO] executing: %s", jobDesc)
-		if err := runJob(r, jobRepeater); err != nil {
+		if err := runJob(ctx, r, jobRepeater); err != nil {
 			log.Printf("[WARN] job failed: %s, %v", jobDesc, err)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)
@@ -196,12 +213,12 @@ func (s *Scheduler) jobFunc(r crontab.JobSpec, sched Schedule) cron.FuncJob {
 	}
 }
 
-func (s *Scheduler) executeCommand(command string, logWriter io.Writer, rptr Repeater) error {
+func (s *Scheduler) executeCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater) error {
 	if s.Jitter > 0 {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
 
-	err := rptr.Do(context.Background(), func() error {
+	err := rptr.Do(ctx, func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		serr := NewErrorWriter(s.MaxLogLines)
 		logWithErr := io.MultiWriter(logWriter, serr)
@@ -245,7 +262,7 @@ func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string
 	return nil
 }
 
-func (s *Scheduler) loadFromFileParser() error {
+func (s *Scheduler) loadFromFileParser(ctx context.Context) error {
 	for _, entry := range s.Entries() {
 		s.Remove(entry.ID)
 	}
@@ -256,8 +273,8 @@ func (s *Scheduler) loadFromFileParser() error {
 	}
 
 	for _, js := range jss {
-		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Name: js.Name, Repeater: js.Repeater}
-		if err = s.schedule(req); err != nil {
+		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Name: js.Name, Repeater: js.Repeater, Conditions: js.Conditions}
+		if err = s.schedule(ctx, req); err != nil {
 			return fmt.Errorf("can't add %s, %s: %w", js.Spec, js.Command, err)
 		}
 	}
@@ -280,7 +297,7 @@ func (s *Scheduler) reload(ctx context.Context) {
 				return
 			}
 			log.Printf("[DEBUG] jobs update detected, total %d jobs scheduled", len(jobs))
-			if err = s.loadFromFileParser(); err != nil {
+			if err = s.loadFromFileParser(ctx); err != nil {
 				log.Printf("[WARN] failed to update jobs, %v", err)
 			}
 		}
@@ -299,7 +316,7 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			cmd := cmd
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
-				if err := s.executeCommand(cmd.Command, s.Stdout, s.Repeater); err != nil {
+				if err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater); err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 					defer cancel()
@@ -353,4 +370,60 @@ func (s *Scheduler) getJobRepeater(jobConfig *crontab.RepeaterConfig) Repeater {
 	}
 
 	return repeater.New(backoff)
+}
+
+// waitForConditions checks if conditions are met and optionally waits for them
+// Returns true if the job should execute, false if it should be skipped
+func (s *Scheduler) waitForConditions(ctx context.Context, cond conditions.Config, jobDesc string) bool {
+	// if no condition checker configured, always execute
+	if s.ConditionChecker == nil {
+		return true
+	}
+
+	met, reason := s.ConditionChecker.Check(cond)
+	if met {
+		return true
+	}
+
+	// no postpone configured - skip job
+	if cond.MaxPostpone == nil {
+		log.Printf("[INFO] job skipped: %s, reason: %s", jobDesc, reason)
+		return false
+	}
+
+	// set up postponement
+	deadline := time.Now().Add(*cond.MaxPostpone)
+	log.Printf("[INFO] job postponed: %s, reason: %s, deadline: %s",
+		jobDesc, reason, deadline.Format(time.RFC3339))
+
+	checkInterval := 30 * time.Second
+	if cond.CheckInterval != nil {
+		checkInterval = *cond.CheckInterval
+	}
+
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+
+	deadlineTimer := time.NewTimer(*cond.MaxPostpone)
+	defer deadlineTimer.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			met, reason = s.ConditionChecker.Check(cond)
+			if met {
+				log.Printf("[INFO] conditions met, executing postponed job: %s", jobDesc)
+				return true
+			}
+			log.Printf("[DEBUG] conditions not met yet: %s, reason: %s", jobDesc, reason)
+
+		case <-deadlineTimer.C:
+			log.Printf("[WARN] max postpone reached, executing anyway: %s", jobDesc)
+			return true
+
+		case <-ctx.Done():
+			log.Printf("[INFO] postponed job canceled: %s", jobDesc)
+			return false
+		}
+	}
 }

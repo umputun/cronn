@@ -26,6 +26,9 @@ In addition `cronn` provides:
 - Reload crontab file on changes
 - Optional repeater for failed jobs
 - Optional de-duplication preventing the same jobs to run in parallel
+- Conditional execution based on system resources (CPU, memory, disk, load average)
+- Job postponement with configurable deadlines when conditions aren't met
+- Custom condition scripts for advanced scheduling logic
 - Rotated logs
 
 ## Basic usage
@@ -94,6 +97,16 @@ jobs:
     command: "sync files"
     name: "Business hours sync"
   
+  # Job with custom retry configuration (per-job repeater)
+  - spec: "0 */4 * * *"
+    command: "backup.sh"
+    name: "Database backup"
+    repeater:
+      attempts: 5        # Retry up to 5 times (overrides global setting)
+      duration: 30s      # Start with 30 second delay
+      factor: 2.0        # Double the delay each time
+      jitter: true       # Add randomization to delays
+  
   # @-descriptors work with spec field
   - spec: "@midnight"
     command: "cleanup temp"
@@ -105,6 +118,7 @@ The YAML format supports:
   - `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
 - Optional `name` field for job description
 - Optional `repeater` field for job-specific retry configuration
+- Optional `conditions` field for conditional execution based on system resources
 - JSON Schema validation for configuration correctness
 
 Note: `spec` and `sched` are mutually exclusive - use only one per job. Empty `sched` fields default to `*`.
@@ -126,6 +140,19 @@ jobs:
       duration: 2s      # Initial delay of 2 seconds
       factor: 2.5       # Multiply delay by 2.5 on each retry
       jitter: true      # Add random jitter to delays
+```
+
+Example with conditional execution:
+```yaml
+jobs:
+  - spec: "0 2 * * *"
+    command: "backup.sh"
+    name: "Nightly backup"
+    conditions:
+      cpu_below: 50           # Only run if CPU usage is below 50%
+      disk_free_above: 20     # And disk has at least 20% free space
+      max_postpone: 2h        # Wait up to 2 hours for conditions
+      check_interval: 5m      # Check every 5 minutes
 ```
 
 Both formats support the same template variables.
@@ -176,6 +203,60 @@ However, it will survive container's restart.
   - `duration`: Initial retry delay
   - `factor`: Backoff multiplication factor
   - `jitter`: Enable/disable jitter (true/false)
+
+### Conditional Execution
+
+Jobs can be configured to run only when certain system conditions are met. This is useful for resource-intensive tasks that should only run when the system is idle or has sufficient resources. Conditions are only supported in YAML configuration format.
+
+To control how many condition checks can run simultaneously, use the `--max-concurrent-checks` flag (default: 10) or set the `CRONN_MAX_CONCURRENT_CHECKS` environment variable. This prevents resource exhaustion when multiple jobs with conditions are scheduled.
+
+Available conditions:
+- `cpu_below`: Maximum CPU usage percentage (0-100)
+- `memory_below`: Maximum memory usage percentage (0-100)
+- `load_avg_below`: Maximum system load average
+- `disk_free_above`: Minimum free disk space percentage (0-100)
+- `disk_free_path`: Path to check for disk space (defaults to "/")
+- `custom`: Path to custom check script (exit 0 to allow, non-zero to block)
+- `custom_timeout`: Timeout for custom script execution (defaults to 30s)
+
+Postponement options:
+- `max_postpone`: Maximum duration to wait for conditions (e.g., "2h", "30m")
+- `check_interval`: How often to check conditions (defaults to 30s)
+
+When conditions are not met:
+- Without `max_postpone`: Job is skipped
+- With `max_postpone`: Job waits up to the specified duration, checking periodically
+- If deadline is reached: Job executes regardless of conditions
+
+Example configurations:
+```yaml
+jobs:
+  # Skip if CPU is busy
+  - spec: "0 3 * * *"
+    command: "backup.sh"
+    conditions:
+      cpu_below: 30  # Only run if CPU < 30%
+
+  # Wait for idle system
+  - spec: "0 2 * * *"
+    command: "maintenance.sh"
+    conditions:
+      cpu_below: 40
+      memory_below: 50
+      max_postpone: 1h      # Wait up to 1 hour
+      check_interval: 2m    # Check every 2 minutes
+
+  # Custom check script
+  - spec: "*/15 * * * *"
+    command: "sync.sh"
+    conditions:
+      custom: "/usr/local/bin/check-network.sh"
+      custom_timeout: "60s"  # Give custom script more time (default: 30s)
+      disk_free_above: 10
+      disk_free_path: "/backup"
+```
+
+All conditions must be met for a job to execute (AND logic). System metrics are collected using instant measurements, ensuring minimal performance impact.
 
 ### Deduplication
 

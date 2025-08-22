@@ -1,0 +1,131 @@
+{{define "jobs-cards"}}
+{{range .Jobs}}
+<div class="job-card" 
+     data-job-id="{{.ID}}"
+     data-job-status="{{.LastStatus}}"
+     data-next-run="{{.NextRun.Unix}}">
+    
+    <!-- Status indicator -->
+    <div class="job-status status-{{.LastStatus}}">
+        {{if .IsRunning}}
+        <div class="status-indicator running">
+            <div class="pulse"></div>
+        </div>
+        {{else if eq .LastStatus "success"}}
+        <div class="status-indicator success">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </div>
+        {{else if eq .LastStatus "failed"}}
+        <div class="status-indicator failed">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </div>
+        {{else}}
+        <div class="status-indicator idle"></div>
+        {{end}}
+    </div>
+    
+    <!-- Schedule and command -->
+    <div class="job-header">
+        <div class="job-schedule" title="{{cronDescription .Schedule}}">
+            <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <code>{{.Schedule}}</code>
+        </div>
+        <div class="job-description">{{cronDescription .Schedule}}</div>
+    </div>
+    
+    <div class="job-command" title="{{.Command}}">
+        <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <code>{{truncate .Command 60}}</code>
+    </div>
+    
+    <!-- Timing info -->
+    <div class="job-timing">
+        <div class="timing-item">
+            <span class="timing-label">Next run:</span>
+            <span class="timing-value">{{timeUntil .NextRun}}</span>
+        </div>
+        <div class="timing-item">
+            <span class="timing-label">Last run:</span>
+            <span class="timing-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
+        </div>
+    </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "jobs-list"}}
+<table class="jobs-table">
+    <thead>
+        <tr>
+            <th class="th-status">Status</th>
+            <th class="th-schedule">Schedule</th>
+            <th class="th-command">Command</th>
+            <th class="th-next">Next Run</th>
+            <th class="th-last">Last Run</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Jobs}}
+        <tr class="job-row" 
+            data-job-id="{{.ID}}"
+            data-job-status="{{.LastStatus}}"
+            data-next-run="{{.NextRun.Unix}}">
+            
+            <td class="td-status">
+                {{if .IsRunning}}
+                <div class="status-badge running">
+                    <div class="pulse-small"></div>
+                    Running
+                </div>
+                {{else if eq .LastStatus "success"}}
+                <div class="status-badge success">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Success
+                </div>
+                {{else if eq .LastStatus "failed"}}
+                <div class="status-badge failed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    Failed
+                </div>
+                {{else}}
+                <div class="status-badge idle">Idle</div>
+                {{end}}
+            </td>
+            
+            <td class="td-schedule">
+                <div class="schedule-cell">
+                    <code class="schedule-code">{{.Schedule}}</code>
+                    <span class="schedule-desc">{{cronDescription .Schedule}}</span>
+                </div>
+            </td>
+            
+            <td class="td-command">
+                <code class="command-text" title="{{.Command}}">{{truncate .Command 80}}</code>
+            </td>
+            
+            <td class="td-next">
+                <span class="time-value">{{timeUntil .NextRun}}</span>
+            </td>
+            
+            <td class="td-last">
+                <span class="time-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{end}}

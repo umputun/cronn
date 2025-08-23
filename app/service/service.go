@@ -30,6 +30,7 @@ import (
 //go:generate moq -out mocks/repeater.go -pkg mocks -skip-ensure -fmt goimports . Repeater
 //go:generate moq -out mocks/schedule.go -pkg mocks -skip-ensure -fmt goimports . Schedule
 //go:generate moq -out mocks/condition_checker.go -pkg mocks -skip-ensure -fmt goimports . ConditionChecker
+//go:generate moq -out mocks/job_event_handler.go -pkg mocks -skip-ensure -fmt goimports . JobEventHandler
 
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking)
 // to start the process
@@ -171,15 +172,15 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 		}
 		defer s.DeDup.Remove(dedupKey)
 
-		// notify job start
-		startTime := time.Now()
-		if s.JobEventHandler != nil {
-			s.JobEventHandler.OnJobStart(cmd, r.Spec, startTime)
-		}
-
 		rfile, rerr := s.Resumer.OnStart(cmd) // register job in resumer prior to execution
 		if rerr != nil {
 			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
+		}
+
+		// notify job start after resumer registration
+		startTime := time.Now()
+		if s.JobEventHandler != nil {
+			s.JobEventHandler.OnJobStart(cmd, r.Spec, startTime)
 		}
 
 		err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
@@ -189,7 +190,11 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 		if s.JobEventHandler != nil {
 			exitCode := 0
 			if err != nil {
-				exitCode = 1 // generic error code
+				if exitError, ok := err.(*exec.ExitError); ok {
+					exitCode = exitError.ExitCode()
+				} else {
+					exitCode = 1 // generic error for non-exec errors
+				}
 			}
 			s.JobEventHandler.OnJobComplete(cmd, r.Spec, startTime, endTime, exitCode, err)
 		}

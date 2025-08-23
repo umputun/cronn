@@ -114,7 +114,7 @@ func New(cfg Config) (*Server, error) {
 		crontabFile:    cfg.CrontabFile,
 		jobs:           make(map[string]*JobInfo),
 		parser:         &parser,
-		eventChan:      make(chan JobEvent, 100),
+		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
 	}, nil
 }
@@ -383,7 +383,10 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	job.UpdatedAt = time.Now()
 
 	// save execution to database
-	_, err := s.db.Exec(`
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO executions (job_id, started_at, finished_at, status, exit_code)
 		VALUES (?, ?, ?, ?, ?)`,
 		id, event.StartedAt.Unix(), event.FinishedAt.Unix(),

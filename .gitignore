@@ -31,3 +31,6 @@ test_schedule.go
 
 # Log files
 *.log
+
+# Playwright screenshots
+.playwright-mcp/

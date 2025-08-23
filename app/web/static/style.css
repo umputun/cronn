@@ -348,12 +348,16 @@ code {
 
 .job-command {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--spacing-xs);
     background: var(--color-bg);
     padding: var(--spacing-sm);
     border-radius: 6px;
     margin: var(--spacing-sm) 0;
+}
+
+.job-command .icon {
+    margin-top: 0.25em;
 }
 
 .job-command code {
@@ -513,6 +517,7 @@ code {
     vertical-align: middle;
     flex-shrink: 0;
 }
+
 
 /* Footer */
 .footer {

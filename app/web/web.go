@@ -424,7 +424,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		SortMode:    sortMode,
 	}
 
-	s.render(w, http.StatusOK, "base.html", "base", data)
+	s.render(w, "base.html", "base", data)
 }
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
@@ -457,7 +457,7 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 		tmplName = "jobs-list"
 	}
 
-	s.render(w, http.StatusOK, "partials/jobs.html", tmplName, data)
+	s.render(w, "partials/jobs.html", tmplName, data)
 }
 
 // handleViewModeToggle toggles between card and list view
@@ -645,11 +645,11 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Retarget", "#jobs-container")
 	w.Header().Set("HX-Reswap", "innerHTML")
 
-	s.render(w, http.StatusOK, "partials/jobs.html", tmplName, data)
+	s.render(w, "partials/jobs.html", tmplName, data)
 }
 
 // render renders a template
-func (s *Server) render(w http.ResponseWriter, status int, page, tmplName string, data any) {
+func (s *Server) render(w http.ResponseWriter, page, tmplName string, data any) {
 	tmpl, ok := s.templates[page]
 	if !ok {
 		log.Printf("[ERROR] template %s not found", page)
@@ -665,7 +665,7 @@ func (s *Server) render(w http.ResponseWriter, status int, page, tmplName string
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusOK)
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Printf("[ERROR] failed to write response: %v", err)
 	}

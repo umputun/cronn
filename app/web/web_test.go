@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -220,7 +221,12 @@ func TestServer_OnJobStart(t *testing.T) {
 	server.OnJobStart("echo test", "* * * * *", startTime)
 
 	// wait for event to be processed
-	time.Sleep(50 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		_, exists := server.jobs[HashCommand("echo test")]
+		return exists
+	}, time.Second, 10*time.Millisecond)
 
 	// verify job in memory (not in database since persistJobs runs periodically)
 	server.jobsMu.RLock()
@@ -260,11 +266,21 @@ func TestServer_OnJobComplete(t *testing.T) {
 
 	// first start the job
 	server.OnJobStart("echo test", "* * * * *", startTime)
-	time.Sleep(50 * time.Millisecond) // wait for event processing
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		job, exists := server.jobs[HashCommand("echo test")]
+		return exists && job.LastStatus == "running"
+	}, time.Second, 10*time.Millisecond)
 
 	// then complete it successfully
 	server.OnJobComplete("echo test", "* * * * *", startTime, endTime, 0, nil)
-	time.Sleep(50 * time.Millisecond) // wait for event processing
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		job, exists := server.jobs[HashCommand("echo test")]
+		return exists && job.LastStatus == "success"
+	}, time.Second, 10*time.Millisecond)
 
 	// verify job status was updated in memory
 	server.jobsMu.RLock()
@@ -277,9 +293,20 @@ func TestServer_OnJobComplete(t *testing.T) {
 
 	// test with error
 	server.OnJobStart("echo error", "* * * * *", startTime)
-	time.Sleep(50 * time.Millisecond) // wait for event processing
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		job, exists := server.jobs[HashCommand("echo error")]
+		return exists && job.LastStatus == "running"
+	}, time.Second, 10*time.Millisecond)
+
 	server.OnJobComplete("echo error", "* * * * *", startTime, endTime, 1, fmt.Errorf("test error"))
-	time.Sleep(50 * time.Millisecond) // wait for event processing
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		job, exists := server.jobs[HashCommand("echo error")]
+		return exists && job.LastStatus == "failed"
+	}, time.Second, 10*time.Millisecond)
 
 	server.jobsMu.RLock()
 	job2, exists2 := server.jobs[HashCommand("echo error")]
@@ -373,7 +400,12 @@ func TestServer_handleDashboard(t *testing.T) {
 
 	// add test job
 	server.OnJobStart("echo test", "* * * * *", time.Now())
-	time.Sleep(50 * time.Millisecond) // wait for event processing
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		_, exists := server.jobs[HashCommand("echo test")]
+		return exists
+	}, time.Second, 10*time.Millisecond)
 
 	req := httptest.NewRequest("GET", "/", http.NoBody)
 	w := httptest.NewRecorder()
@@ -412,11 +444,15 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	// add test jobs
 	startTime := time.Now()
 	server.OnJobStart("echo test1", "* * * * *", startTime)
-	time.Sleep(50 * time.Millisecond) // wait for event processing
 	server.OnJobComplete("echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	time.Sleep(50 * time.Millisecond) // wait for event processing
 	server.OnJobStart("echo test2", "@daily", startTime)
-	time.Sleep(50 * time.Millisecond) // wait for event processing
+
+	// wait for all events to be processed
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		return len(server.jobs) == 2
+	}, time.Second, 10*time.Millisecond)
 
 	// test card view
 	req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
@@ -448,30 +484,6 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	assert.Contains(t, body, "jobs-table")
 	assert.Contains(t, body, "echo test1")
 	assert.Contains(t, body, "echo test2")
-}
-
-func TestServer_handleAPIStats(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{
-		Address:        ":8080",
-		CrontabFile:    "crontab",
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.db.Close()
-
-	// add test jobs
-	startTime := time.Now()
-	server.OnJobStart("echo test1", "* * * * *", startTime)
-	server.OnJobComplete("echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo test2", "@daily", startTime)
-	server.OnJobStart("echo test3", "0 * * * *", startTime)
-	server.OnJobComplete("echo test3", "0 * * * *", startTime, startTime.Add(time.Second), 1, fmt.Errorf("failed"))
 }
 
 func TestServer_handleToggleTheme(t *testing.T) {
@@ -693,7 +705,7 @@ func TestServer_Templates(t *testing.T) {
 	})
 }
 
-func TestServer_getScheduleDescription(t *testing.T) {
+func TestServer_handleSortToggle(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -708,26 +720,190 @@ func TestServer_getScheduleDescription(t *testing.T) {
 	require.NoError(t, err)
 	defer server.db.Close()
 
+	// add test jobs with different schedules
+	startTime := time.Now()
+	server.OnJobStart("echo test1", "* * * * *", startTime)
+	server.OnJobComplete("echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
+	server.OnJobStart("echo test2", "0 * * * *", startTime.Add(-time.Hour))
+	server.OnJobComplete("echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-time.Hour).Add(time.Second), 0, nil)
+
+	// start event processor to handle the job events
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go server.processEvents(ctx)
+
+	// wait for events to be processed
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		return len(server.jobs) == 2
+	}, time.Second, 10*time.Millisecond)
+
 	tests := []struct {
-		name     string
-		schedule string
-		expected string
+		name             string
+		currentCookie    string
+		expectedNextMode string
+		expectedLabel    string
 	}{
-		{"every minute", "* * * * *", "Every minute"},
-		{"every 5 minutes", "*/5 * * * *", "Every 5 minutes"},
-		{"every hour", "0 * * * *", "Every hour at minute 0"},
-		{"daily", "@daily", "@daily"},
-		{"midnight", "@midnight", "@midnight"},
-		{"hourly", "@hourly", "@hourly"},
-		{"custom", "0 2 * * 1", "Custom: 0 2 * * 1"},
+		{name: "default to lastrun", currentCookie: "default", expectedNextMode: "lastrun", expectedLabel: "Last Run"},
+		{name: "lastrun to nextrun", currentCookie: "lastrun", expectedNextMode: "nextrun", expectedLabel: "Next Run"},
+		{name: "nextrun to default", currentCookie: "nextrun", expectedNextMode: "default", expectedLabel: "Original Order"},
+		{name: "no cookie defaults to lastrun", currentCookie: "", expectedNextMode: "lastrun", expectedLabel: "Last Run"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// getScheduleDescription is not exported, test via template rendering
-			// or integration test
+			req := httptest.NewRequest("POST", "/api/sort-toggle", http.NoBody)
+			if tt.currentCookie != "" {
+				req.AddCookie(&http.Cookie{Name: "sort-mode", Value: tt.currentCookie})
+			}
+			rec := httptest.NewRecorder()
+
+			server.handleSortToggle(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			// check cookie is set correctly
+			cookies := rec.Result().Cookies()
+			require.Len(t, cookies, 1)
+			assert.Equal(t, "sort-mode", cookies[0].Name)
+			assert.Equal(t, tt.expectedNextMode, cookies[0].Value)
+			assert.Equal(t, "/", cookies[0].Path)
+			assert.True(t, cookies[0].HttpOnly)
+
+			// check response contains job data and OOB update
+			body := rec.Body.String()
+			assert.Contains(t, body, "echo test1")
+			assert.Contains(t, body, "echo test2")
+			assert.Contains(t, body, `hx-swap-oob="innerHTML" id="sort-label"`)
+			assert.Contains(t, body, tt.expectedLabel)
 		})
 	}
+}
+
+func TestTemplateHelpers(t *testing.T) {
+	t.Run("humanTime", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    time.Time
+			expected string
+		}{
+			{name: "zero time", input: time.Time{}, expected: "Never"},
+			{name: "valid time", input: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC), expected: "Jan 15, 14:30:45"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := humanTime(tt.input)
+				assert.Equal(t, tt.expected, result)
+			})
+		}
+	})
+
+	t.Run("humanDuration", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    time.Duration
+			expected string
+		}{
+			{name: "seconds", input: 30 * time.Second, expected: "30s"},
+			{name: "minutes", input: 5 * time.Minute, expected: "5m"},
+			{name: "hours", input: 3 * time.Hour, expected: "3h"},
+			{name: "days", input: 48 * time.Hour, expected: "2d"},
+			{name: "less than minute", input: 45 * time.Second, expected: "45s"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := humanDuration(tt.input)
+				assert.Equal(t, tt.expected, result)
+			})
+		}
+	})
+
+	t.Run("timeUntil", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    time.Time
+			expected string
+		}{
+			{name: "zero time", input: time.Time{}, expected: "Never"},
+			{name: "past time", input: time.Now().Add(-time.Hour), expected: "Overdue"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := timeUntil(tt.input)
+				assert.Equal(t, tt.expected, result)
+			})
+		}
+
+		// test future time dynamically to avoid timing issues
+		t.Run("future time", func(t *testing.T) {
+			futureTime := time.Now().Add(5 * time.Minute)
+			result := timeUntil(futureTime)
+			// should be approximately 5m, but allow for slight timing differences
+			assert.Contains(t, []string{"5m", "4m"}, result)
+		})
+	})
+
+	t.Run("truncate", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    string
+			length   int
+			expected string
+		}{
+			{name: "short string", input: "hello", length: 10, expected: "hello"},
+			{name: "exact length", input: "hello", length: 5, expected: "hello"},
+			{name: "long string", input: "hello world", length: 5, expected: "hello..."},
+			{name: "empty string", input: "", length: 5, expected: ""},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := truncate(tt.input, tt.length)
+				assert.Equal(t, tt.expected, result)
+			})
+		}
+	})
+}
+
+func TestServer_render_ErrorHandling(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		Address:        ":8080",
+		CrontabFile:    "crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.db.Close()
+
+	t.Run("template not found", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+
+		server.render(rec, "nonexistent.html", "test", nil)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Template not found")
+	})
+
+	t.Run("template execution error", func(t *testing.T) {
+		// create a template with invalid data reference
+		server.templates["error.html"] = template.Must(template.New("error").Parse(`{{.NonExistentField}}`))
+
+		rec := httptest.NewRecorder()
+
+		server.render(rec, "error.html", "error", struct{}{})
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Template error")
+	})
 }
 
 func TestServer_Run(t *testing.T) {

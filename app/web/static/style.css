@@ -107,6 +107,7 @@
 /* Base styles */
 html {
     font-size: 16px;
+    height: 100%;
 }
 
 body {
@@ -119,6 +120,8 @@ body {
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    display: flex;
+    flex-direction: column;
 }
 
 code {
@@ -130,7 +133,7 @@ code {
 .app {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    flex: 1;
 }
 
 /* Header */
@@ -744,20 +747,118 @@ code {
 
 /* Responsive design */
 @media (max-width: 768px) {
+    /* Header mobile fixes */
     .header-content {
         padding: var(--spacing-sm) var(--spacing-md);
+        flex-direction: column;
+        gap: var(--spacing-sm);
+        align-items: stretch;
     }
     
+    .logo {
+        justify-content: center;
+    }
+    
+    .logo-text {
+        font-size: var(--text-lg);
+    }
+    
+    .header-controls {
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: var(--spacing-sm);
+    }
+    
+    .sort-button {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+        padding-top: 12px;
+        padding-bottom: 12px;
+    }
+    
+    .control-btn {
+        min-width: 44px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+    }
+    
+    /* Main content */
     .main-content {
         padding: var(--spacing-md);
     }
     
+    /* Stats grid mobile - ultra compact single row */
+    .stats-bar {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+        margin-bottom: 0px;
+    }
+    
+    .stat {
+        padding: 12px 8px;
+        min-height: 60px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .stat-value {
+        font-size: 1.125rem;
+        line-height: 1;
+        font-weight: 600;
+    }
+    
+    .stat-label {
+        font-size: 0.6rem;
+        margin-top: 2px;
+        text-align: center;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+    
+    /* Cards view mobile */
     .jobs-container.cards {
         grid-template-columns: 1fr;
+        gap: var(--spacing-sm);
+        padding: 0;
+    }
+    
+    .job-card {
+        margin: 0;
+        max-width: none;
+    }
+    
+    .job-timing {
+        flex-direction: column;
+        gap: var(--spacing-sm);
+    }
+    
+    .timing-item {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    /* List view mobile */
+    .jobs-container.list {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
     
     .jobs-table {
         font-size: 0.875rem;
+        min-width: 600px;
+        white-space: nowrap;
+    }
+    
+    .jobs-table th,
+    .jobs-table td {
+        padding: var(--spacing-2) var(--spacing-sm);
     }
     
     .th-last, .td-last {
@@ -765,9 +866,73 @@ code {
     }
     
     .command-text {
-        max-width: 200px;
+        max-width: 150px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+    
+    /* Better mobile typography */
+    .job-schedule code,
+    .job-command code {
+        font-size: var(--text-sm);
+        word-break: break-all;
+        white-space: pre-wrap;
+    }
+    
+    /* Status badges mobile */
+    .status-badge {
+        font-size: var(--text-xs);
+        padding: 4px 8px;
+    }
+}
+
+/* Extra small mobile devices */
+@media (max-width: 480px) {
+    .header-content {
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+    
+    .main-content {
+        padding: var(--spacing-sm);
+    }
+    
+    .stats-bar {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+    }
+    
+    .stat {
+        padding: 6px 4px;
+        min-height: 40px;
+    }
+    
+    .stat-value {
+        font-size: 1rem;
+        line-height: 1;
+    }
+    
+    .stat-label {
+        font-size: 0.5rem;
+    }
+    
+    .logo-text {
+        font-size: var(--text-base);
+    }
+    
+    .sort-button {
+        min-width: 100px;
+    }
+    
+    .sort-label {
+        font-size: var(--text-xs);
+    }
+    
+    .jobs-table {
+        min-width: 500px;
+    }
+    
+    .command-text {
+        max-width: 120px;
     }
 }

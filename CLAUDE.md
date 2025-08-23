@@ -52,3 +52,25 @@ Jobs table stores:
 - next_run, last_run (Unix timestamps)
 - last_status (idle/running/success/failed)
 - enabled, created_at, updated_at
+
+## Web UI Testing Best Practices
+- **Event synchronization**: Use `require.Eventually()` instead of `time.Sleep()` for reliable event processing tests
+- **Web test lifecycle**: Tests must start `processEvents()` goroutine with context to handle job events
+- **Template error testing**: Create invalid templates manually to test error paths in render methods
+- **Test coverage improvement**: Removing useless tests and adding behavior-focused tests improved coverage from 75.2% to 87.8%
+
+## HTMX Integration Patterns
+- **Out-of-band updates**: Uses `hx-swap-oob="innerHTML"` for updating multiple elements in single response
+- **Auto-refresh polling**: `hx-trigger="load, every 5s"` provides JavaScript-free real-time updates
+- **Response coordination**: `HX-Refresh: true` header triggers full page refresh when state changes require it
+- **Event coordination**: Custom events like `refresh-jobs` coordinate updates between components
+
+## Web UI Architecture Patterns
+- **Cookie-based preferences**: Theme, view-mode, sort-mode stored in HTTPOnly cookies with 1-year expiration
+- **Template helper functions**: Pure functions (`humanTime`, `humanDuration`, `timeUntil`, `truncate`) with no dependencies enable easy testing
+- **Status parameter anti-pattern**: Method parameters that always receive same value indicate design smell (removed from render method)
+
+## CSS Architecture
+- **CSS Custom Properties theming**: Comprehensive light/dark/auto theme system using CSS variables
+- **Mobile-first responsive**: `grid-template-columns: repeat(auto-fill, minmax(380px, 1fr))` for adaptive card layouts
+- **Component-based design**: Reusable CSS patterns for cards, lists, buttons, and status indicators

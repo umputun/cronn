@@ -37,6 +37,7 @@ In addition `cronn` provides:
 - `cronn -c "@every 5s ls -la"` - runs `ls -la` every 5 seconds
 - `cronn -f crontab` - runs jobs from the `crontab` file (traditional crontab format)
 - `cronn -f config.yml` - runs jobs from the `config.yml` file (YAML format, auto-detected by extension)
+- `cronn -f crontab --web.enabled --web.address=:8080` - runs jobs with web dashboard available at http://localhost:8080
 
 Scheduling can be defined as:
 
@@ -156,7 +157,56 @@ jobs:
 ```
 
 Both formats support the same template variables.
- 
+
+## Web Dashboard
+
+Cronn includes a modern web dashboard for monitoring and managing cron jobs. The web UI provides:
+
+### Features
+- **Real-time job monitoring** with live updates every 30 seconds
+- **Multiple view modes**: Card view and compact list view
+- **Light and dark themes** with automatic system preference detection
+- **Job statistics** showing total jobs, running jobs, and next execution time
+- **Detailed job information** including schedules, commands, execution history
+- **Status indicators** with color-coded job states (idle, running, success, failed)
+- **Responsive design** that works on desktop and mobile devices
+- **Modern UI** with Inter font, consistent spacing, and smooth animations
+
+### Usage
+To enable the web dashboard:
+```bash
+# Basic web UI on default port 8080
+cronn -f crontab --web.enabled
+
+# Custom port and address
+cronn -f crontab --web.enabled --web.address=:3000
+
+# Bind to all interfaces
+cronn -f crontab --web.enabled --web.address=0.0.0.0:8080
+
+# Custom update interval (default: 30s)
+cronn -f crontab --web.enabled --web.update-interval=10s
+```
+
+The dashboard is accessible via web browser at the configured address. Job data updates automatically using HTMX for smooth, JavaScript-free interactions.
+
+<details>
+<summary>Screenshots</summary>
+
+### Light Theme - Card View
+![Dashboard Light Cards](docs/screenshots/dashboard-light-cards.png)
+
+### Light Theme - List View  
+![Dashboard Light List](docs/screenshots/dashboard-light-list.png)
+
+### Dark Theme - Card View
+![Dashboard Dark Cards](docs/screenshots/dashboard-dark-cards.png)
+
+### Dark Theme - List View
+![Dashboard Dark List](docs/screenshots/dashboard-dark-list.png)
+
+</details>
+
 ## Optional modes
 
 By default, all the optional modes are disabled. This includes:
@@ -321,6 +371,11 @@ When enabled, notifications are sent to the specified destinations on job failur
   -j, --jitter                    enable jitter [$CRONN_JITTER]
       --jitter-duration=          jitter duration (default: 10s) [$CRONN_JITTER_DURATION]
       --dedup                     prevent duplicated jobs [$CRONN_DEDUP]
+
+web:
+      --web.enabled               enable web dashboard [$CRONN_WEB_ENABLED]
+      --web.address=              web server address (default: :8080) [$CRONN_WEB_ADDRESS]
+      --web.update-interval=      dashboard update interval (default: 30s) [$CRONN_WEB_UPDATE_INTERVAL]
 
 repeater:
       --repeater.attempts=        how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]

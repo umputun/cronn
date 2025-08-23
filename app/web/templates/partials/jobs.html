@@ -70,10 +70,10 @@
     <thead>
         <tr>
             <th class="th-status">Status</th>
-            <th class="th-schedule">Schedule</th>
+            <th class="th-schedule cron">Schedule</th>
             <th class="th-command">Command</th>
-            <th class="th-next">Next Run</th>
-            <th class="th-last">Last Run</th>
+            <th class="th-next numeric">Next Run</th>
+            <th class="th-last numeric">Last Run</th>
         </tr>
     </thead>
     <tbody>
@@ -86,25 +86,24 @@
             <td class="td-status">
                 {{if .IsRunning}}
                 <div class="status-badge running">
-                    <div class="pulse-small"></div>
+                    <div class="status-dot"></div>
                     Running
                 </div>
                 {{else if eq .LastStatus "success"}}
                 <div class="status-badge success">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
+                    <div class="status-dot"></div>
                     Success
                 </div>
                 {{else if eq .LastStatus "failed"}}
                 <div class="status-badge failed">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    </svg>
+                    <div class="status-dot"></div>
                     Failed
                 </div>
                 {{else}}
-                <div class="status-badge idle">Idle</div>
+                <div class="status-badge idle">
+                    <div class="status-dot"></div>
+                    Idle
+                </div>
                 {{end}}
             </td>
             
@@ -112,17 +111,17 @@
                 <code class="schedule-code">{{.Schedule}}</code>
             </td>
             
-            <td class="td-command">
+            <td class="td-command command">
                 <code class="command-text" title="{{.Command}}">{{truncate .Command 80}}</code>
             </td>
             
-            <td class="td-next">
+            <td class="td-next numeric">
                 <span class="time-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
                     {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
                 </span>
             </td>
             
-            <td class="td-last">
+            <td class="td-last numeric">
                 <span class="time-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
             </td>
         </tr>

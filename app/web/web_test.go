@@ -98,10 +98,15 @@ func TestServer_sortJobs(t *testing.T) {
 		server.sortJobs(sorted, "lastrun")
 
 		// should be sorted by LastRun, most recent first
-		assert.Equal(t, "2", sorted[0].ID) // 1 hour ago
-		assert.Equal(t, "1", sorted[1].ID) // 2 hours ago
-		assert.Equal(t, "3", sorted[2].ID) // 3 hours ago
-		assert.Equal(t, "4", sorted[3].ID) // never run (zero time)
+		assert.Equal(t, "2", sorted[0].ID, "First should be ID 2 (1 hour ago - most recent)")
+		assert.Equal(t, "1", sorted[1].ID, "Second should be ID 1 (2 hours ago)")
+		assert.Equal(t, "3", sorted[2].ID, "Third should be ID 3 (3 hours ago)")
+		assert.Equal(t, "4", sorted[3].ID, "Fourth should be ID 4 (never run)")
+
+		// verify actual time ordering
+		assert.True(t, sorted[0].LastRun.After(sorted[1].LastRun), "First job should have later LastRun than second")
+		assert.True(t, sorted[1].LastRun.After(sorted[2].LastRun), "Second job should have later LastRun than third")
+		assert.True(t, sorted[3].LastRun.IsZero(), "Last job should have zero LastRun")
 	})
 
 	t.Run("sort by next run", func(t *testing.T) {

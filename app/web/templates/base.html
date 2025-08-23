@@ -32,7 +32,7 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="sort-icon">
                             <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                         </svg>
-                        <span class="sort-label">
+                        <span class="sort-label" id="sort-label">
                             {{if eq .SortMode "default"}}Original Order{{else if eq .SortMode "lastrun"}}Last Run{{else}}Next Run{{end}}
                         </span>
                     </button>

@@ -403,6 +403,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.jobsMu.RLock()
 	jobs := make([]*JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
+		// recalculate next run times before sorting
+		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
+			job.NextRun = schedule.Next(time.Now())
+		}
 		jobs = append(jobs, job)
 	}
 	s.jobsMu.RUnlock()
@@ -529,9 +533,61 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// trigger full refresh to update both sort button and jobs
-	w.Header().Set("HX-Refresh", "true")
-	w.WriteHeader(http.StatusOK)
+	// get sorted jobs for the new mode
+	viewMode := getViewMode(r)
+	s.jobsMu.RLock()
+	jobs := make([]*JobInfo, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		// recalculate next run times before sorting
+		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
+			job.NextRun = schedule.Next(time.Now())
+		}
+		jobs = append(jobs, job)
+	}
+	s.jobsMu.RUnlock()
+
+	// sort jobs based on new mode
+	s.sortJobs(jobs, nextMode)
+
+	// prepare template data
+	data := TemplateData{
+		Jobs:     jobs,
+		ViewMode: viewMode,
+		SortMode: nextMode,
+	}
+
+	// determine template name
+	tmplName := "jobs-cards"
+	if viewMode == "list" {
+		tmplName = "jobs-list"
+	}
+
+	// get the template and render jobs HTML
+	tmpl, ok := s.templates["partials/jobs.html"]
+	if !ok {
+		http.Error(w, "Template not found", http.StatusInternalServerError)
+		return
+	}
+
+	var jobsHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&jobsHTML, tmplName, data); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+		return
+	}
+
+	// get sort button label
+	sortLabel := "Original Order"
+	switch nextMode {
+	case "lastrun":
+		sortLabel = "Last Run"
+	case "nextrun":
+		sortLabel = "Next Run"
+	}
+
+	// return jobs with OOB update for sort button
+	fmt.Fprintf(w, `%s
+<span class="sort-label" hx-swap-oob="innerHTML" id="sort-label">%s</span>`,
+		jobsHTML.String(), sortLabel)
 }
 
 // handleSortModeChange changes the sort mode

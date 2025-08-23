@@ -52,7 +52,9 @@
     <div class="job-timing">
         <div class="timing-item">
             <span class="timing-label">Next run:</span>
-            <span class="timing-value">{{timeUntil .NextRun}}</span>
+            <span class="timing-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
+                {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
+            </span>
         </div>
         <div class="timing-item">
             <span class="timing-label">Last run:</span>
@@ -118,7 +120,9 @@
             </td>
             
             <td class="td-next">
-                <span class="time-value">{{timeUntil .NextRun}}</span>
+                <span class="time-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
+                    {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
+                </span>
             </td>
             
             <td class="td-last">

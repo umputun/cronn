@@ -74,3 +74,20 @@ Jobs table stores:
 - **CSS Custom Properties theming**: Comprehensive light/dark/auto theme system using CSS variables
 - **Mobile-first responsive**: `grid-template-columns: repeat(auto-fill, minmax(380px, 1fr))` for adaptive card layouts
 - **Component-based design**: Reusable CSS patterns for cards, lists, buttons, and status indicators
+
+## SQLite Persistence Architecture
+- **Critical startup sequence**: Server must call `loadJobsFromDB()` BEFORE `loadJobsFromCrontab()` to preserve execution history
+- **Smart state merging**: `loadJobsFromCrontab()` preserves database-loaded execution state (LastRun, LastStatus) when updating job definitions  
+- **Event persistence timing**: Job events are persisted to database only when `persistJobs()` is called during crontab sync, not immediately after events
+- **Database loading patterns**: `loadJobsFromDB()` handles SQL NULL timestamps gracefully and recalculates NextRun for jobs missing schedule calculations
+
+## Testing Architecture Critical Patterns
+- **Persistence testing anti-pattern**: Write-only tests that verify database writes but never test reading data back miss critical failures
+- **Round-trip verification requirement**: Persistence systems require tests that simulate complete restart cycles (write -> restart -> read -> verify)
+- **Async event testing**: Tests processing job events must start `processEvents()` goroutine AND call `persistJobs()` manually since persistence is decoupled from event handling
+- **Test failure design**: Tests must use `require.NoError()` for all operations - never ignore errors with `_` in test code
+
+## Database Architecture Patterns
+- **Event-driven persistence**: Job execution history is updated in memory via `JobEventHandler` interface but persisted separately during sync cycles
+- **State reconciliation**: Database state is loaded first, then merged with crontab definitions to preserve execution history while respecting configuration changes
+- **Timestamp handling**: Database stores Unix timestamps, with `sql.NullInt64` for optional last_run values and zero-value handling in business logic

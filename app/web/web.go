@@ -121,6 +121,9 @@ func New(cfg Config) (*Server, error) {
 
 // Run starts the web server
 func (s *Server) Run(ctx context.Context, address string) error {
+	// load existing job history from database
+	s.loadJobsFromDB()
+
 	// start background job sync
 	go s.syncJobs(ctx)
 
@@ -223,6 +226,59 @@ func (s *Server) syncJobs(ctx context.Context) {
 		case <-ticker.C:
 			s.loadJobsFromCrontab()
 		}
+	}
+}
+
+// loadJobsFromDB loads existing job history from database
+func (s *Server) loadJobsFromDB() {
+	rows, err := s.db.Query(`
+		SELECT id, command, schedule, next_run, last_run, last_status, 
+		       enabled, created_at, updated_at 
+		FROM jobs`)
+	if err != nil {
+		log.Printf("[WARN] failed to load jobs from database: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
+
+	for rows.Next() {
+		job := &JobInfo{}
+		var nextRun, lastRun sql.NullInt64
+		var createdAt, updatedAt int64
+
+		err := rows.Scan(&job.ID, &job.Command, &job.Schedule, &nextRun, &lastRun,
+			&job.LastStatus, &job.Enabled, &createdAt, &updatedAt)
+		if err != nil {
+			log.Printf("[WARN] failed to scan job row: %v", err)
+			continue
+		}
+
+		// convert timestamps
+		job.CreatedAt = time.Unix(createdAt, 0)
+		job.UpdatedAt = time.Unix(updatedAt, 0)
+		if nextRun.Valid {
+			job.NextRun = time.Unix(nextRun.Int64, 0)
+		}
+		if lastRun.Valid {
+			job.LastRun = time.Unix(lastRun.Int64, 0)
+		}
+
+		// calculate next run from schedule if not set
+		if job.Schedule != "" && job.NextRun.IsZero() {
+			if sched, schedErr := s.parser.Parse(job.Schedule); schedErr == nil {
+				job.NextRun = sched.Next(time.Now())
+			}
+		}
+
+		s.jobs[job.ID] = job
+		log.Printf("[DEBUG] loaded job from DB: %s (%s)", job.Command, job.LastStatus)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("[WARN] error iterating job rows: %v", err)
 	}
 }
 

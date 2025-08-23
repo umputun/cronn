@@ -53,8 +53,9 @@ type Scheduler struct {
 		Factor   float64
 		Jitter   bool
 	}
-	Stdout        io.Writer
-	NotifyTimeout time.Duration
+	Stdout          io.Writer
+	NotifyTimeout   time.Duration
+	JobEventHandler JobEventHandler // handler for job execution events
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -111,6 +112,12 @@ type ConditionChecker interface {
 	Check(conditions conditions.Config) (bool, string)
 }
 
+// JobEventHandler defines interface for handling job execution events
+type JobEventHandler interface {
+	OnJobStart(command, schedule string, startTime time.Time)
+	OnJobComplete(command, schedule string, startTime, endTime time.Time, exitCode int, err error)
+}
+
 // Do runs blocking scheduler
 func (s *Scheduler) Do(ctx context.Context) {
 	if s.ResumeConcurrency <= 0 {
@@ -164,12 +171,29 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 		}
 		defer s.DeDup.Remove(dedupKey)
 
+		// notify job start
+		startTime := time.Now()
+		if s.JobEventHandler != nil {
+			s.JobEventHandler.OnJobStart(cmd, r.Spec, startTime)
+		}
+
 		rfile, rerr := s.Resumer.OnStart(cmd) // register job in resumer prior to execution
 		if rerr != nil {
 			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 		}
 
 		err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
+
+		// notify job complete
+		endTime := time.Now()
+		if s.JobEventHandler != nil {
+			exitCode := 0
+			if err != nil {
+				exitCode = 1 // generic error code
+			}
+			s.JobEventHandler.OnJobComplete(cmd, r.Spec, startTime, endTime, exitCode, err)
+		}
+
 		ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 		defer cancel()
 		var errMsg string

@@ -317,7 +317,7 @@ func TestCheckCustom_Timeout(t *testing.T) {
 	start := time.Now()
 	ok, reason := checker.checkCustom("sleep 2", 1*time.Second)
 	duration := time.Since(start)
-	
+
 	assert.False(t, ok)
 	assert.Equal(t, "custom check timed out after 1s", reason)
 	assert.True(t, duration >= 1*time.Second)
@@ -328,11 +328,11 @@ func TestCheckCustom_Timeout(t *testing.T) {
 		Custom:        "sleep 2",
 		CustomTimeout: durationPtr(500 * time.Millisecond),
 	}
-	
+
 	start = time.Now()
 	ok, reason = checker.Check(conditions)
 	duration = time.Since(start)
-	
+
 	assert.False(t, ok)
 	assert.Equal(t, "custom check timed out after 500ms", reason)
 	assert.True(t, duration >= 500*time.Millisecond)
@@ -504,17 +504,17 @@ func TestMaxConcurrentChecks(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			<-start // wait for signal to start
-			
+
 			// try to check conditions
 			ok, reason := checker.Check(cond)
-			
+
 			// if we got concurrency limit error, that's expected
 			if !ok && reason == "condition check limit reached, try increasing --max-concurrent-checks or wait for running checks to complete" {
 				atomic.AddInt32(&completed, 1)
 				done <- struct{}{}
 				return
 			}
-			
+
 			// otherwise we're actually running the check
 			current := atomic.AddInt32(&running, 1)
 			for {
@@ -527,11 +527,11 @@ func TestMaxConcurrentChecks(t *testing.T) {
 					break
 				}
 			}
-			
+
 			// check should succeed (sleep 0.1 exits with 0)
 			assert.True(t, ok)
 			assert.Empty(t, reason)
-			
+
 			atomic.AddInt32(&running, -1)
 			atomic.AddInt32(&completed, 1)
 			done <- struct{}{}
@@ -549,7 +549,7 @@ func TestMaxConcurrentChecks(t *testing.T) {
 	// verify we never exceeded the limit
 	assert.LessOrEqual(t, int(maxRunning), 2, "should never have more than 2 concurrent checks")
 	assert.Equal(t, int32(numGoroutines), completed, "all goroutines should complete")
-	
+
 	// at least some should have been rejected due to limit
 	// (with 10 goroutines and 100ms sleep, we expect some rejections)
 	t.Logf("Max concurrent checks: %d", maxRunning)

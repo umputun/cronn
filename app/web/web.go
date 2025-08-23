@@ -10,14 +10,14 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/robfig/cron/v3"
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // SQLite driver
 
 	"github.com/umputun/cronn/app/crontab"
 )
@@ -42,16 +42,17 @@ type Server struct {
 
 // JobInfo represents a cron job in the UI
 type JobInfo struct {
-	ID          string    // SHA256 of command
-	Command     string
-	Schedule    string
-	NextRun     time.Time
-	LastRun     time.Time
-	LastStatus  string // "success", "failed", "running", ""
-	IsRunning   bool
-	Enabled     bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID         string // SHA256 of command
+	Command    string
+	Schedule   string
+	NextRun    time.Time
+	LastRun    time.Time
+	LastStatus string // "success", "failed", "running", ""
+	IsRunning  bool
+	Enabled    bool
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	SortIndex  int // original order in crontab
 }
 
 // JobEvent represents job execution events
@@ -71,6 +72,7 @@ type TemplateData struct {
 	CurrentYear int
 	ViewMode    string // "cards" or "list"
 	Theme       string // "light", "dark", "auto"
+	SortMode    string // "default", "lastrun", "nextrun"
 }
 
 // Config holds server configuration
@@ -90,13 +92,13 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	// enable WAL mode for better concurrency
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
+	if _, walErr := db.Exec("PRAGMA journal_mode=WAL"); walErr != nil {
+		return nil, fmt.Errorf("failed to set WAL mode: %w", walErr)
 	}
 
 	// create tables
-	if err := createTables(db); err != nil {
-		return nil, fmt.Errorf("failed to create tables: %w", err)
+	if createErr := createTables(db); createErr != nil {
+		return nil, fmt.Errorf("failed to create tables: %w", createErr)
 	}
 
 	// parse templates
@@ -105,14 +107,14 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
 
-	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 	return &Server{
 		db:             db,
 		templates:      templates,
 		crontabFile:    cfg.CrontabFile,
 		jobs:           make(map[string]*JobInfo),
-		parser:         parser,
+		parser:         &parser,
 		eventChan:      make(chan JobEvent, 100),
 		updateInterval: cfg.UpdateInterval,
 	}, nil
@@ -128,15 +130,17 @@ func (s *Server) Run(ctx context.Context, address string) error {
 
 	// setup routes
 	mux := http.NewServeMux()
-	
+
 	// pages
 	mux.HandleFunc("GET /", s.handleDashboard)
-	
+
 	// api endpoints for HTMX
 	mux.HandleFunc("GET /api/jobs", s.handleJobsPartial)
 	mux.HandleFunc("POST /api/view-mode", s.handleViewModeToggle)
 	mux.HandleFunc("POST /api/theme", s.handleThemeToggle)
-	
+	mux.HandleFunc("POST /api/sort-mode", s.handleSortModeChange)
+	mux.HandleFunc("POST /api/sort-toggle", s.handleSortToggle)
+
 	// static files
 	mux.Handle("GET /static/", http.FileServer(http.FS(staticFS)))
 
@@ -161,8 +165,37 @@ func (s *Server) Run(ctx context.Context, address string) error {
 	return server.ListenAndServe()
 }
 
-// SendEvent sends a job event to the web server
-func (s *Server) SendEvent(event JobEvent) {
+// OnJobStart implements service.JobEventHandler interface
+func (s *Server) OnJobStart(command, schedule string, startTime time.Time) {
+	event := JobEvent{
+		JobID:     HashCommand(command),
+		Command:   command,
+		Schedule:  schedule,
+		EventType: "started",
+		StartedAt: startTime,
+	}
+	select {
+	case s.eventChan <- event:
+	default:
+		log.Printf("[WARN] event channel full, dropping event")
+	}
+}
+
+// OnJobComplete implements service.JobEventHandler interface
+func (s *Server) OnJobComplete(command, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+	eventType := "completed"
+	if err != nil {
+		eventType = "failed"
+	}
+	event := JobEvent{
+		JobID:      HashCommand(command),
+		Command:    command,
+		Schedule:   schedule,
+		EventType:  eventType,
+		ExitCode:   exitCode,
+		StartedAt:  startTime,
+		FinishedAt: endTime,
+	}
 	select {
 	case s.eventChan <- event:
 	default:
@@ -172,11 +205,17 @@ func (s *Server) SendEvent(event JobEvent) {
 
 // syncJobs syncs jobs from crontab file
 func (s *Server) syncJobs(ctx context.Context) {
-	ticker := time.NewTicker(s.updateInterval)
-	defer ticker.Stop()
-
 	// initial sync
 	s.loadJobsFromCrontab()
+
+	// if update interval is 0, don't start ticker
+	if s.updateInterval <= 0 {
+		<-ctx.Done()
+		return
+	}
+
+	ticker := time.NewTicker(s.updateInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -190,7 +229,7 @@ func (s *Server) syncJobs(ctx context.Context) {
 
 // loadJobsFromCrontab loads jobs from crontab file
 func (s *Server) loadJobsFromCrontab() {
-	parser := crontab.New(s.crontabFile, crontab.UpdateInterval(0), crontab.HostName(""), crontab.Once(true))
+	parser := crontab.New(s.crontabFile, 0, nil)
 	specs, err := parser.List()
 	if err != nil {
 		log.Printf("[ERROR] failed to parse crontab: %v", err)
@@ -206,31 +245,33 @@ func (s *Server) loadJobsFromCrontab() {
 		oldJobs[id] = true
 	}
 
-	for _, spec := range specs {
-		id := hashCommand(spec.Command)
-		
+	for idx, spec := range specs {
+		id := HashCommand(spec.Command)
+
 		// parse schedule for next run calculation
-		schedule, err := s.parser.Parse(spec.Schedule)
+		schedule, err := s.parser.Parse(spec.Spec)
 		if err != nil {
-			log.Printf("[WARN] failed to parse schedule %q: %v", spec.Schedule, err)
+			log.Printf("[WARN] failed to parse schedule %q: %v", spec.Spec, err)
 			continue
 		}
 
 		// update or create job
 		if job, exists := s.jobs[id]; exists {
-			job.Schedule = spec.Schedule
+			job.Schedule = spec.Spec
 			job.NextRun = schedule.Next(time.Now())
 			job.UpdatedAt = time.Now()
+			job.SortIndex = idx // update sort index in case order changed
 			delete(oldJobs, id)
 		} else {
 			s.jobs[id] = &JobInfo{
 				ID:        id,
 				Command:   spec.Command,
-				Schedule:  spec.Schedule,
+				Schedule:  spec.Spec,
 				NextRun:   schedule.Next(time.Now()),
 				Enabled:   true,
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
+				SortIndex: idx,
 			}
 		}
 	}
@@ -254,13 +295,19 @@ func (s *Server) persistJobs() {
 	defer tx.Rollback()
 
 	for _, job := range s.jobs {
+		// determine status to save
+		status := job.LastStatus
+		if job.IsRunning {
+			status = "running"
+		}
+
 		_, err := tx.Exec(`
 			INSERT OR REPLACE INTO jobs 
-			(id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at, sort_index)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			job.ID, job.Command, job.Schedule, job.NextRun.Unix(),
-			job.LastRun.Unix(), job.LastStatus, job.Enabled,
-			job.CreatedAt.Unix(), job.UpdatedAt.Unix())
+			job.LastRun.Unix(), status, job.Enabled,
+			job.CreatedAt.Unix(), job.UpdatedAt.Unix(), job.SortIndex)
 		if err != nil {
 			log.Printf("[ERROR] failed to persist job: %v", err)
 		}
@@ -285,8 +332,8 @@ func (s *Server) processEvents(ctx context.Context) {
 
 // handleJobEvent handles a single job event
 func (s *Server) handleJobEvent(event JobEvent) {
-	id := hashCommand(event.Command)
-	
+	id := HashCommand(event.Command)
+
 	s.jobsMu.Lock()
 	defer s.jobsMu.Unlock()
 
@@ -298,6 +345,15 @@ func (s *Server) handleJobEvent(event JobEvent) {
 			Command:   event.Command,
 			Schedule:  event.Schedule,
 			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			Enabled:   true,
+		}
+		// calculate next run for new job
+		if schedule, err := s.parser.Parse(event.Schedule); err == nil {
+			job.NextRun = schedule.Next(time.Now())
+			log.Printf("[DEBUG] calculated NextRun for new job %s: %v", event.Command, job.NextRun)
+		} else {
+			log.Printf("[ERROR] failed to parse schedule %q for job %s: %v", event.Schedule, event.Command, err)
 		}
 		s.jobs[id] = job
 	}
@@ -307,12 +363,23 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.IsRunning = true
 		job.LastRun = event.StartedAt
 		job.LastStatus = "running"
+		job.UpdatedAt = time.Now()
 	case "completed":
 		job.IsRunning = false
 		job.LastStatus = "success"
+		job.UpdatedAt = time.Now()
+		// recalculate next run after job completion
+		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
+			job.NextRun = schedule.Next(time.Now())
+		}
 	case "failed":
 		job.IsRunning = false
 		job.LastStatus = "failed"
+		job.UpdatedAt = time.Now()
+		// recalculate next run after job failure
+		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
+			job.NextRun = schedule.Next(time.Now())
+		}
 	}
 	job.UpdatedAt = time.Now()
 
@@ -331,6 +398,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	viewMode := getViewMode(r)
 	theme := getTheme(r)
+	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
 	jobs := make([]*JobInfo, 0, len(s.jobs))
@@ -339,11 +407,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	s.jobsMu.RUnlock()
 
+	// sort jobs based on selected mode
+	s.sortJobs(jobs, sortMode)
+
 	data := TemplateData{
 		Jobs:        jobs,
 		CurrentYear: time.Now().Year(),
 		ViewMode:    viewMode,
 		Theme:       theme,
+		SortMode:    sortMode,
 	}
 
 	s.render(w, http.StatusOK, "base.html", "base", data)
@@ -352,6 +424,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // handleJobsPartial returns the jobs list partial for HTMX polling
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	viewMode := getViewMode(r)
+	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
 	jobs := make([]*JobInfo, 0, len(s.jobs))
@@ -364,9 +437,13 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	}
 	s.jobsMu.RUnlock()
 
+	// sort jobs based on selected mode
+	s.sortJobs(jobs, sortMode)
+
 	data := TemplateData{
 		Jobs:     jobs,
 		ViewMode: viewMode,
+		SortMode: sortMode,
 	}
 
 	tmplName := "jobs-cards"
@@ -394,15 +471,15 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// trigger HTMX to refresh the jobs list
-	w.Header().Set("HX-Trigger", "refresh-jobs")
+	// trigger full page refresh to update the toggle button icon
+	w.Header().Set("HX-Refresh", "true")
 	w.WriteHeader(http.StatusOK)
 }
 
 // handleThemeToggle toggles the theme
 func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	currentTheme := getTheme(r)
-	
+
 	// cycle: light -> dark -> auto -> light
 	nextTheme := "light"
 	switch currentTheme {
@@ -419,13 +496,98 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 		Value:    nextTheme,
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
-		HttpOnly: false, // allow JS to read for immediate update
+		HttpOnly: false,              // allow JS to read for immediate update
 		SameSite: http.SameSiteLaxMode,
 	})
 
 	// trigger full page refresh for theme change
 	w.Header().Set("HX-Refresh", "true")
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleSortToggle toggles between sort modes
+func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
+	currentMode := s.getSortMode(r)
+
+	// cycle: default -> lastrun -> nextrun -> default
+	nextMode := "default"
+	switch currentMode {
+	case "default":
+		nextMode = "lastrun"
+	case "lastrun":
+		nextMode = "nextrun"
+	case "nextrun":
+		nextMode = "default"
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sort-mode",
+		Value:    nextMode,
+		Path:     "/",
+		MaxAge:   365 * 24 * 60 * 60, // 1 year
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// trigger full refresh to update both sort button and jobs
+	w.Header().Set("HX-Refresh", "true")
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleSortModeChange changes the sort mode
+func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
+	sortMode := r.FormValue("sort")
+
+	// validate sort mode
+	switch sortMode {
+	case "default", "lastrun", "nextrun":
+		// valid
+	default:
+		sortMode = "default"
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sort-mode",
+		Value:    sortMode,
+		Path:     "/",
+		MaxAge:   365 * 24 * 60 * 60, // 1 year
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// return the jobs partial with sorted jobs
+	viewMode := getViewMode(r)
+
+	s.jobsMu.RLock()
+	jobs := make([]*JobInfo, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		// recalculate next run times
+		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
+			job.NextRun = schedule.Next(time.Now())
+		}
+		jobs = append(jobs, job)
+	}
+	s.jobsMu.RUnlock()
+
+	// sort jobs based on selected mode
+	s.sortJobs(jobs, sortMode)
+
+	data := TemplateData{
+		Jobs:     jobs,
+		ViewMode: viewMode,
+		SortMode: sortMode,
+	}
+
+	tmplName := "jobs-cards"
+	if viewMode == "list" {
+		tmplName = "jobs-list"
+	}
+
+	// set header to tell HTMX to swap the jobs container
+	w.Header().Set("HX-Retarget", "#jobs-container")
+	w.Header().Set("HX-Reswap", "innerHTML")
+
+	s.render(w, http.StatusOK, "partials/jobs.html", tmplName, data)
 }
 
 // render renders a template
@@ -444,6 +606,7 @@ func (s *Server) render(w http.ResponseWriter, status int, page, tmplName string
 		return
 	}
 
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Printf("[ERROR] failed to write response: %v", err)
@@ -455,11 +618,11 @@ func parseTemplates() (map[string]*template.Template, error) {
 	templates := make(map[string]*template.Template)
 
 	funcMap := template.FuncMap{
-		"humanTime": humanTime,
-		"humanDuration": humanDuration,
+		"humanTime":       humanTime,
+		"humanDuration":   humanDuration,
 		"cronDescription": cronDescription,
-		"truncate": truncate,
-		"timeUntil": timeUntil,
+		"truncate":        truncate,
+		"timeUntil":       timeUntil,
 	}
 
 	// parse base template with all partials
@@ -495,7 +658,8 @@ func createTables(db *sql.DB) error {
 			last_status TEXT,
 			enabled BOOLEAN DEFAULT 1,
 			created_at INTEGER,
-			updated_at INTEGER
+			updated_at INTEGER,
+			sort_index INTEGER DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS executions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -521,7 +685,8 @@ func createTables(db *sql.DB) error {
 
 // helper functions
 
-func hashCommand(cmd string) string {
+// HashCommand generates a SHA256 hash of a command for use as a unique ID
+func HashCommand(cmd string) string {
 	h := sha256.Sum256([]byte(cmd))
 	return hex.EncodeToString(h[:])
 }
@@ -622,4 +787,60 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// getSortMode gets the sort mode from cookie or defaults to "default"
+func (s *Server) getSortMode(r *http.Request) string {
+	cookie, err := r.Cookie("sort-mode")
+	if err != nil || cookie.Value == "" {
+		return "default"
+	}
+	// validate sort mode
+	switch cookie.Value {
+	case "default", "lastrun", "nextrun":
+		return cookie.Value
+	default:
+		return "default"
+	}
+}
+
+// sortJobs sorts jobs based on the sort mode
+func (s *Server) sortJobs(jobs []*JobInfo, sortMode string) {
+	switch sortMode {
+	case "lastrun":
+		// sort by last run time, most recent first
+		sort.Slice(jobs, func(i, j int) bool {
+			// handle zero times - put them at the end
+			if jobs[i].LastRun.IsZero() && jobs[j].LastRun.IsZero() {
+				return jobs[i].SortIndex < jobs[j].SortIndex // maintain default order for unrun jobs
+			}
+			if jobs[i].LastRun.IsZero() {
+				return false
+			}
+			if jobs[j].LastRun.IsZero() {
+				return true
+			}
+			return jobs[i].LastRun.After(jobs[j].LastRun)
+		})
+	case "nextrun":
+		// sort by next run time, soonest first
+		sort.Slice(jobs, func(i, j int) bool {
+			// handle zero times - put them at the end
+			if jobs[i].NextRun.IsZero() && jobs[j].NextRun.IsZero() {
+				return jobs[i].SortIndex < jobs[j].SortIndex
+			}
+			if jobs[i].NextRun.IsZero() {
+				return false
+			}
+			if jobs[j].NextRun.IsZero() {
+				return true
+			}
+			return jobs[i].NextRun.Before(jobs[j].NextRun)
+		})
+	default: // "default"
+		// sort by original crontab order
+		sort.Slice(jobs, func(i, j int) bool {
+			return jobs[i].SortIndex < jobs[j].SortIndex
+		})
+	}
 }

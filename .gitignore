@@ -27,3 +27,7 @@ cronn
 
 # Test files
 test-crontab
+test_schedule.go
+
+# Log files
+*.log

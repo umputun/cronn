@@ -162,6 +162,44 @@ code {
     color: var(--color-primary);
 }
 
+/* Sort button with text */
+.sort-button {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: 6px 14px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-text);
+    margin-right: var(--spacing-sm);
+}
+
+.sort-button:hover {
+    background: var(--color-hover);
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.sort-button:active {
+    transform: translateY(0);
+}
+
+.sort-icon {
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+.sort-label {
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+}
+
 /* Main content */
 .main-content {
     flex: 1;
@@ -207,6 +245,7 @@ code {
     font-size: 0.875rem;
     margin-top: var(--spacing-xs);
 }
+
 
 /* Jobs container */
 .jobs-container {

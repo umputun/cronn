@@ -48,7 +48,6 @@ type RepeaterConfig struct {
 	Jitter   *bool          `yaml:"jitter,omitempty" json:"jitter,omitempty" jsonschema:"description=Enable random jitter"`
 }
 
-
 // JobSpec for spec and cmd + params
 type JobSpec struct {
 	Spec       string             `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string"`

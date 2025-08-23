@@ -18,125 +18,128 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	crontabFile := filepath.Join(tmpDir, "crontab")
-	
+
 	// create test crontab file
 	crontabContent := `# test crontab
 0 * * * * echo hourly
 */5 * * * * echo five-minutes
 @daily echo daily`
-	err := os.WriteFile(crontabFile, []byte(crontabContent), 0644)
+	err := os.WriteFile(crontabFile, []byte(crontabContent), 0o600)
 	require.NoError(t, err)
-	
+
 	cfg := Config{
 		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 	}
-	
+
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer server.db.Close()
-	
+
 	// start server in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	go func() {
-		server.Run(ctx, ":0")
+		if runErr := server.Run(ctx, ":0"); runErr != nil && runErr != http.ErrServerClosed {
+			t.Errorf("server run error: %v", runErr)
+		}
 	}()
-	
+
 	// give server time to start
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// simulate some job events
 	server.OnJobStart("echo hourly", "0 * * * *", time.Now())
 	time.Sleep(10 * time.Millisecond)
 	server.OnJobComplete("echo hourly", "0 * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
-	
+
 	server.OnJobStart("echo five-minutes", "*/5 * * * *", time.Now())
 	time.Sleep(10 * time.Millisecond)
 	server.OnJobComplete("echo five-minutes", "*/5 * * * *", time.Now().Add(-time.Second), time.Now(), 1, fmt.Errorf("test error"))
-	
+
 	t.Run("dashboard", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", nil)
+		req := httptest.NewRequest("GET", "/", http.NoBody)
 		w := httptest.NewRecorder()
-		
+
 		server.handleDashboard(w, req)
-		
+
 		resp := w.Result()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
-		
+
 		body := w.Body.String()
 		assert.Contains(t, body, "Cronn Dashboard")
 		assert.Contains(t, body, "htmx")
-		assert.Contains(t, body, "hx-get=\"/partials/jobs\"")
+		assert.Contains(t, body, "hx-get=\"/api/jobs\"")
 	})
-	
+
 	t.Run("jobs partial - cards view", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/partials/jobs", nil)
-		req.AddCookie(&http.Cookie{Name: "view_mode", Value: "cards"})
+		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 		w := httptest.NewRecorder()
-		
+
 		server.handleJobsPartial(w, req)
-		
+
 		resp := w.Result()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		
+
 		body := w.Body.String()
 		assert.Contains(t, body, "job-card")
 		assert.Contains(t, body, "echo hourly")
 		assert.Contains(t, body, "echo five-minutes")
 		assert.Contains(t, body, "echo daily")
 	})
-	
+
 	t.Run("jobs partial - list view", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/partials/jobs", nil)
-		req.AddCookie(&http.Cookie{Name: "view_mode", Value: "list"})
+		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "list"})
 		w := httptest.NewRecorder()
-		
+
 		server.handleJobsPartial(w, req)
-		
+
 		resp := w.Result()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		
+
 		body := w.Body.String()
+		// list view renders a table
 		assert.Contains(t, body, "jobs-table")
 		assert.Contains(t, body, "echo hourly")
 		assert.Contains(t, body, "echo five-minutes")
 		assert.Contains(t, body, "echo daily")
 	})
-	
+
 	t.Run("theme toggle", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/toggle-theme", nil)
+		req := httptest.NewRequest("POST", "/toggle-theme", http.NoBody)
 		req.AddCookie(&http.Cookie{Name: "theme", Value: "auto"})
 		w := httptest.NewRecorder()
-		
+
 		server.handleThemeToggle(w, req)
-		
+
 		resp := w.Result()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		
+
 		cookies := resp.Cookies()
 		require.Len(t, cookies, 1)
 		assert.Equal(t, "theme", cookies[0].Name)
 		assert.Equal(t, "light", cookies[0].Value)
 	})
-	
+
 	t.Run("view mode toggle", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/toggle-view", nil)
-		req.AddCookie(&http.Cookie{Name: "view_mode", Value: "cards"})
+		req := httptest.NewRequest("POST", "/toggle-view", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 		w := httptest.NewRecorder()
-		
+
 		server.handleViewModeToggle(w, req)
-		
+
 		resp := w.Result()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		
+
 		cookies := resp.Cookies()
 		require.Len(t, cookies, 1)
-		assert.Equal(t, "view_mode", cookies[0].Name)
+		assert.Equal(t, "view-mode", cookies[0].Name)
 		assert.Equal(t, "list", cookies[0].Value)
 	})
 }
@@ -144,25 +147,25 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 func TestServer_ProcessEvents(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	
+
 	cfg := Config{
 		Address:        ":0",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 	}
-	
+
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer server.db.Close()
-	
+
 	// test event processing
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	// start event processor
 	go server.processEvents(ctx)
-	
+
 	// send job start event
 	server.eventChan <- JobEvent{
 		JobID:     HashCommand("test command"),
@@ -171,19 +174,19 @@ func TestServer_ProcessEvents(t *testing.T) {
 		EventType: "started",
 		StartedAt: time.Now(),
 	}
-	
+
 	// give time to process
 	time.Sleep(50 * time.Millisecond)
-	
+
 	// verify job was added
 	server.jobsMu.RLock()
 	job, exists := server.jobs[HashCommand("test command")]
 	server.jobsMu.RUnlock()
-	
+
 	assert.True(t, exists)
 	assert.Equal(t, "test command", job.Command)
 	assert.True(t, job.IsRunning)
-	
+
 	// send job complete event
 	server.eventChan <- JobEvent{
 		JobID:      HashCommand("test command"),
@@ -193,15 +196,15 @@ func TestServer_ProcessEvents(t *testing.T) {
 		ExitCode:   0,
 		FinishedAt: time.Now(),
 	}
-	
+
 	// give time to process
 	time.Sleep(50 * time.Millisecond)
-	
+
 	// verify job was updated
 	server.jobsMu.RLock()
 	job, exists = server.jobs[HashCommand("test command")]
 	server.jobsMu.RUnlock()
-	
+
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
 	assert.Equal(t, "success", job.LastStatus)
@@ -210,18 +213,18 @@ func TestServer_ProcessEvents(t *testing.T) {
 func TestServer_PersistJobs(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	
+
 	cfg := Config{
 		Address:        ":0",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 	}
-	
+
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer server.db.Close()
-	
+
 	// add test jobs to memory
 	now := time.Now()
 	server.jobsMu.Lock()
@@ -248,15 +251,15 @@ func TestServer_PersistJobs(t *testing.T) {
 		UpdatedAt:  now,
 	}
 	server.jobsMu.Unlock()
-	
+
 	// persist jobs
 	server.persistJobs()
-	
+
 	// verify jobs were persisted to database
-	rows, err := server.db.Query("SELECT command, schedule, status FROM jobs ORDER BY command")
+	rows, err := server.db.Query("SELECT command, schedule, last_status FROM jobs ORDER BY command")
 	require.NoError(t, err)
 	defer rows.Close()
-	
+
 	var jobs []struct {
 		Command  string
 		Schedule string
@@ -272,7 +275,7 @@ func TestServer_PersistJobs(t *testing.T) {
 		require.NoError(t, err)
 		jobs = append(jobs, job)
 	}
-	
+
 	assert.Len(t, jobs, 2)
 	assert.Equal(t, "test1", jobs[0].Command)
 	assert.Equal(t, "* * * * *", jobs[0].Schedule)
@@ -286,46 +289,46 @@ func TestServer_SyncJobs(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	crontabFile := filepath.Join(tmpDir, "crontab")
-	
+
 	// create initial crontab file
 	crontabContent := `0 * * * * echo hourly`
-	err := os.WriteFile(crontabFile, []byte(crontabContent), 0644)
+	err := os.WriteFile(crontabFile, []byte(crontabContent), 0o600)
 	require.NoError(t, err)
-	
+
 	cfg := Config{
 		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: 100 * time.Millisecond,
 	}
-	
+
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer server.db.Close()
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	// start sync in background
 	go server.syncJobs(ctx)
-	
+
 	// give initial sync time
 	time.Sleep(150 * time.Millisecond)
-	
+
 	// verify initial job was loaded
 	server.jobsMu.RLock()
 	assert.Len(t, server.jobs, 1)
 	server.jobsMu.RUnlock()
-	
+
 	// update crontab file
 	crontabContent = `0 * * * * echo hourly
 */5 * * * * echo five-minutes`
-	err = os.WriteFile(crontabFile, []byte(crontabContent), 0644)
+	err = os.WriteFile(crontabFile, []byte(crontabContent), 0o600)
 	require.NoError(t, err)
-	
+
 	// wait for sync
 	time.Sleep(200 * time.Millisecond)
-	
+
 	// verify jobs were updated
 	server.jobsMu.RLock()
 	assert.Len(t, server.jobs, 2)
@@ -335,18 +338,18 @@ func TestServer_SyncJobs(t *testing.T) {
 func TestServer_HandleJobEvent(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	
+
 	cfg := Config{
 		Address:        ":0",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 	}
-	
+
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer server.db.Close()
-	
+
 	// test job start event
 	event := JobEvent{
 		JobID:     HashCommand("test"),
@@ -355,17 +358,17 @@ func TestServer_HandleJobEvent(t *testing.T) {
 		EventType: "started",
 		StartedAt: time.Now(),
 	}
-	
+
 	server.handleJobEvent(event)
-	
+
 	server.jobsMu.RLock()
 	job, exists := server.jobs[HashCommand("test")]
 	server.jobsMu.RUnlock()
-	
+
 	assert.True(t, exists)
 	assert.True(t, job.IsRunning)
 	assert.Equal(t, "running", job.LastStatus)
-	
+
 	// test job complete event
 	event = JobEvent{
 		JobID:      HashCommand("test"),
@@ -375,17 +378,17 @@ func TestServer_HandleJobEvent(t *testing.T) {
 		ExitCode:   0,
 		FinishedAt: time.Now(),
 	}
-	
+
 	server.handleJobEvent(event)
-	
+
 	server.jobsMu.RLock()
 	job, exists = server.jobs[HashCommand("test")]
 	server.jobsMu.RUnlock()
-	
+
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
 	assert.Equal(t, "success", job.LastStatus)
-	
+
 	// test job failed event
 	event = JobEvent{
 		JobID:      HashCommand("test"),
@@ -395,13 +398,13 @@ func TestServer_HandleJobEvent(t *testing.T) {
 		ExitCode:   1,
 		FinishedAt: time.Now(),
 	}
-	
+
 	server.handleJobEvent(event)
-	
+
 	server.jobsMu.RLock()
 	job, exists = server.jobs[HashCommand("test")]
 	server.jobsMu.RUnlock()
-	
+
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
 	assert.Equal(t, "failed", job.LastStatus)

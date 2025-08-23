@@ -24,19 +24,20 @@ import (
 	"github.com/umputun/cronn/app/notify"
 	"github.com/umputun/cronn/app/resumer"
 	"github.com/umputun/cronn/app/service"
+	"github.com/umputun/cronn/app/web"
 )
 
 var opts struct {
-	CrontabFile    string        `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
-	Command        string        `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
-	Resume         string        `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
-	ResumeConcur   int           `long:"resume-concur" env:"CRONN_RESUME_CONCUR" default:"1" description:"auto-resume concurrency level"`
-	UpdateEnable   bool          `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
-	UpdateInterval time.Duration `long:"update-interval" env:"CRONN_UPDATE_INTERVAL" default:"10s" description:"auto-update interval"`
-	JitterEnable   bool          `short:"j" long:"jitter" env:"CRONN_JITTER" description:"enable jitter"`
-	JitterDuration time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
-	DeDup          bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
-	MaxConcurrentChecks int      `long:"max-concurrent-checks" env:"CRONN_MAX_CONCURRENT_CHECKS" default:"10" description:"max concurrent condition checks"`
+	CrontabFile         string        `short:"f" long:"file" env:"CRONN_FILE" default:"crontab" description:"crontab file"`
+	Command             string        `short:"c" long:"command" env:"CRONN_COMMAND" description:"crontab single command"`
+	Resume              string        `short:"r" long:"resume" env:"CRONN_RESUME" description:"auto-resume location"`
+	ResumeConcur        int           `long:"resume-concur" env:"CRONN_RESUME_CONCUR" default:"1" description:"auto-resume concurrency level"`
+	UpdateEnable        bool          `short:"u" long:"update" env:"CRONN_UPDATE" description:"auto-update mode"`
+	UpdateInterval      time.Duration `long:"update-interval" env:"CRONN_UPDATE_INTERVAL" default:"10s" description:"auto-update interval"`
+	JitterEnable        bool          `short:"j" long:"jitter" env:"CRONN_JITTER" description:"enable jitter"`
+	JitterDuration      time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
+	DeDup               bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
+	MaxConcurrentChecks int           `long:"max-concurrent-checks" env:"CRONN_MAX_CONCURRENT_CHECKS" default:"10" description:"max concurrent condition checks"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -79,6 +80,14 @@ var opts struct {
 		MaxBackups      int    `long:"max-backups" env:"MAX_BACKUPS" default:"7" description:"maximum number of old log files to retain"`
 		EnabledCompress bool   `long:"enabled-compress" env:"ENABLED_COMPRESS" description:"determines if the rotated log files should be compressed using gzip"`
 	} `group:"log" namespace:"log" env-namespace:"CRONN_LOG"`
+
+	Web struct {
+		Enabled        bool          `long:"enabled" env:"ENABLED" description:"enable web UI"`
+		Address        string        `long:"address" env:"ADDRESS" default:":8080" description:"web UI address"`
+		NoAuth         bool          `long:"no-auth" env:"NO_AUTH" description:"disable authentication (default: true for minimal version)"`
+		DBPath         string        `long:"db-path" env:"DB_PATH" default:"cronn.db" description:"path to SQLite database"`
+		UpdateInterval time.Duration `long:"update-interval" env:"UPDATE_INTERVAL" default:"30s" description:"interval to sync crontab file"`
+	} `group:"web" namespace:"web" env-namespace:"CRONN_WEB"`
 }
 
 var revision = "unknown"
@@ -130,6 +139,31 @@ func main() {
 		jitterDuration = opts.JitterDuration
 	}
 
+	// initialize web server if enabled
+	var eventHandler service.JobEventHandler
+	if opts.Web.Enabled {
+		cfg := web.Config{
+			Address:        opts.Web.Address,
+			CrontabFile:    opts.CrontabFile,
+			DBPath:         opts.Web.DBPath,
+			UpdateInterval: opts.Web.UpdateInterval,
+		}
+		webServer, err := web.New(cfg)
+		if err != nil {
+			log.Printf("[ERROR] failed to create web server: %v", err)
+			os.Exit(1)
+		}
+		eventHandler = webServer // web.Server implements JobEventHandler
+
+		// start web server in background
+		go func() {
+			if err := webServer.Run(ctx, opts.Web.Address); err != nil {
+				log.Printf("[ERROR] web server failed: %v", err)
+			}
+		}()
+		log.Printf("[INFO] web UI enabled on %s", opts.Web.Address)
+	}
+
 	cronService := service.Scheduler{
 		Cron:              cron.New(),
 		Resumer:           resumer.New(opts.Resume, opts.Resume != ""),
@@ -146,6 +180,7 @@ func main() {
 		Stdout:            stdout,
 		DeDup:             service.NewDeDup(opts.DeDup),
 		NotifyTimeout:     opts.Notify.TimeOut,
+		JobEventHandler:   eventHandler,
 	}
 
 	cronService.RepeaterDefaults.Attempts = opts.Repeater.Attempts

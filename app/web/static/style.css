@@ -329,7 +329,7 @@ code {
 }
 
 .job-header {
-    margin-bottom: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
 }
 
 .job-schedule {
@@ -510,6 +510,8 @@ code {
 /* Icons */
 .icon {
     color: var(--color-text-secondary);
+    vertical-align: middle;
+    flex-shrink: 0;
 }
 
 /* Footer */

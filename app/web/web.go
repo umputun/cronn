@@ -11,7 +11,6 @@ import (
 	"html/template"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -674,11 +673,10 @@ func parseTemplates() (map[string]*template.Template, error) {
 	templates := make(map[string]*template.Template)
 
 	funcMap := template.FuncMap{
-		"humanTime":       humanTime,
-		"humanDuration":   humanDuration,
-		"cronDescription": cronDescription,
-		"truncate":        truncate,
-		"timeUntil":       timeUntil,
+		"humanTime":     humanTime,
+		"humanDuration": humanDuration,
+		"truncate":      truncate,
+		"timeUntil":     timeUntil,
 	}
 
 	// parse base template with all partials
@@ -802,40 +800,6 @@ func timeUntil(t time.Time) string {
 		return "Overdue"
 	}
 	return humanDuration(d)
-}
-
-func cronDescription(schedule string) string {
-	// simple human-readable descriptions for common patterns
-	switch schedule {
-	case "* * * * *":
-		return "Every minute"
-	case "*/5 * * * *":
-		return "Every 5 minutes"
-	case "*/10 * * * *":
-		return "Every 10 minutes"
-	case "*/15 * * * *":
-		return "Every 15 minutes"
-	case "*/30 * * * *":
-		return "Every 30 minutes"
-	case "0 * * * *":
-		return "Every hour"
-	case "0 */2 * * *":
-		return "Every 2 hours"
-	case "0 0 * * *":
-		return "Daily at midnight"
-	case "0 2 * * *":
-		return "Daily at 2:00 AM"
-	case "0 0 * * 0":
-		return "Weekly on Sunday"
-	case "0 0 1 * *":
-		return "Monthly on the 1st"
-	default:
-		// for complex expressions, return as-is with a hint
-		if strings.Contains(schedule, "@") {
-			return schedule // special keywords like @daily, @hourly
-		}
-		return fmt.Sprintf("Custom: %s", schedule)
-	}
 }
 
 func truncate(s string, n int) string {

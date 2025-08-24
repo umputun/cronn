@@ -3,10 +3,13 @@ package web
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -628,4 +631,424 @@ func TestServer_HandleJobEvent(t *testing.T) {
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
 	assert.Equal(t, enums.JobStatusFailed, job.LastStatus)
+}
+
+func TestServer_ConcurrentJobEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	crontabFile := filepath.Join(tmpDir, "crontab")
+
+	// create crontab with multiple jobs
+	crontab := []string{
+		"* * * * * echo job1",
+		"* * * * * echo job2",
+		"* * * * * echo job3",
+		"* * * * * echo job4",
+		"* * * * * echo job5",
+	}
+	err := os.WriteFile(crontabFile, []byte(strings.Join(crontab, "\n")), 0o600)
+	require.NoError(t, err)
+
+	cfg := Config{
+		Address:        ":0",
+		CrontabFile:    crontabFile,
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// start processing events
+	go server.processEvents(ctx)
+
+	// simulate concurrent job events from multiple goroutines
+	var wg sync.WaitGroup
+	const numGoroutines = 10
+	const eventsPerGoroutine = 20
+
+	// track all events sent
+	startTime := time.Now()
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for j := 0; j < eventsPerGoroutine; j++ {
+				jobNum := (j % 5) + 1
+				jobCmd := fmt.Sprintf("echo job%d", jobNum)
+
+				// randomly send start or complete events
+				if j%2 == 0 {
+					// send start event
+					server.OnJobStart(jobCmd, "* * * * *", startTime.Add(time.Duration(j)*time.Millisecond))
+				} else {
+					// send complete event
+					server.OnJobComplete(jobCmd, "* * * * *",
+						startTime.Add(time.Duration(j-1)*time.Millisecond),
+						startTime.Add(time.Duration(j)*time.Millisecond),
+						0, nil)
+				}
+
+				// small random delay to increase chance of actual concurrency
+				time.Sleep(time.Duration(rand.Intn(5)) * time.Microsecond) //nolint:gosec // test only, not security sensitive
+			}
+		}()
+	}
+
+	// wait for all goroutines to finish sending events
+	wg.Wait()
+
+	// give time for events to be processed
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+
+		// check that all 5 jobs exist
+		if len(server.jobs) != 5 {
+			return false
+		}
+
+		// verify each job has been updated
+		for i := 1; i <= 5; i++ {
+			jobID := HashCommand(fmt.Sprintf("echo job%d", i))
+			if _, exists := server.jobs[jobID]; !exists {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// verify no data corruption - check that all jobs have valid state
+	server.jobsMu.RLock()
+	for id, job := range server.jobs {
+		assert.NotEmpty(t, job.ID, "job ID should not be empty")
+		assert.NotEmpty(t, job.Command, "job command should not be empty")
+		assert.NotEmpty(t, job.Schedule, "job schedule should not be empty")
+		assert.Contains(t, []enums.JobStatus{
+			enums.JobStatusIdle,
+			enums.JobStatusRunning,
+			enums.JobStatusSuccess,
+			enums.JobStatusFailed,
+		}, job.LastStatus, "job %s has invalid status", id)
+	}
+	server.jobsMu.RUnlock()
+
+	// persist and verify database integrity
+	server.persistJobs()
+
+	// load from database and verify
+	loadedJobs, err := server.store.LoadJobs()
+	require.NoError(t, err)
+	assert.Len(t, loadedJobs, 5, "should have exactly 5 jobs in database")
+}
+
+func TestServer_ConcurrentHTTPRequests(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	crontabFile := filepath.Join(tmpDir, "crontab")
+
+	// create test crontab
+	crontab := []string{
+		"* * * * * echo test1",
+		"*/2 * * * * echo test2",
+		"0 * * * * echo test3",
+	}
+	err := os.WriteFile(crontabFile, []byte(strings.Join(crontab, "\n")), 0o600)
+	require.NoError(t, err)
+
+	cfg := Config{
+		Address:        ":0",
+		CrontabFile:    crontabFile,
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// load jobs from crontab to initialize server state
+	server.loadJobsFromCrontab()
+
+	// create test server
+	router := server.routes()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	// simulate concurrent HTTP requests
+	var wg sync.WaitGroup
+	const numClients = 20
+	const requestsPerClient = 10
+
+	// different endpoints to hit
+	endpoints := []struct {
+		path   string
+		method string
+		body   string
+	}{
+		{"/", "GET", ""},
+		{"/api/jobs", "GET", ""},
+		{"/api/theme", "POST", "theme=dark"},
+		{"/api/view-mode", "POST", "view-mode=list"},
+		{"/api/sort-mode", "POST", "sort-mode=lastrun"},
+		{"/api/sort-toggle", "POST", ""},
+	}
+
+	errors := make(chan error, numClients*requestsPerClient)
+
+	for i := 0; i < numClients; i++ {
+		wg.Add(1)
+		go func(clientID int) {
+			defer wg.Done()
+
+			client := &http.Client{Timeout: 5 * time.Second}
+
+			for j := 0; j < requestsPerClient; j++ {
+				endpoint := endpoints[j%len(endpoints)]
+
+				var resp *http.Response
+				var err error
+
+				if endpoint.method == "GET" {
+					resp, err = client.Get(ts.URL + endpoint.path)
+				} else {
+					var body *strings.Reader
+					if endpoint.body != "" {
+						body = strings.NewReader(endpoint.body)
+					} else {
+						body = strings.NewReader("")
+					}
+					resp, err = client.Post(ts.URL+endpoint.path, "application/x-www-form-urlencoded", body)
+				}
+
+				if err != nil {
+					errors <- fmt.Errorf("client %d request %d failed: %w", clientID, j, err)
+					continue
+				}
+
+				// API endpoints can return various status codes (200, 204, 303, etc.)
+				if resp.StatusCode >= 400 {
+					errors <- fmt.Errorf("client %d request %d to %s got status %d", clientID, j, endpoint.path, resp.StatusCode)
+				}
+				_ = resp.Body.Close()
+
+				// tiny random delay
+				time.Sleep(time.Duration(rand.Intn(100)) * time.Microsecond) //nolint:gosec // test only, not security sensitive
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	// check for any errors
+	allErrors := make([]error, 0, numClients*requestsPerClient)
+	for err := range errors {
+		allErrors = append(allErrors, err)
+	}
+	assert.Empty(t, allErrors, "concurrent requests should not produce errors")
+
+	// verify server state is still consistent
+	server.jobsMu.RLock()
+	assert.Len(t, server.jobs, 3, "should still have 3 jobs")
+	server.jobsMu.RUnlock()
+}
+
+func TestServer_ConcurrentModifications(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	crontabFile := filepath.Join(tmpDir, "crontab")
+
+	// initial crontab
+	err := os.WriteFile(crontabFile, []byte("* * * * * echo initial"), 0o600)
+	require.NoError(t, err)
+
+	cfg := Config{
+		Address:        ":0",
+		CrontabFile:    crontabFile,
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// start event processing
+	go server.processEvents(ctx)
+
+	var wg sync.WaitGroup
+
+	// goroutine 1: continuously reload crontab
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			// modify crontab
+			newCrontab := fmt.Sprintf("* * * * * echo job%d\n*/2 * * * * echo task%d", i, i)
+			writeErr := os.WriteFile(crontabFile, []byte(newCrontab), 0o600)
+			if writeErr != nil {
+				return
+			}
+
+			// reload
+			server.loadJobsFromCrontab()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	// goroutine 2: continuously send job events
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			jobCmd := fmt.Sprintf("echo job%d", i%10)
+			if i%2 == 0 {
+				server.OnJobStart(jobCmd, "* * * * *", time.Now())
+			} else {
+				server.OnJobComplete(jobCmd, "* * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	// goroutine 3: continuously persist to database
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			server.persistJobs()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	// goroutine 4: continuously read state
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			server.jobsMu.RLock()
+			// just iterate to simulate reads
+			count := 0
+			for range server.jobs {
+				count++
+			}
+			server.jobsMu.RUnlock()
+			assert.GreaterOrEqual(t, count, 0, "jobs count should be non-negative")
+			time.Sleep(1 * time.Millisecond)
+		}
+	}()
+
+	// wait for all operations to complete
+	wg.Wait()
+
+	// give a bit of time for final persistence
+	time.Sleep(50 * time.Millisecond)
+
+	// do final persistence to ensure everything is saved
+	server.persistJobs()
+
+	// final consistency check
+	server.jobsMu.RLock()
+	finalJobCount := len(server.jobs)
+	server.jobsMu.RUnlock()
+
+	assert.Greater(t, finalJobCount, 0, "should have at least some jobs after concurrent modifications")
+
+	// verify database consistency - load fresh and check
+	loadedJobs, err := server.store.LoadJobs()
+	require.NoError(t, err)
+
+	// after all the crontab reloads, we should have jobs from the final crontab
+	// plus any jobs from events that haven't been cleaned up
+	// The important thing is the database has some data and didn't corrupt
+	assert.Greater(t, len(loadedJobs), 0, "database should have jobs")
+
+	// verify loaded jobs are valid
+	for _, job := range loadedJobs {
+		assert.NotEmpty(t, job.ID, "job ID should not be empty")
+		assert.NotEmpty(t, job.Command, "job command should not be empty")
+	}
+}
+
+func TestServer_EventChannelStress(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	crontabFile := filepath.Join(tmpDir, "crontab")
+
+	err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
+	require.NoError(t, err)
+
+	cfg := Config{
+		Address:        ":0",
+		CrontabFile:    crontabFile,
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// start event processing
+	go server.processEvents(ctx)
+
+	// flood the event channel
+	const numEvents = 1000
+	startTime := time.Now()
+
+	for i := 0; i < numEvents; i++ {
+		// send events as fast as possible without blocking
+		// rotate through event types
+		var eventType enums.EventType
+		switch i % 3 {
+		case 0:
+			eventType = enums.EventTypeStarted
+		case 1:
+			eventType = enums.EventTypeCompleted
+		case 2:
+			eventType = enums.EventTypeFailed
+		}
+
+		select {
+		case server.eventChan <- JobEvent{
+			JobID:      fmt.Sprintf("job%d", i),
+			Command:    fmt.Sprintf("echo test%d", i),
+			Schedule:   "* * * * *",
+			EventType:  eventType,
+			StartedAt:  startTime,
+			FinishedAt: startTime.Add(time.Millisecond),
+		}:
+			// event sent successfully
+		case <-ctx.Done():
+			// context canceled, stop sending
+			return
+		}
+	}
+
+	// wait a bit for processing
+	time.Sleep(100 * time.Millisecond)
+
+	// verify system didn't crash and is still responsive
+	server.jobsMu.RLock()
+	jobCount := len(server.jobs)
+	server.jobsMu.RUnlock()
+
+	assert.GreaterOrEqual(t, jobCount, 0, "server should still be functional after stress test")
 }

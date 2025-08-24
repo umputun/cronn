@@ -31,7 +31,7 @@ type SQLiteStore struct {
 	db *sqlx.DB
 }
 
-// NewSQLiteStore creates a new SQLite store
+// NewSQLiteStore creates a new SQLite store and initializes the database
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	db, err := sqlx.Open("sqlite", dbPath)
 	if err != nil {
@@ -46,11 +46,19 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
 	}
 
-	return &SQLiteStore{db: db}, nil
+	store := &SQLiteStore{db: db}
+
+	// initialize database tables
+	if err := store.initialize(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+
+	return store, nil
 }
 
-// Initialize creates the database schema
-func (s *SQLiteStore) Initialize() error {
+// initialize creates the database schema
+func (s *SQLiteStore) initialize() error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS jobs (
 			id TEXT PRIMARY KEY,

@@ -31,7 +31,7 @@ func TestNewSQLiteStore(t *testing.T) {
 	})
 }
 
-func TestSQLiteStore_Initialize(t *testing.T) {
+func TestSQLiteStore_TablesCreated(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -39,11 +39,7 @@ func TestSQLiteStore_Initialize(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	// initialize should create tables
-	err = store.Initialize()
-	require.NoError(t, err)
-
-	// verify tables exist
+	// verify tables were created during initialization
 	var count int
 	err = store.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jobs'").Scan(&count)
 	require.NoError(t, err)
@@ -52,10 +48,6 @@ func TestSQLiteStore_Initialize(t *testing.T) {
 	err = store.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='executions'").Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
-
-	// running initialize again should not fail
-	err = store.Initialize()
-	require.NoError(t, err)
 }
 
 func TestSQLiteStore_SaveAndLoadJobs(t *testing.T) {
@@ -65,9 +57,6 @@ func TestSQLiteStore_SaveAndLoadJobs(t *testing.T) {
 	store, err := NewSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.Close()
-
-	err = store.Initialize()
-	require.NoError(t, err)
 
 	// create test jobs
 	now := time.Now()
@@ -139,9 +128,6 @@ func TestSQLiteStore_RecordExecution(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	err = store.Initialize()
-	require.NoError(t, err)
-
 	// record an execution
 	started := time.Now().Add(-5 * time.Second)
 	finished := time.Now()
@@ -175,9 +161,6 @@ func TestSQLiteStore_UpdateExistingJobs(t *testing.T) {
 	store, err := NewSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.Close()
-
-	err = store.Initialize()
-	require.NoError(t, err)
 
 	// save initial job
 	now := time.Now()
@@ -218,9 +201,6 @@ func TestSQLiteStore_EmptyDatabase(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	err = store.Initialize()
-	require.NoError(t, err)
-
 	// loading from empty database should not fail
 	jobs, err := store.LoadJobs()
 	require.NoError(t, err)
@@ -248,13 +228,19 @@ func TestSQLiteStore_LoadJobs_Error(t *testing.T) {
 
 	store, err := NewSQLiteStore(dbPath)
 	require.NoError(t, err)
-	defer store.Close()
 
-	// don't initialize tables, so query will fail
+	// corrupt the database by dropping the jobs table
+	_, err = store.db.Exec("DROP TABLE jobs")
+	require.NoError(t, err)
+
+	// now LoadJobs should fail
 	jobs, err := store.LoadJobs()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to query jobs")
 	assert.Nil(t, jobs)
+
+	err = store.Close()
+	require.NoError(t, err)
 }
 
 func TestSQLiteStore_SaveJobs_Error(t *testing.T) {
@@ -265,7 +251,10 @@ func TestSQLiteStore_SaveJobs_Error(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	// don't initialize tables, so insert will fail
+	// corrupt the database by dropping the jobs table
+	_, err = store.db.Exec("DROP TABLE jobs")
+	require.NoError(t, err)
+
 	jobs := []JobInfo{
 		{
 			ID:       "test",
@@ -277,19 +266,4 @@ func TestSQLiteStore_SaveJobs_Error(t *testing.T) {
 	err = store.SaveJobs(jobs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to save job")
-}
-
-func TestSQLiteStore_Initialize_Error(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	store, err := NewSQLiteStore(dbPath)
-	require.NoError(t, err)
-
-	// close the database to cause error on Initialize
-	_ = store.db.Close()
-
-	err = store.Initialize()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to execute query")
 }

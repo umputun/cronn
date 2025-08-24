@@ -31,15 +31,6 @@ var templatesFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-// Persistence defines storage operations for job management
-type Persistence interface {
-	Initialize() error
-	LoadJobs() ([]persistence.JobInfo, error)
-	SaveJobs(jobs []persistence.JobInfo) error
-	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error
-	Close() error
-}
-
 // Server represents the web server
 type Server struct {
 	store          Persistence
@@ -51,6 +42,14 @@ type Server struct {
 	eventChan      chan JobEvent
 	updateInterval time.Duration
 	version        string
+}
+
+// Persistence defines storage operations for job management
+type Persistence interface {
+	LoadJobs() ([]persistence.JobInfo, error)
+	SaveJobs(jobs []persistence.JobInfo) error
+	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error
+	Close() error
 }
 
 // JobEvent represents job execution events
@@ -84,18 +83,10 @@ type Config struct {
 
 // New creates a new web server
 func New(cfg Config) (*Server, error) {
-	// create persistence store
+	// create persistence store (it initializes itself)
 	store, err := persistence.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
-	}
-
-	// initialize database schema
-	if initErr := store.Initialize(); initErr != nil {
-		if closeErr := store.Close(); closeErr != nil {
-			return nil, fmt.Errorf("failed to initialize database: %w (also failed to close: %v)", initErr, closeErr)
-		}
-		return nil, fmt.Errorf("failed to initialize database: %w", initErr)
 	}
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
@@ -716,9 +707,7 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 
 	// parse base template with all partials
 	base, err := template.New("base.html").Funcs(funcMap).ParseFS(templatesFS,
-		"templates/base.html",
-		"templates/dashboard.html",
-		"templates/partials/*.html")
+		"templates/base.html", "templates/dashboard.html", "templates/partials/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse base template: %w", err)
 	}
@@ -733,14 +722,6 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	templates["partials/jobs.html"] = partials
 
 	return templates, nil
-}
-
-// helper functions
-
-// HashCommand generates a SHA256 hash of a command for use as a unique ID
-func HashCommand(cmd string) string {
-	h := sha256.Sum256([]byte(cmd))
-	return hex.EncodeToString(h[:])
 }
 
 func (s *Server) getViewMode(r *http.Request) enums.ViewMode {
@@ -767,46 +748,6 @@ func (s *Server) getTheme(r *http.Request) enums.Theme {
 		return enums.ThemeAuto // default on parse error
 	}
 	return theme
-}
-
-// template helper functions
-
-func (s *Server) humanTime(t time.Time) string {
-	if t.IsZero() {
-		return "Never"
-	}
-	return t.Format("Jan 2, 15:04:05")
-}
-
-func (s *Server) humanDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	}
-	return fmt.Sprintf("%dd", int(d.Hours()/24))
-}
-
-func (s *Server) timeUntil(t time.Time) string {
-	if t.IsZero() {
-		return "Never"
-	}
-	d := time.Until(t)
-	if d < 0 {
-		return "Overdue"
-	}
-	return s.humanDuration(d)
-}
-
-func (s *Server) truncate(str string, n int) string {
-	if len(str) <= n {
-		return str
-	}
-	return str[:n] + "..."
 }
 
 // getSortMode gets the sort mode from cookie or defaults to "default"
@@ -880,4 +821,52 @@ func (s *Server) sortJobs(jobs []persistence.JobInfo, sortMode enums.SortMode) {
 			return jobs[i].SortIndex < jobs[j].SortIndex
 		})
 	}
+}
+
+// template helper functions
+
+func (s *Server) humanTime(t time.Time) string {
+	if t.IsZero() {
+		return "Never"
+	}
+	return t.Format("Jan 2, 15:04:05")
+}
+
+func (s *Server) humanDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+func (s *Server) timeUntil(t time.Time) string {
+	if t.IsZero() {
+		return "Never"
+	}
+	d := time.Until(t)
+	if d < 0 {
+		return "Overdue"
+	}
+	return s.humanDuration(d)
+}
+
+func (s *Server) truncate(str string, n int) string {
+	if len(str) <= n {
+		return str
+	}
+	return str[:n] + "..."
+}
+
+// helper functions
+
+// HashCommand generates a SHA256 hash of a command for use as a unique ID
+func HashCommand(cmd string) string {
+	h := sha256.Sum256([]byte(cmd))
+	return hex.EncodeToString(h[:])
 }

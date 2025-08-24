@@ -102,29 +102,31 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to set WAL mode: %w", walErr)
 	}
 
-	// create tables
-	if createErr := createTables(db); createErr != nil {
-		return nil, fmt.Errorf("failed to create tables: %w", createErr)
-	}
-
-	// parse templates
-	templates, err := parseTemplates()
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse templates: %w", err)
-	}
-
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-	return &Server{
+	s := &Server{
 		db:             db,
-		templates:      templates,
 		crontabFile:    cfg.CrontabFile,
 		jobs:           make(map[string]JobInfo),
 		parser:         parser,
 		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
 		version:        cfg.Version,
-	}, nil
+	}
+
+	// create tables
+	if createErr := s.createTables(db); createErr != nil {
+		return nil, fmt.Errorf("failed to create tables: %w", createErr)
+	}
+
+	// parse templates
+	templates, err := s.parseTemplates()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse templates: %w", err)
+	}
+	s.templates = templates
+
+	return s, nil
 }
 
 // Run starts the web server
@@ -479,8 +481,8 @@ func (s *Server) handleJobEvent(event JobEvent) {
 
 // handleDashboard renders the main dashboard
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	viewMode := getViewMode(r)
-	theme := getTheme(r)
+	viewMode := s.getViewMode(r)
+	theme := s.getTheme(r)
 	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
@@ -509,7 +511,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
-	viewMode := getViewMode(r)
+	viewMode := s.getViewMode(r)
 	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
@@ -541,7 +543,7 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 
 // handleViewModeToggle toggles between card and list view
 func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := getViewMode(r)
+	currentMode := s.getViewMode(r)
 	newMode := enums.ViewModeList
 	if currentMode == enums.ViewModeList {
 		newMode = enums.ViewModeCards
@@ -563,7 +565,7 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 
 // handleThemeToggle toggles the theme
 func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
-	currentTheme := getTheme(r)
+	currentTheme := s.getTheme(r)
 
 	// cycle: light -> dark -> auto -> light
 	var nextTheme enums.Theme
@@ -620,7 +622,7 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// get sorted jobs for the new mode
-	viewMode := getViewMode(r)
+	viewMode := s.getViewMode(r)
 	s.jobsMu.RLock()
 	jobs := make([]JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
@@ -696,7 +698,7 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// return the jobs partial with sorted jobs
-	viewMode := getViewMode(r)
+	viewMode := s.getViewMode(r)
 
 	s.jobsMu.RLock()
 	jobs := make([]JobInfo, 0, len(s.jobs))
@@ -753,14 +755,14 @@ func (s *Server) render(w http.ResponseWriter, page, tmplName string, data any) 
 }
 
 // parseTemplates parses all templates
-func parseTemplates() (map[string]*template.Template, error) {
+func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	templates := make(map[string]*template.Template)
 
 	funcMap := template.FuncMap{
-		"humanTime":     humanTime,
-		"humanDuration": humanDuration,
-		"truncate":      truncate,
-		"timeUntil":     timeUntil,
+		"humanTime":     s.humanTime,
+		"humanDuration": s.humanDuration,
+		"truncate":      s.truncate,
+		"timeUntil":     s.timeUntil,
 	}
 
 	// parse base template with all partials
@@ -785,7 +787,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 }
 
 // createTables creates database tables
-func createTables(db *sql.DB) error {
+func (s *Server) createTables(db *sql.DB) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS jobs (
 			id TEXT PRIMARY KEY,
@@ -829,7 +831,7 @@ func HashCommand(cmd string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func getViewMode(r *http.Request) enums.ViewMode {
+func (s *Server) getViewMode(r *http.Request) enums.ViewMode {
 	cookie, err := r.Cookie("view-mode")
 	if err != nil {
 		return enums.ViewModeCards // default
@@ -842,7 +844,7 @@ func getViewMode(r *http.Request) enums.ViewMode {
 	return mode
 }
 
-func getTheme(r *http.Request) enums.Theme {
+func (s *Server) getTheme(r *http.Request) enums.Theme {
 	cookie, err := r.Cookie("theme")
 	if err != nil {
 		return enums.ThemeAuto // default
@@ -857,14 +859,14 @@ func getTheme(r *http.Request) enums.Theme {
 
 // template helper functions
 
-func humanTime(t time.Time) string {
+func (s *Server) humanTime(t time.Time) string {
 	if t.IsZero() {
 		return "Never"
 	}
 	return t.Format("Jan 2, 15:04:05")
 }
 
-func humanDuration(d time.Duration) string {
+func (s *Server) humanDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
@@ -877,7 +879,7 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
 
-func timeUntil(t time.Time) string {
+func (s *Server) timeUntil(t time.Time) string {
 	if t.IsZero() {
 		return "Never"
 	}
@@ -885,14 +887,14 @@ func timeUntil(t time.Time) string {
 	if d < 0 {
 		return "Overdue"
 	}
-	return humanDuration(d)
+	return s.humanDuration(d)
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+func (s *Server) truncate(str string, n int) string {
+	if len(str) <= n {
+		return str
 	}
-	return s[:n] + "..."
+	return str[:n] + "..."
 }
 
 // getSortMode gets the sort mode from cookie or defaults to "default"

@@ -833,6 +833,9 @@ func TestServer_handleSortToggle(t *testing.T) {
 }
 
 func TestTemplateHelpers(t *testing.T) {
+	// create a minimal server instance for testing
+	s := &Server{}
+
 	t.Run("humanTime", func(t *testing.T) {
 		tests := []struct {
 			name     string
@@ -845,7 +848,7 @@ func TestTemplateHelpers(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := humanTime(tt.input)
+				result := s.humanTime(tt.input)
 				assert.Equal(t, tt.expected, result)
 			})
 		}
@@ -866,7 +869,7 @@ func TestTemplateHelpers(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := humanDuration(tt.input)
+				result := s.humanDuration(tt.input)
 				assert.Equal(t, tt.expected, result)
 			})
 		}
@@ -884,7 +887,7 @@ func TestTemplateHelpers(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := timeUntil(tt.input)
+				result := s.timeUntil(tt.input)
 				assert.Equal(t, tt.expected, result)
 			})
 		}
@@ -892,7 +895,7 @@ func TestTemplateHelpers(t *testing.T) {
 		// test future time dynamically to avoid timing issues
 		t.Run("future time", func(t *testing.T) {
 			futureTime := time.Now().Add(5 * time.Minute)
-			result := timeUntil(futureTime)
+			result := s.timeUntil(futureTime)
 			// should be approximately 5m, but allow for slight timing differences
 			assert.Contains(t, []string{"5m", "4m"}, result)
 		})
@@ -913,7 +916,7 @@ func TestTemplateHelpers(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := truncate(tt.input, tt.length)
+				result := s.truncate(tt.input, tt.length)
 				assert.Equal(t, tt.expected, result)
 			})
 		}

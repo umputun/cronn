@@ -228,7 +228,7 @@ func TestServer_PersistJobs(t *testing.T) {
 	// add test jobs to memory
 	now := time.Now()
 	server.jobsMu.Lock()
-	server.jobs[HashCommand("test1")] = &JobInfo{
+	server.jobs[HashCommand("test1")] = JobInfo{
 		ID:         HashCommand("test1"),
 		Command:    "test1",
 		Schedule:   "* * * * *",
@@ -239,7 +239,7 @@ func TestServer_PersistJobs(t *testing.T) {
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	server.jobs[HashCommand("test2")] = &JobInfo{
+	server.jobs[HashCommand("test2")] = JobInfo{
 		ID:         HashCommand("test2"),
 		Command:    "test2",
 		Schedule:   "@daily",
@@ -286,9 +286,9 @@ func TestServer_PersistJobs(t *testing.T) {
 
 	// CRITICAL: Test round-trip - clear memory and reload from database
 	server.jobsMu.Lock()
-	originalJob1 := *server.jobs[HashCommand("test1")] // save for comparison
-	originalJob2 := *server.jobs[HashCommand("test2")]
-	server.jobs = make(map[string]*JobInfo) // clear all jobs
+	originalJob1 := server.jobs[HashCommand("test1")] // save for comparison
+	originalJob2 := server.jobs[HashCommand("test2")]
+	server.jobs = make(map[string]JobInfo) // clear all jobs
 	server.jobsMu.Unlock()
 
 	// load jobs back from database
@@ -493,7 +493,7 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 
 	// clear jobs map to simulate fresh start
 	server.jobsMu.Lock()
-	server.jobs = make(map[string]*JobInfo)
+	server.jobs = make(map[string]JobInfo)
 	server.jobsMu.Unlock()
 
 	// load jobs from database

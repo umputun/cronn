@@ -33,8 +33,8 @@ type Server struct {
 	templates      map[string]*template.Template
 	crontabFile    string
 	jobsMu         sync.RWMutex
-	jobs           map[string]*JobInfo // job id -> job info
-	parser         *cron.Parser
+	jobs           map[string]JobInfo // job id -> job info
+	parser         cron.Parser
 	eventChan      chan JobEvent
 	updateInterval time.Duration
 }
@@ -67,7 +67,7 @@ type JobEvent struct {
 
 // TemplateData holds data for templates
 type TemplateData struct {
-	Jobs        []*JobInfo
+	Jobs        []JobInfo
 	CurrentYear int
 	ViewMode    string // "cards" or "list"
 	Theme       string // "light", "dark", "auto"
@@ -112,8 +112,8 @@ func New(cfg Config) (*Server, error) {
 		db:             db,
 		templates:      templates,
 		crontabFile:    cfg.CrontabFile,
-		jobs:           make(map[string]*JobInfo),
-		parser:         &parser,
+		jobs:           make(map[string]JobInfo),
+		parser:         parser,
 		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
 	}, nil
@@ -159,7 +159,7 @@ func (s *Server) Run(ctx context.Context, address string) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("[ERROR] failed to shutdown server: %v", err)
+			log.Printf("[WARN] failed to shutdown server: %v", err)
 		}
 	}()
 
@@ -245,7 +245,7 @@ func (s *Server) loadJobsFromDB() {
 	defer s.jobsMu.Unlock()
 
 	for rows.Next() {
-		job := &JobInfo{}
+		job := JobInfo{}
 		var nextRun, lastRun sql.NullInt64
 		var createdAt, updatedAt int64
 
@@ -267,10 +267,8 @@ func (s *Server) loadJobsFromDB() {
 		}
 
 		// calculate next run from schedule if not set
-		if job.Schedule != "" && job.NextRun.IsZero() {
-			if sched, schedErr := s.parser.Parse(job.Schedule); schedErr == nil {
-				job.NextRun = sched.Next(time.Now())
-			}
+		if job.NextRun.IsZero() {
+			s.updateNextRun(&job)
 		}
 
 		s.jobs[job.ID] = job
@@ -287,7 +285,7 @@ func (s *Server) loadJobsFromCrontab() {
 	parser := crontab.New(s.crontabFile, 0, nil)
 	specs, err := parser.List()
 	if err != nil {
-		log.Printf("[ERROR] failed to parse crontab: %v", err)
+		log.Printf("[WARN] failed to parse crontab: %v", err)
 		return
 	}
 
@@ -318,7 +316,7 @@ func (s *Server) loadJobsFromCrontab() {
 			job.SortIndex = idx // update sort index in case order changed
 			delete(oldJobs, id)
 		} else {
-			s.jobs[id] = &JobInfo{
+			s.jobs[id] = JobInfo{
 				ID:        id,
 				Command:   spec.Command,
 				Schedule:  spec.Spec,
@@ -344,7 +342,7 @@ func (s *Server) loadJobsFromCrontab() {
 func (s *Server) persistJobs() {
 	tx, err := s.db.Begin()
 	if err != nil {
-		log.Printf("[ERROR] failed to begin transaction: %v", err)
+		log.Printf("[WARN] failed to begin transaction: %v", err)
 		return
 	}
 	defer tx.Rollback()
@@ -364,12 +362,12 @@ func (s *Server) persistJobs() {
 			job.LastRun.Unix(), status, job.Enabled,
 			job.CreatedAt.Unix(), job.UpdatedAt.Unix(), job.SortIndex)
 		if err != nil {
-			log.Printf("[ERROR] failed to persist job: %v", err)
+			log.Printf("[WARN] failed to persist job: %v", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("[ERROR] failed to commit transaction: %v", err)
+		log.Printf("[WARN] failed to commit transaction: %v", err)
 	}
 }
 
@@ -395,7 +393,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	job, exists := s.jobs[id]
 	if !exists {
 		// create new job entry if it doesn't exist
-		job = &JobInfo{
+		job = JobInfo{
 			ID:        id,
 			Command:   event.Command,
 			Schedule:  event.Schedule,
@@ -404,13 +402,12 @@ func (s *Server) handleJobEvent(event JobEvent) {
 			Enabled:   true,
 		}
 		// calculate next run for new job
-		if schedule, err := s.parser.Parse(event.Schedule); err == nil {
-			job.NextRun = schedule.Next(time.Now())
+		s.updateNextRun(&job)
+		if !job.NextRun.IsZero() {
 			log.Printf("[DEBUG] calculated NextRun for new job %s: %v", event.Command, job.NextRun)
 		} else {
-			log.Printf("[ERROR] failed to parse schedule %q for job %s: %v", event.Schedule, event.Command, err)
+			log.Printf("[WARN] failed to parse schedule %q for job %s", event.Schedule, event.Command)
 		}
-		s.jobs[id] = job
 	}
 
 	switch event.EventType {
@@ -418,25 +415,19 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.IsRunning = true
 		job.LastRun = event.StartedAt
 		job.LastStatus = "running"
-		job.UpdatedAt = time.Now()
 	case "completed":
 		job.IsRunning = false
 		job.LastStatus = "success"
-		job.UpdatedAt = time.Now()
-		// recalculate next run after job completion
-		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
-			job.NextRun = schedule.Next(time.Now())
-		}
+		s.updateNextRun(&job)
 	case "failed":
 		job.IsRunning = false
 		job.LastStatus = "failed"
-		job.UpdatedAt = time.Now()
-		// recalculate next run after job failure
-		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
-			job.NextRun = schedule.Next(time.Now())
-		}
+		s.updateNextRun(&job)
 	}
 	job.UpdatedAt = time.Now()
+
+	// store the updated job back in the map
+	s.jobs[id] = job
 
 	// save execution to database
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -448,7 +439,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		id, event.StartedAt.Unix(), event.FinishedAt.Unix(),
 		job.LastStatus, event.ExitCode)
 	if err != nil {
-		log.Printf("[ERROR] failed to save execution: %v", err)
+		log.Printf("[WARN] failed to save execution: %v", err)
 	}
 }
 
@@ -459,13 +450,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
-	jobs := make([]*JobInfo, 0, len(s.jobs))
+	jobs := make([]JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		// recalculate next run times before sorting
-		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
-			job.NextRun = schedule.Next(time.Now())
-		}
-		jobs = append(jobs, job)
+		// work with a copy, recalculate next run times before sorting
+		jobCopy := job
+		s.updateNextRun(&jobCopy)
+		jobs = append(jobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
 
@@ -489,13 +479,12 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
-	jobs := make([]*JobInfo, 0, len(s.jobs))
+	jobs := make([]JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		// recalculate next run times
-		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
-			job.NextRun = schedule.Next(time.Now())
-		}
-		jobs = append(jobs, job)
+		// work with a copy, recalculate next run times
+		jobCopy := job
+		s.updateNextRun(&jobCopy)
+		jobs = append(jobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
 
@@ -594,13 +583,12 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	// get sorted jobs for the new mode
 	viewMode := getViewMode(r)
 	s.jobsMu.RLock()
-	jobs := make([]*JobInfo, 0, len(s.jobs))
+	jobs := make([]JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		// recalculate next run times before sorting
-		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
-			job.NextRun = schedule.Next(time.Now())
-		}
-		jobs = append(jobs, job)
+		// work with a copy, recalculate next run times before sorting
+		jobCopy := job
+		s.updateNextRun(&jobCopy)
+		jobs = append(jobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
 
@@ -673,13 +661,12 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	viewMode := getViewMode(r)
 
 	s.jobsMu.RLock()
-	jobs := make([]*JobInfo, 0, len(s.jobs))
+	jobs := make([]JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		// recalculate next run times
-		if schedule, err := s.parser.Parse(job.Schedule); err == nil {
-			job.NextRun = schedule.Next(time.Now())
-		}
-		jobs = append(jobs, job)
+		// work with a copy, recalculate next run times
+		jobCopy := job
+		s.updateNextRun(&jobCopy)
+		jobs = append(jobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
 
@@ -708,14 +695,14 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 func (s *Server) render(w http.ResponseWriter, page, tmplName string, data any) {
 	tmpl, ok := s.templates[page]
 	if !ok {
-		log.Printf("[ERROR] template %s not found", page)
+		log.Printf("[WARN] template %s not found", page)
 		http.Error(w, "Template not found", http.StatusInternalServerError)
 		return
 	}
 
 	buf := new(bytes.Buffer)
 	if err := tmpl.ExecuteTemplate(buf, tmplName, data); err != nil {
-		log.Printf("[ERROR] failed to execute template: %v", err)
+		log.Printf("[WARN] failed to execute template: %v", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
 		return
 	}
@@ -723,7 +710,7 @@ func (s *Server) render(w http.ResponseWriter, page, tmplName string, data any) 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, err := buf.WriteTo(w); err != nil {
-		log.Printf("[ERROR] failed to write response: %v", err)
+		log.Printf("[WARN] failed to write response: %v", err)
 	}
 }
 
@@ -883,8 +870,18 @@ func (s *Server) getSortMode(r *http.Request) string {
 	}
 }
 
+// updateNextRun updates the next run time for a job based on its schedule
+func (s *Server) updateNextRun(job *JobInfo) {
+	if job.Schedule == "" {
+		return
+	}
+	if schedule, err := s.parser.Parse(job.Schedule); err == nil {
+		job.NextRun = schedule.Next(time.Now())
+	}
+}
+
 // sortJobs sorts jobs based on the sort mode
-func (s *Server) sortJobs(jobs []*JobInfo, sortMode string) {
+func (s *Server) sortJobs(jobs []JobInfo, sortMode string) {
 	switch sortMode {
 	case "lastrun":
 		// sort by last run time, most recent first

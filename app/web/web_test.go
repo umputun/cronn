@@ -74,7 +74,7 @@ func TestServer_sortJobs(t *testing.T) {
 
 	// create test jobs with different attributes
 	now := time.Now()
-	jobs := []*JobInfo{
+	jobs := []JobInfo{
 		{ID: "1", Command: "cmd1", SortIndex: 2, LastRun: now.Add(-2 * time.Hour), NextRun: now.Add(2 * time.Hour)},
 		{ID: "2", Command: "cmd2", SortIndex: 0, LastRun: now.Add(-1 * time.Hour), NextRun: now.Add(1 * time.Hour)},
 		{ID: "3", Command: "cmd3", SortIndex: 1, LastRun: now.Add(-3 * time.Hour), NextRun: now.Add(30 * time.Minute)},
@@ -82,7 +82,7 @@ func TestServer_sortJobs(t *testing.T) {
 	}
 
 	t.Run("default sort", func(t *testing.T) {
-		sorted := make([]*JobInfo, len(jobs))
+		sorted := make([]JobInfo, len(jobs))
 		copy(sorted, jobs)
 		server.sortJobs(sorted, "default")
 
@@ -94,7 +94,7 @@ func TestServer_sortJobs(t *testing.T) {
 	})
 
 	t.Run("sort by last run", func(t *testing.T) {
-		sorted := make([]*JobInfo, len(jobs))
+		sorted := make([]JobInfo, len(jobs))
 		copy(sorted, jobs)
 		server.sortJobs(sorted, "lastrun")
 
@@ -111,7 +111,7 @@ func TestServer_sortJobs(t *testing.T) {
 	})
 
 	t.Run("sort by next run", func(t *testing.T) {
-		sorted := make([]*JobInfo, len(jobs))
+		sorted := make([]JobInfo, len(jobs))
 		copy(sorted, jobs)
 		server.sortJobs(sorted, "nextrun")
 
@@ -126,7 +126,7 @@ func TestServer_sortJobs(t *testing.T) {
 		// create jobs with some having equal next run times
 		sameTime := now.Add(1 * time.Hour)
 		sameTime2 := now.Add(2 * time.Hour)
-		jobsEqual := []*JobInfo{
+		jobsEqual := []JobInfo{
 			{ID: "A", Command: "cmdA", SortIndex: 0, NextRun: sameTime, LastRun: sameTime2},
 			{ID: "B", Command: "cmdB", SortIndex: 1, NextRun: sameTime, LastRun: sameTime2},
 			{ID: "C", Command: "cmdC", SortIndex: 2, NextRun: sameTime, LastRun: sameTime2},
@@ -135,7 +135,7 @@ func TestServer_sortJobs(t *testing.T) {
 		}
 
 		// test next run sorting stability
-		sortedNext := make([]*JobInfo, len(jobsEqual))
+		sortedNext := make([]JobInfo, len(jobsEqual))
 		copy(sortedNext, jobsEqual)
 		server.sortJobs(sortedNext, "nextrun")
 
@@ -147,7 +147,7 @@ func TestServer_sortJobs(t *testing.T) {
 		assert.Equal(t, "E", sortedNext[4].ID, "E should be last among equal times")
 
 		// test last run sorting stability
-		sortedLast := make([]*JobInfo, len(jobsEqual))
+		sortedLast := make([]JobInfo, len(jobsEqual))
 		copy(sortedLast, jobsEqual)
 		server.sortJobs(sortedLast, "lastrun")
 
@@ -716,9 +716,9 @@ func TestServer_Templates(t *testing.T) {
 		require.NotNil(t, jobsCards)
 
 		data := struct {
-			Jobs []*JobInfo
+			Jobs []JobInfo
 		}{
-			Jobs: []*JobInfo{
+			Jobs: []JobInfo{
 				{
 					ID:         "test123",
 					Command:    "echo test",

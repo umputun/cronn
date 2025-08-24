@@ -17,6 +17,7 @@ import (
 
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/web/enums"
+	"github.com/umputun/cronn/app/web/persistence"
 )
 
 func TestNew(t *testing.T) {
@@ -35,19 +36,18 @@ func TestNew(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, server)
 	assert.Equal(t, "crontab", server.crontabFile)
-	assert.NotNil(t, server.db)
+	assert.NotNil(t, server.store)
 	assert.NotNil(t, server.templates)
 	assert.NotNil(t, server.jobs)
 	assert.NotNil(t, server.parser)
 	assert.NotNil(t, server.eventChan)
 
-	// check database schema was created
-	var count int
-	err = server.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jobs'").Scan(&count)
+	// verify store is initialized by loading jobs (should not fail)
+	jobs, err := server.store.LoadJobs()
 	require.NoError(t, err)
-	assert.Equal(t, 1, count)
+	assert.NotNil(t, jobs)
 
-	_ = server.db.Close()
+	_ = server.store.Close()
 }
 
 func TestHashCommand(t *testing.T) {
@@ -76,7 +76,7 @@ func TestServer_sortJobs(t *testing.T) {
 
 	// create test jobs with different attributes
 	now := time.Now()
-	jobs := []JobInfo{
+	jobs := []persistence.JobInfo{
 		{ID: "1", Command: "cmd1", SortIndex: 2, LastRun: now.Add(-2 * time.Hour), NextRun: now.Add(2 * time.Hour)},
 		{ID: "2", Command: "cmd2", SortIndex: 0, LastRun: now.Add(-1 * time.Hour), NextRun: now.Add(1 * time.Hour)},
 		{ID: "3", Command: "cmd3", SortIndex: 1, LastRun: now.Add(-3 * time.Hour), NextRun: now.Add(30 * time.Minute)},
@@ -84,7 +84,7 @@ func TestServer_sortJobs(t *testing.T) {
 	}
 
 	t.Run("default sort", func(t *testing.T) {
-		sorted := make([]JobInfo, len(jobs))
+		sorted := make([]persistence.JobInfo, len(jobs))
 		copy(sorted, jobs)
 		server.sortJobs(sorted, enums.SortModeDefault)
 
@@ -96,7 +96,7 @@ func TestServer_sortJobs(t *testing.T) {
 	})
 
 	t.Run("sort by last run", func(t *testing.T) {
-		sorted := make([]JobInfo, len(jobs))
+		sorted := make([]persistence.JobInfo, len(jobs))
 		copy(sorted, jobs)
 		server.sortJobs(sorted, enums.SortModeLastrun)
 
@@ -113,7 +113,7 @@ func TestServer_sortJobs(t *testing.T) {
 	})
 
 	t.Run("sort by next run", func(t *testing.T) {
-		sorted := make([]JobInfo, len(jobs))
+		sorted := make([]persistence.JobInfo, len(jobs))
 		copy(sorted, jobs)
 		server.sortJobs(sorted, enums.SortModeNextrun)
 
@@ -128,7 +128,7 @@ func TestServer_sortJobs(t *testing.T) {
 		// create jobs with some having equal next run times
 		sameTime := now.Add(1 * time.Hour)
 		sameTime2 := now.Add(2 * time.Hour)
-		jobsEqual := []JobInfo{
+		jobsEqual := []persistence.JobInfo{
 			{ID: "A", Command: "cmdA", SortIndex: 0, NextRun: sameTime, LastRun: sameTime2},
 			{ID: "B", Command: "cmdB", SortIndex: 1, NextRun: sameTime, LastRun: sameTime2},
 			{ID: "C", Command: "cmdC", SortIndex: 2, NextRun: sameTime, LastRun: sameTime2},
@@ -137,7 +137,7 @@ func TestServer_sortJobs(t *testing.T) {
 		}
 
 		// test next run sorting stability
-		sortedNext := make([]JobInfo, len(jobsEqual))
+		sortedNext := make([]persistence.JobInfo, len(jobsEqual))
 		copy(sortedNext, jobsEqual)
 		server.sortJobs(sortedNext, enums.SortModeNextrun)
 
@@ -149,7 +149,7 @@ func TestServer_sortJobs(t *testing.T) {
 		assert.Equal(t, "E", sortedNext[4].ID, "E should be last among equal times")
 
 		// test last run sorting stability
-		sortedLast := make([]JobInfo, len(jobsEqual))
+		sortedLast := make([]persistence.JobInfo, len(jobsEqual))
 		copy(sortedLast, jobsEqual)
 		server.sortJobs(sortedLast, enums.SortModeLastrun)
 
@@ -203,7 +203,7 @@ func TestServer_handleSortModeChange(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	tests := []struct {
 		name       string
@@ -252,7 +252,7 @@ func TestServer_OnJobStart(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// start event processor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -297,7 +297,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// start event processor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -383,43 +383,28 @@ func TestServer_syncWithCrontab(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// load jobs from crontab
 	server.loadJobsFromCrontab()
 
-	// verify jobs were synced
-	var count int
-	err = server.db.QueryRow("SELECT COUNT(*) FROM jobs").Scan(&count)
+	// persist the jobs to database
+	server.persistJobs()
+
+	// verify jobs were synced by loading from store
+	jobs, err := server.store.LoadJobs()
 	require.NoError(t, err)
-	assert.Equal(t, 3, count)
-
-	// verify job details
-	rows, err := server.db.Query("SELECT command, schedule FROM jobs ORDER BY command")
-	require.NoError(t, err)
-	defer rows.Close()
-
-	var jobs []struct {
-		Command  string
-		Schedule string
-	}
-	for rows.Next() {
-		var job struct {
-			Command  string
-			Schedule string
-		}
-		err = rows.Scan(&job.Command, &job.Schedule)
-		require.NoError(t, err)
-		jobs = append(jobs, job)
-	}
-
 	assert.Len(t, jobs, 3)
-	assert.Equal(t, "echo daily", jobs[0].Command)
-	assert.Equal(t, "@daily", jobs[0].Schedule)
-	assert.Equal(t, "echo five-minutes", jobs[1].Command)
-	assert.Equal(t, "*/5 * * * *", jobs[1].Schedule)
-	assert.Equal(t, "echo hourly", jobs[2].Command)
-	assert.Equal(t, "0 * * * *", jobs[2].Schedule)
+
+	// create map for easier verification
+	jobMap := make(map[string]string)
+	for _, job := range jobs {
+		jobMap[job.Command] = job.Schedule
+	}
+
+	assert.Equal(t, "@daily", jobMap["echo daily"])
+	assert.Equal(t, "*/5 * * * *", jobMap["echo five-minutes"])
+	assert.Equal(t, "0 * * * *", jobMap["echo hourly"])
 }
 
 func TestServer_handleDashboard(t *testing.T) {
@@ -436,7 +421,7 @@ func TestServer_handleDashboard(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// start event processor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -480,7 +465,7 @@ func TestServer_handleAPIJobs(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// start event processor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -546,7 +531,7 @@ func TestServer_handleToggleTheme(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	tests := []struct {
 		name     string
@@ -594,7 +579,7 @@ func TestServer_handleToggleView(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	tests := []struct {
 		name     string
@@ -650,7 +635,7 @@ func TestServer_parseJobSpecs(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// load jobs from crontab
 	server.loadJobsFromCrontab()
@@ -695,7 +680,7 @@ func TestServer_Templates(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// test that templates are parsed correctly
 	// all templates are parsed into the base template
@@ -728,9 +713,9 @@ func TestServer_Templates(t *testing.T) {
 		require.NotNil(t, jobsCards)
 
 		data := struct {
-			Jobs []JobInfo
+			Jobs []persistence.JobInfo
 		}{
-			Jobs: []JobInfo{
+			Jobs: []persistence.JobInfo{
 				{
 					ID:         "test123",
 					Command:    "echo test",
@@ -769,7 +754,7 @@ func TestServer_handleSortToggle(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// add test jobs with different schedules
 	startTime := time.Now()
@@ -937,7 +922,7 @@ func TestServer_render_ErrorHandling(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	t.Run("template not found", func(t *testing.T) {
 		rec := httptest.NewRecorder()
@@ -980,7 +965,7 @@ func TestServer_Run(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

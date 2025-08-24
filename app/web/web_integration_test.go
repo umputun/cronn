@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/cronn/app/web/enums"
+	"github.com/umputun/cronn/app/web/persistence"
 )
 
 func TestServer_IntegrationHandlers(t *testing.T) {
@@ -39,7 +40,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// start server in background
 	ctx, cancel := context.WithCancel(context.Background())
@@ -161,7 +162,7 @@ func TestServer_ProcessEvents(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// test event processing
 	ctx, cancel := context.WithCancel(context.Background())
@@ -228,12 +229,12 @@ func TestServer_PersistJobs(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// add test jobs to memory
 	now := time.Now()
 	server.jobsMu.Lock()
-	server.jobs[HashCommand("test1")] = JobInfo{
+	server.jobs[HashCommand("test1")] = persistence.JobInfo{
 		ID:         HashCommand("test1"),
 		Command:    "test1",
 		Schedule:   "* * * * *",
@@ -244,7 +245,7 @@ func TestServer_PersistJobs(t *testing.T) {
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	server.jobs[HashCommand("test2")] = JobInfo{
+	server.jobs[HashCommand("test2")] = persistence.JobInfo{
 		ID:         HashCommand("test2"),
 		Command:    "test2",
 		Schedule:   "@daily",
@@ -261,39 +262,31 @@ func TestServer_PersistJobs(t *testing.T) {
 	server.persistJobs()
 
 	// verify jobs were persisted to database
-	rows, err := server.db.Query("SELECT command, schedule, last_status FROM jobs ORDER BY command")
+	loadedJobs, err := server.store.LoadJobs()
 	require.NoError(t, err)
-	defer rows.Close()
+	assert.Len(t, loadedJobs, 2)
 
-	var jobs []struct {
-		Command  string
-		Schedule string
-		Status   string
-	}
-	for rows.Next() {
-		var job struct {
-			Command  string
-			Schedule string
-			Status   string
-		}
-		err = rows.Scan(&job.Command, &job.Schedule, &job.Status)
-		require.NoError(t, err)
-		jobs = append(jobs, job)
+	// create map for easier verification
+	jobMap := make(map[string]persistence.JobInfo)
+	for _, job := range loadedJobs {
+		jobMap[job.Command] = job
 	}
 
-	assert.Len(t, jobs, 2)
-	assert.Equal(t, "test1", jobs[0].Command)
-	assert.Equal(t, "* * * * *", jobs[0].Schedule)
-	assert.Equal(t, enums.JobStatusSuccess.String(), jobs[0].Status)
-	assert.Equal(t, "test2", jobs[1].Command)
-	assert.Equal(t, "@daily", jobs[1].Schedule)
-	assert.Equal(t, enums.JobStatusFailed.String(), jobs[1].Status)
+	// verify test1
+	test1 := jobMap["test1"]
+	assert.Equal(t, "* * * * *", test1.Schedule)
+	assert.Equal(t, enums.JobStatusSuccess, test1.LastStatus)
+
+	// verify test2
+	test2 := jobMap["test2"]
+	assert.Equal(t, "@daily", test2.Schedule)
+	assert.Equal(t, enums.JobStatusFailed, test2.LastStatus)
 
 	// CRITICAL: Test round-trip - clear memory and reload from database
 	server.jobsMu.Lock()
 	originalJob1 := server.jobs[HashCommand("test1")] // save for comparison
 	originalJob2 := server.jobs[HashCommand("test2")]
-	server.jobs = make(map[string]JobInfo) // clear all jobs
+	server.jobs = make(map[string]persistence.JobInfo) // clear all jobs
 	server.jobsMu.Unlock()
 
 	// load jobs back from database
@@ -339,7 +332,7 @@ func TestServer_SyncJobs(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -392,7 +385,7 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	// create first server instance
 	server1, err := New(cfg)
 	require.NoError(t, err)
-	defer server1.db.Close()
+	defer server1.store.Close()
 
 	// load jobs from crontab first so events can update them
 	server1.loadJobsFromCrontab()
@@ -433,12 +426,12 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	server1.jobsMu.RUnlock()
 
 	// close first server
-	require.NoError(t, server1.db.Close())
+	require.NoError(t, server1.store.Close())
 
 	// create second server instance (simulating restart)
 	server2, err := New(cfg)
 	require.NoError(t, err)
-	defer server2.db.Close()
+	defer server2.store.Close()
 
 	// load from database (this happens in Run(), but we call directly for testing)
 	server2.loadJobsFromDB()
@@ -481,26 +474,51 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// insert test data directly into database
 	now := time.Now()
-	_, err = server.db.Exec(`
-		INSERT INTO jobs (id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at)
-		VALUES 
-			(?, 'echo test1', '* * * * *', ?, ?, 'success', 1, ?, ?),
-			(?, 'echo test2', '0 * * * *', ?, ?, 'failed', 1, ?, ?),
-			(?, 'echo test3', '@daily', ?, ?, 'idle', 1, ?, ?)
-	`,
-		HashCommand("echo test1"), now.Add(time.Minute).Unix(), now.Unix(), now.Unix(), now.Unix(),
-		HashCommand("echo test2"), now.Add(time.Hour).Unix(), now.Add(-time.Hour).Unix(), now.Unix(), now.Unix(),
-		HashCommand("echo test3"), now.Add(time.Hour*24).Unix(), 0, now.Unix(), now.Unix(),
-	)
+	testJobs := []persistence.JobInfo{
+		{
+			ID:         HashCommand("echo test1"),
+			Command:    "echo test1",
+			Schedule:   "* * * * *",
+			NextRun:    now.Add(time.Minute),
+			LastRun:    now,
+			LastStatus: enums.JobStatusSuccess,
+			Enabled:    true,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		},
+		{
+			ID:         HashCommand("echo test2"),
+			Command:    "echo test2",
+			Schedule:   "0 * * * *",
+			NextRun:    now.Add(time.Hour),
+			LastRun:    now.Add(-time.Hour),
+			LastStatus: enums.JobStatusFailed,
+			Enabled:    true,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		},
+		{
+			ID:         HashCommand("echo test3"),
+			Command:    "echo test3",
+			Schedule:   "@daily",
+			NextRun:    now.Add(time.Hour * 24),
+			LastRun:    time.Time{}, // zero time
+			LastStatus: enums.JobStatusIdle,
+			Enabled:    true,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		},
+	}
+	err = server.store.SaveJobs(testJobs)
 	require.NoError(t, err)
 
 	// clear jobs map to simulate fresh start
 	server.jobsMu.Lock()
-	server.jobs = make(map[string]JobInfo)
+	server.jobs = make(map[string]persistence.JobInfo)
 	server.jobsMu.Unlock()
 
 	// load jobs from database
@@ -532,7 +550,7 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 	assert.Equal(t, "echo test3", job3.Command)
 	assert.Equal(t, "@daily", job3.Schedule)
 	assert.Equal(t, enums.JobStatusIdle, job3.LastStatus)
-	assert.Equal(t, int64(0), job3.LastRun.Unix(), "job3 should have zero LastRun timestamp")
+	assert.True(t, job3.LastRun.IsZero(), "job3 should have zero LastRun timestamp")
 	assert.False(t, job3.NextRun.IsZero(), "NextRun should be calculated from schedule")
 }
 
@@ -550,7 +568,7 @@ func TestServer_HandleJobEvent(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.db.Close()
+	defer server.store.Close()
 
 	// test job start event
 	event := JobEvent{

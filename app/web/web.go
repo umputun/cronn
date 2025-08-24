@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"embed"
 	"encoding/hex"
 	"fmt"
@@ -20,10 +19,10 @@ import (
 	"github.com/go-pkgz/rest/logger"
 	"github.com/go-pkgz/routegroup"
 	"github.com/robfig/cron/v3"
-	_ "modernc.org/sqlite" // SQLite driver
 
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/web/enums"
+	"github.com/umputun/cronn/app/web/persistence"
 )
 
 //go:embed templates/*.html templates/partials/*.html
@@ -32,32 +31,35 @@ var templatesFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
+// Persistence defines storage operations for job management
+type Persistence interface {
+	// Initialize creates database schema
+	Initialize() error
+
+	// LoadJobs retrieves all jobs from storage
+	LoadJobs() ([]persistence.JobInfo, error)
+
+	// SaveJobs persists multiple jobs in a transaction
+	SaveJobs(jobs []persistence.JobInfo) error
+
+	// RecordExecution logs a job execution event
+	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error
+
+	// Close closes the storage connection
+	Close() error
+}
+
 // Server represents the web server
 type Server struct {
-	db             *sql.DB
+	store          Persistence
 	templates      map[string]*template.Template
 	crontabFile    string
 	jobsMu         sync.RWMutex
-	jobs           map[string]JobInfo // job id -> job info
+	jobs           map[string]persistence.JobInfo // job id -> job info
 	parser         cron.Parser
 	eventChan      chan JobEvent
 	updateInterval time.Duration
 	version        string
-}
-
-// JobInfo represents a cron job in the UI
-type JobInfo struct {
-	ID         string // SHA256 of command
-	Command    string
-	Schedule   string
-	NextRun    time.Time
-	LastRun    time.Time
-	LastStatus enums.JobStatus
-	IsRunning  bool
-	Enabled    bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	SortIndex  int // original order in crontab
 }
 
 // JobEvent represents job execution events
@@ -73,7 +75,7 @@ type JobEvent struct {
 
 // TemplateData holds data for templates
 type TemplateData struct {
-	Jobs        []JobInfo
+	Jobs        []persistence.JobInfo
 	CurrentYear int
 	ViewMode    enums.ViewMode
 	Theme       enums.Theme
@@ -91,37 +93,38 @@ type Config struct {
 
 // New creates a new web server
 func New(cfg Config) (*Server, error) {
-	// open database
-	db, err := sql.Open("sqlite", cfg.DBPath)
+	// create persistence store
+	store, err := persistence.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("failed to create store: %w", err)
 	}
 
-	// enable WAL mode for better concurrency
-	if _, walErr := db.Exec("PRAGMA journal_mode=WAL"); walErr != nil {
-		return nil, fmt.Errorf("failed to set WAL mode: %w", walErr)
+	// initialize database schema
+	if initErr := store.Initialize(); initErr != nil {
+		if closeErr := store.Close(); closeErr != nil {
+			return nil, fmt.Errorf("failed to initialize database: %w (also failed to close: %v)", initErr, closeErr)
+		}
+		return nil, fmt.Errorf("failed to initialize database: %w", initErr)
 	}
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 	s := &Server{
-		db:             db,
+		store:          store,
 		crontabFile:    cfg.CrontabFile,
-		jobs:           make(map[string]JobInfo),
+		jobs:           make(map[string]persistence.JobInfo),
 		parser:         parser,
 		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
 		version:        cfg.Version,
 	}
 
-	// create tables
-	if createErr := s.createTables(db); createErr != nil {
-		return nil, fmt.Errorf("failed to create tables: %w", createErr)
-	}
-
 	// parse templates
 	templates, err := s.parseTemplates()
 	if err != nil {
+		if closeErr := store.Close(); closeErr != nil {
+			return nil, fmt.Errorf("failed to parse templates: %w (also failed to close: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
 	s.templates = templates
@@ -270,38 +273,16 @@ func (s *Server) syncJobs(ctx context.Context) {
 
 // loadJobsFromDB loads existing job history from database
 func (s *Server) loadJobsFromDB() {
-	rows, err := s.db.Query(` SELECT id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at FROM jobs`)
+	jobs, err := s.store.LoadJobs()
 	if err != nil {
 		log.Printf("[WARN] failed to load jobs from database: %v", err)
 		return
 	}
-	defer rows.Close()
 
 	s.jobsMu.Lock()
 	defer s.jobsMu.Unlock()
 
-	for rows.Next() {
-		job := JobInfo{}
-		var nextRun, lastRun sql.NullInt64
-		var createdAt, updatedAt int64
-
-		err := rows.Scan(&job.ID, &job.Command, &job.Schedule, &nextRun, &lastRun,
-			&job.LastStatus, &job.Enabled, &createdAt, &updatedAt)
-		if err != nil {
-			log.Printf("[WARN] failed to scan job row: %v", err)
-			continue
-		}
-
-		// convert timestamps
-		job.CreatedAt = time.Unix(createdAt, 0)
-		job.UpdatedAt = time.Unix(updatedAt, 0)
-		if nextRun.Valid {
-			job.NextRun = time.Unix(nextRun.Int64, 0)
-		}
-		if lastRun.Valid {
-			job.LastRun = time.Unix(lastRun.Int64, 0)
-		}
-
+	for _, job := range jobs {
 		// calculate next run from schedule if not set
 		if job.NextRun.IsZero() {
 			s.updateNextRun(&job)
@@ -309,10 +290,6 @@ func (s *Server) loadJobsFromDB() {
 
 		s.jobs[job.ID] = job
 		log.Printf("[DEBUG] loaded job from DB: %s (%s)", job.Command, job.LastStatus)
-	}
-
-	if err := rows.Err(); err != nil {
-		log.Printf("[WARN] error iterating job rows: %v", err)
 	}
 }
 
@@ -326,8 +303,6 @@ func (s *Server) loadJobsFromCrontab() {
 	}
 
 	s.jobsMu.Lock()
-	defer s.jobsMu.Unlock()
-
 	// mark all jobs as potentially removed
 	oldJobs := make(map[string]bool)
 	for id := range s.jobs {
@@ -351,8 +326,9 @@ func (s *Server) loadJobsFromCrontab() {
 			job.UpdatedAt = time.Now()
 			job.SortIndex = idx // update sort index in case order changed
 			delete(oldJobs, id)
+			s.jobs[id] = job
 		} else {
-			s.jobs[id] = JobInfo{
+			s.jobs[id] = persistence.JobInfo{
 				ID:        id,
 				Command:   spec.Command,
 				Schedule:  spec.Spec,
@@ -369,41 +345,29 @@ func (s *Server) loadJobsFromCrontab() {
 	for id := range oldJobs {
 		delete(s.jobs, id)
 	}
+	s.jobsMu.Unlock()
 
-	// persist to database
+	// persist to database (after releasing the lock)
 	s.persistJobs()
 }
 
 // persistJobs saves jobs to database
 func (s *Server) persistJobs() {
-	tx, err := s.db.Begin()
-	if err != nil {
-		log.Printf("[WARN] failed to begin transaction: %v", err)
-		return
-	}
-	defer tx.Rollback()
-
+	s.jobsMu.RLock()
+	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		// determine status to save
 		status := job.LastStatus
 		if job.IsRunning {
 			status = enums.JobStatusRunning
 		}
-
-		_, err := tx.Exec(`
-			INSERT OR REPLACE INTO jobs 
-			(id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at, sort_index)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			job.ID, job.Command, job.Schedule, job.NextRun.Unix(),
-			job.LastRun.Unix(), status, job.Enabled,
-			job.CreatedAt.Unix(), job.UpdatedAt.Unix(), job.SortIndex)
-		if err != nil {
-			log.Printf("[WARN] failed to persist job: %v", err)
-		}
+		job.LastStatus = status
+		jobs = append(jobs, job)
 	}
+	s.jobsMu.RUnlock()
 
-	if err := tx.Commit(); err != nil {
-		log.Printf("[WARN] failed to commit transaction: %v", err)
+	if err := s.store.SaveJobs(jobs); err != nil {
+		log.Printf("[WARN] failed to persist jobs: %v", err)
 	}
 }
 
@@ -429,7 +393,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	job, exists := s.jobs[id]
 	if !exists {
 		// create new job entry if it doesn't exist
-		job = JobInfo{
+		job = persistence.JobInfo{
 			ID:        id,
 			Command:   event.Command,
 			Schedule:  event.Schedule,
@@ -466,15 +430,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	s.jobs[id] = job
 
 	// save execution to database
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO executions (job_id, started_at, finished_at, status, exit_code)
-		VALUES (?, ?, ?, ?, ?)`,
-		id, event.StartedAt.Unix(), event.FinishedAt.Unix(),
-		job.LastStatus, event.ExitCode)
-	if err != nil {
+	if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil {
 		log.Printf("[WARN] failed to save execution: %v", err)
 	}
 }
@@ -486,7 +442,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
-	jobs := make([]JobInfo, 0, len(s.jobs))
+	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		// work with a copy, recalculate next run times before sorting
 		jobCopy := job
@@ -515,7 +471,7 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	sortMode := s.getSortMode(r)
 
 	s.jobsMu.RLock()
-	jobs := make([]JobInfo, 0, len(s.jobs))
+	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		// work with a copy, recalculate next run times
 		jobCopy := job
@@ -624,7 +580,7 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	// get sorted jobs for the new mode
 	viewMode := s.getViewMode(r)
 	s.jobsMu.RLock()
-	jobs := make([]JobInfo, 0, len(s.jobs))
+	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		// work with a copy, recalculate next run times before sorting
 		jobCopy := job
@@ -701,7 +657,7 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	viewMode := s.getViewMode(r)
 
 	s.jobsMu.RLock()
-	jobs := make([]JobInfo, 0, len(s.jobs))
+	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		// work with a copy, recalculate next run times
 		jobCopy := job
@@ -784,43 +740,6 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	templates["partials/jobs.html"] = partials
 
 	return templates, nil
-}
-
-// createTables creates database tables
-func (s *Server) createTables(db *sql.DB) error {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS jobs (
-			id TEXT PRIMARY KEY,
-			command TEXT NOT NULL,
-			schedule TEXT NOT NULL,
-			next_run INTEGER,
-			last_run INTEGER,
-			last_status TEXT,
-			enabled BOOLEAN DEFAULT 1,
-			created_at INTEGER,
-			updated_at INTEGER,
-			sort_index INTEGER DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS executions (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			job_id TEXT,
-			started_at INTEGER,
-			finished_at INTEGER,
-			status TEXT,
-			exit_code INTEGER,
-			FOREIGN KEY (job_id) REFERENCES jobs(id)
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_executions_job_id ON executions(job_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_executions_started_at ON executions(started_at)`,
-	}
-
-	for _, query := range queries {
-		if _, err := db.Exec(query); err != nil {
-			return fmt.Errorf("failed to execute query: %w", err)
-		}
-	}
-
-	return nil
 }
 
 // helper functions
@@ -912,7 +831,7 @@ func (s *Server) getSortMode(r *http.Request) enums.SortMode {
 }
 
 // updateNextRun updates the next run time for a job based on its schedule
-func (s *Server) updateNextRun(job *JobInfo) {
+func (s *Server) updateNextRun(job *persistence.JobInfo) {
 	if job.Schedule == "" {
 		return
 	}
@@ -922,7 +841,7 @@ func (s *Server) updateNextRun(job *JobInfo) {
 }
 
 // sortJobs sorts jobs based on the sort mode
-func (s *Server) sortJobs(jobs []JobInfo, sortMode enums.SortMode) {
+func (s *Server) sortJobs(jobs []persistence.JobInfo, sortMode enums.SortMode) {
 	switch sortMode {
 	case enums.SortModeLastrun:
 		// sort by last run time, most recent first

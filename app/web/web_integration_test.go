@@ -34,6 +34,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -155,6 +156,7 @@ func TestServer_ProcessEvents(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -221,6 +223,7 @@ func TestServer_PersistJobs(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -383,6 +386,7 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	// create first server instance
@@ -472,6 +476,7 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -540,6 +545,7 @@ func TestServer_HandleJobEvent(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)

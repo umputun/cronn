@@ -9,12 +9,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
+	"github.com/go-pkgz/rest"
+	"github.com/go-pkgz/rest/logger"
+	"github.com/go-pkgz/routegroup"
 	"github.com/robfig/cron/v3"
 	_ "modernc.org/sqlite" // SQLite driver
 
@@ -38,6 +42,7 @@ type Server struct {
 	parser         cron.Parser
 	eventChan      chan JobEvent
 	updateInterval time.Duration
+	version        string
 }
 
 // JobInfo represents a cron job in the UI
@@ -81,6 +86,7 @@ type Config struct {
 	CrontabFile    string
 	DBPath         string
 	UpdateInterval time.Duration
+	Version        string
 }
 
 // New creates a new web server
@@ -117,6 +123,7 @@ func New(cfg Config) (*Server, error) {
 		parser:         parser,
 		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
+		version:        cfg.Version,
 	}, nil
 }
 
@@ -131,25 +138,9 @@ func (s *Server) Run(ctx context.Context, address string) error {
 	// start event processor
 	go s.processEvents(ctx)
 
-	// setup routes
-	mux := http.NewServeMux()
-
-	// pages
-	mux.HandleFunc("GET /", s.handleDashboard)
-
-	// api endpoints for HTMX
-	mux.HandleFunc("GET /api/jobs", s.handleJobsPartial)
-	mux.HandleFunc("POST /api/view-mode", s.handleViewModeToggle)
-	mux.HandleFunc("POST /api/theme", s.handleThemeToggle)
-	mux.HandleFunc("POST /api/sort-mode", s.handleSortModeChange)
-	mux.HandleFunc("POST /api/sort-toggle", s.handleSortToggle)
-
-	// static files
-	mux.Handle("GET /static/", http.FileServer(http.FS(staticFS)))
-
 	server := &http.Server{
 		Addr:              address,
-		Handler:           mux,
+		Handler:           s.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -166,6 +157,51 @@ func (s *Server) Run(ctx context.Context, address string) error {
 
 	log.Printf("[INFO] starting web server on %s", address)
 	return server.ListenAndServe()
+}
+
+// routes returns the http.Handler with all routes configured
+func (s *Server) routes() http.Handler {
+	router := routegroup.New(http.NewServeMux())
+
+	// global middleware - applied to all routes
+	router.Use(
+		rest.RealIP,
+		rest.Recoverer(log.Default()),
+		rest.Throttle(1000),
+		rest.AppInfo("cronn", "umputun", s.version),
+		rest.Ping,
+		rest.Trace,
+		rest.SizeLimit(64*1024), // 64KB max request size
+		logger.New(logger.Log(log.Default()), logger.Prefix("[DEBUG]")).Handler,
+	)
+
+	// dashboard route
+	router.HandleFunc("GET /", s.handleDashboard)
+
+	// api routes with grouping
+	router.Mount("/api").Route(func(api *routegroup.Bundle) {
+		// api-specific middleware
+		api.Use(rest.NoCache) // prevent caching of API responses
+
+		// HTMX endpoints
+		api.HandleFunc("GET /jobs", s.handleJobsPartial)
+		api.HandleFunc("POST /view-mode", s.handleViewModeToggle)
+		api.HandleFunc("POST /theme", s.handleThemeToggle)
+		api.HandleFunc("POST /sort-mode", s.handleSortModeChange)
+		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
+	})
+
+	// static files with proper error handling
+	fsys, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		log.Printf("[ERROR] failed to create static file system: %v", err)
+		// fallback to direct FileServer if Sub fails
+		router.Handle("GET /static/", http.FileServer(http.FS(staticFS)))
+	} else {
+		router.HandleFiles("/static/", http.FS(fsys))
+	}
+
+	return router
 }
 
 // OnJobStart implements service.JobEventHandler interface
@@ -232,10 +268,7 @@ func (s *Server) syncJobs(ctx context.Context) {
 
 // loadJobsFromDB loads existing job history from database
 func (s *Server) loadJobsFromDB() {
-	rows, err := s.db.Query(`
-		SELECT id, command, schedule, next_run, last_run, last_status, 
-		       enabled, created_at, updated_at 
-		FROM jobs`)
+	rows, err := s.db.Query(` SELECT id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at FROM jobs`)
 	if err != nil {
 		log.Printf("[WARN] failed to load jobs from database: %v", err)
 		return

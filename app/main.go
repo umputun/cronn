@@ -147,6 +147,7 @@ func main() {
 			CrontabFile:    opts.CrontabFile,
 			DBPath:         opts.Web.DBPath,
 			UpdateInterval: opts.Web.UpdateInterval,
+			Version:        revision,
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {

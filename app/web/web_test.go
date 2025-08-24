@@ -28,6 +28,7 @@ func TestNew(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -197,6 +198,7 @@ func TestServer_handleSortModeChange(t *testing.T) {
 	cfg := Config{
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -245,6 +247,7 @@ func TestServer_OnJobStart(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -289,6 +292,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -374,6 +378,7 @@ func TestServer_syncWithCrontab(t *testing.T) {
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -426,6 +431,7 @@ func TestServer_handleDashboard(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -469,6 +475,7 @@ func TestServer_handleAPIJobs(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -534,6 +541,7 @@ func TestServer_handleToggleTheme(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -581,6 +589,7 @@ func TestServer_handleToggleView(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -636,6 +645,7 @@ func TestServer_parseJobSpecs(t *testing.T) {
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -680,6 +690,7 @@ func TestServer_Templates(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -753,6 +764,7 @@ func TestServer_handleSortToggle(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -917,6 +929,7 @@ func TestServer_render_ErrorHandling(t *testing.T) {
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)
@@ -959,6 +972,7 @@ func TestServer_Run(t *testing.T) {
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
+		Version:        "test",
 	}
 
 	server, err := New(cfg)

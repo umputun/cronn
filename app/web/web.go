@@ -392,7 +392,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 			LastStatus: enums.JobStatusIdle,
 			CreatedAt:  time.Now(),
 			UpdatedAt:  time.Now(),
-			Enabled:   true,
+			Enabled:    true,
 		}
 		// calculate next run for new job
 		s.updateNextRun(&job)

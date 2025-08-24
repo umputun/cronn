@@ -117,7 +117,7 @@ func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
 	for idx, job := range jobs {
 		// set sort_index based on position
 		job.SortIndex = idx
-		
+
 		_, err := tx.NamedExec(`
 			INSERT OR REPLACE INTO jobs 
 			(id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at, sort_index)

@@ -2,11 +2,10 @@ package persistence
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
-	log "github.com/go-pkgz/lgr"
+	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite" // sqlite driver
 
 	"github.com/umputun/cronn/app/web/enums"
@@ -14,27 +13,27 @@ import (
 
 // JobInfo represents a cron job with its execution state
 type JobInfo struct {
-	ID         string // SHA256 of command
-	Command    string
-	Schedule   string
-	NextRun    time.Time
-	LastRun    time.Time
-	LastStatus enums.JobStatus
-	IsRunning  bool
-	Enabled    bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	SortIndex  int // original order in crontab
+	ID         string          `db:"id"`
+	Command    string          `db:"command"`
+	Schedule   string          `db:"schedule"`
+	NextRun    time.Time       `db:"next_run"`
+	LastRun    time.Time       `db:"last_run"`
+	LastStatus enums.JobStatus `db:"last_status"`
+	IsRunning  bool            `db:"-"` // not stored in DB
+	Enabled    bool            `db:"enabled"`
+	CreatedAt  time.Time       `db:"created_at"`
+	UpdatedAt  time.Time       `db:"updated_at"`
+	SortIndex  int             `db:"sort_index"`
 }
 
 // SQLiteStore implements persistence using SQLite
 type SQLiteStore struct {
-	db *sql.DB
+	db *sqlx.DB
 }
 
 // NewSQLiteStore creates a new SQLite store
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sqlx.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -57,19 +56,19 @@ func (s *SQLiteStore) Initialize() error {
 			id TEXT PRIMARY KEY,
 			command TEXT NOT NULL,
 			schedule TEXT NOT NULL,
-			next_run INTEGER,
-			last_run INTEGER,
+			next_run DATETIME,
+			last_run DATETIME,
 			last_status TEXT,
 			enabled BOOLEAN DEFAULT 1,
-			created_at INTEGER,
-			updated_at INTEGER,
+			created_at DATETIME,
+			updated_at DATETIME,
 			sort_index INTEGER DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS executions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			job_id TEXT,
-			started_at INTEGER,
-			finished_at INTEGER,
+			started_at DATETIME,
+			finished_at DATETIME,
 			status TEXT,
 			exit_code INTEGER,
 			FOREIGN KEY (job_id) REFERENCES jobs(id)
@@ -89,67 +88,19 @@ func (s *SQLiteStore) Initialize() error {
 
 // LoadJobs retrieves all jobs from the database
 func (s *SQLiteStore) LoadJobs() ([]JobInfo, error) {
-	rows, err := s.db.Query(`
-		SELECT id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at 
-		FROM jobs`)
+	var jobs []JobInfo
+	err := s.db.Select(&jobs, `
+		SELECT id, command, schedule, next_run, last_run, last_status, enabled, 
+		       created_at, updated_at, sort_index
+		FROM jobs
+		ORDER BY sort_index`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query jobs: %w", err)
 	}
-	defer rows.Close()
 
-	jobs := []JobInfo{}
-	for rows.Next() {
-		var job JobInfo
-		var nextRun, lastRun, createdAt, updatedAt sql.NullInt64
-		var lastStatus sql.NullString
-
-		err := rows.Scan(
-			&job.ID,
-			&job.Command,
-			&job.Schedule,
-			&nextRun,
-			&lastRun,
-			&lastStatus,
-			&job.Enabled,
-			&createdAt,
-			&updatedAt,
-		)
-		if err != nil {
-			log.Printf("[WARN] failed to scan job row: %v", err)
-			continue
-		}
-
-		// convert timestamps
-		if nextRun.Valid && nextRun.Int64 > 0 {
-			job.NextRun = time.Unix(nextRun.Int64, 0)
-		}
-		if lastRun.Valid && lastRun.Int64 > 0 {
-			job.LastRun = time.Unix(lastRun.Int64, 0)
-		}
-		if createdAt.Valid {
-			job.CreatedAt = time.Unix(createdAt.Int64, 0)
-		}
-		if updatedAt.Valid {
-			job.UpdatedAt = time.Unix(updatedAt.Int64, 0)
-		}
-
-		// parse status
-		if lastStatus.Valid && lastStatus.String != "" {
-			if status, err := enums.ParseJobStatus(lastStatus.String); err == nil {
-				job.LastStatus = status
-			} else {
-				log.Printf("[WARN] invalid job status %q for job %s: %v", lastStatus.String, job.ID, err)
-				job.LastStatus = enums.JobStatusIdle
-			}
-		} else {
-			job.LastStatus = enums.JobStatusIdle
-		}
-
-		jobs = append(jobs, job)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
+	// ensure we return empty slice, not nil
+	if jobs == nil {
+		jobs = []JobInfo{}
 	}
 
 	return jobs, nil
@@ -157,36 +108,21 @@ func (s *SQLiteStore) LoadJobs() ([]JobInfo, error) {
 
 // SaveJobs persists multiple jobs in a transaction
 func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
-	tx, err := s.db.Begin()
+	tx, err := s.db.Beginx()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
 	for idx, job := range jobs {
-		var nextRun, lastRun int64
-		if !job.NextRun.IsZero() {
-			nextRun = job.NextRun.Unix()
-		}
-		if !job.LastRun.IsZero() {
-			lastRun = job.LastRun.Unix()
-		}
-
-		_, err := tx.Exec(`
+		// set sort_index based on position
+		job.SortIndex = idx
+		
+		_, err := tx.NamedExec(`
 			INSERT OR REPLACE INTO jobs 
 			(id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at, sort_index)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			job.ID,
-			job.Command,
-			job.Schedule,
-			nextRun,
-			lastRun,
-			job.LastStatus.String(),
-			job.Enabled,
-			job.CreatedAt.Unix(),
-			job.UpdatedAt.Unix(),
-			idx,
-		)
+			VALUES (:id, :command, :schedule, :next_run, :last_run, :last_status, :enabled, :created_at, :updated_at, :sort_index)`,
+			job)
 		if err != nil {
 			return fmt.Errorf("failed to save job %s: %w", job.ID, err)
 		}
@@ -207,7 +143,7 @@ func (s *SQLiteStore) RecordExecution(jobID string, started, finished time.Time,
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO executions (job_id, started_at, finished_at, status, exit_code)
 		VALUES (?, ?, ?, ?, ?)`,
-		jobID, started.Unix(), finished.Unix(), status.String(), exitCode)
+		jobID, started, finished, status.String(), exitCode)
 
 	if err != nil {
 		return fmt.Errorf("failed to record execution: %w", err)

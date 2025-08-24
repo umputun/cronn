@@ -33,19 +33,10 @@ var staticFS embed.FS
 
 // Persistence defines storage operations for job management
 type Persistence interface {
-	// Initialize creates database schema
 	Initialize() error
-
-	// LoadJobs retrieves all jobs from storage
 	LoadJobs() ([]persistence.JobInfo, error)
-
-	// SaveJobs persists multiple jobs in a transaction
 	SaveJobs(jobs []persistence.JobInfo) error
-
-	// RecordExecution logs a job execution event
 	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error
-
-	// Close closes the storage connection
 	Close() error
 }
 
@@ -329,14 +320,15 @@ func (s *Server) loadJobsFromCrontab() {
 			s.jobs[id] = job
 		} else {
 			s.jobs[id] = persistence.JobInfo{
-				ID:        id,
-				Command:   spec.Command,
-				Schedule:  spec.Spec,
-				NextRun:   schedule.Next(time.Now()),
-				Enabled:   true,
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-				SortIndex: idx,
+				ID:         id,
+				Command:    spec.Command,
+				Schedule:   spec.Spec,
+				NextRun:    schedule.Next(time.Now()),
+				LastStatus: enums.JobStatusIdle,
+				Enabled:    true,
+				CreatedAt:  time.Now(),
+				UpdatedAt:  time.Now(),
+				SortIndex:  idx,
 			}
 		}
 	}
@@ -394,11 +386,12 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	if !exists {
 		// create new job entry if it doesn't exist
 		job = persistence.JobInfo{
-			ID:        id,
-			Command:   event.Command,
-			Schedule:  event.Schedule,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			ID:         id,
+			Command:    event.Command,
+			Schedule:   event.Schedule,
+			LastStatus: enums.JobStatusIdle,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
 			Enabled:   true,
 		}
 		// calculate next run for new job

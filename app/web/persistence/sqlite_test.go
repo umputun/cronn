@@ -147,15 +147,16 @@ func TestSQLiteStore_RecordExecution(t *testing.T) {
 
 	// verify execution details
 	var jobID, status string
-	var startedAt, finishedAt, exitCode int64
+	var startedAt, finishedAt time.Time
+	var exitCode int
 	err = store.db.QueryRow("SELECT job_id, started_at, finished_at, status, exit_code FROM executions WHERE job_id = ?", "job1").
 		Scan(&jobID, &startedAt, &finishedAt, &status, &exitCode)
 	require.NoError(t, err)
 	assert.Equal(t, "job1", jobID)
-	assert.Equal(t, started.Unix(), startedAt)
-	assert.Equal(t, finished.Unix(), finishedAt)
+	assert.WithinDuration(t, started, startedAt, time.Second)
+	assert.WithinDuration(t, finished, finishedAt, time.Second)
 	assert.Equal(t, enums.JobStatusSuccess.String(), status)
-	assert.Equal(t, int64(0), exitCode)
+	assert.Equal(t, 0, exitCode)
 }
 
 func TestSQLiteStore_UpdateExistingJobs(t *testing.T) {

@@ -30,6 +30,7 @@ import (
 //go:generate moq -out mocks/repeater.go -pkg mocks -skip-ensure -fmt goimports . Repeater
 //go:generate moq -out mocks/schedule.go -pkg mocks -skip-ensure -fmt goimports . Schedule
 //go:generate moq -out mocks/condition_checker.go -pkg mocks -skip-ensure -fmt goimports . ConditionChecker
+//go:generate moq -out mocks/job_event_handler.go -pkg mocks -skip-ensure -fmt goimports . JobEventHandler
 
 // Scheduler is a top-level service wiring cron, resumer ans parser and provifing the main entry point (blocking)
 // to start the process
@@ -53,8 +54,9 @@ type Scheduler struct {
 		Factor   float64
 		Jitter   bool
 	}
-	Stdout        io.Writer
-	NotifyTimeout time.Duration
+	Stdout          io.Writer
+	NotifyTimeout   time.Duration
+	JobEventHandler JobEventHandler // handler for job execution events
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -109,6 +111,12 @@ type Schedule interface {
 // ConditionChecker defines interface for checking job execution conditions
 type ConditionChecker interface {
 	Check(conditions conditions.Config) (bool, string)
+}
+
+// JobEventHandler defines interface for handling job execution events
+type JobEventHandler interface {
+	OnJobStart(command, schedule string, startTime time.Time)
+	OnJobComplete(command, schedule string, startTime, endTime time.Time, exitCode int, err error)
 }
 
 // Do runs blocking scheduler
@@ -169,7 +177,28 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
 		}
 
+		// notify job start after resumer registration
+		startTime := time.Now()
+		if s.JobEventHandler != nil {
+			s.JobEventHandler.OnJobStart(cmd, r.Spec, startTime)
+		}
+
 		err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
+
+		// notify job complete
+		endTime := time.Now()
+		if s.JobEventHandler != nil {
+			exitCode := 0
+			if err != nil {
+				if exitError, ok := err.(*exec.ExitError); ok {
+					exitCode = exitError.ExitCode()
+				} else {
+					exitCode = 1 // generic error for non-exec errors
+				}
+			}
+			s.JobEventHandler.OnJobComplete(cmd, r.Spec, startTime, endTime, exitCode, err)
+		}
+
 		ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 		defer cancel()
 		var errMsg string

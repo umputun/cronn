@@ -1,0 +1,131 @@
+{{define "jobs-cards"}}
+{{range .Jobs}}
+<div class="job-card" 
+     data-job-id="{{.ID}}"
+     data-job-status="{{.LastStatus}}"
+     data-next-run="{{.NextRun.Unix}}">
+    
+    <!-- Status indicator -->
+    <div class="job-status status-{{.LastStatus}}">
+        {{if .IsRunning}}
+        <div class="status-indicator running">
+            <div class="pulse"></div>
+        </div>
+        {{else if eq .LastStatus.String "success"}}
+        <div class="status-indicator success">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </div>
+        {{else if eq .LastStatus.String "failed"}}
+        <div class="status-indicator failed">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </div>
+        {{else}}
+        <div class="status-indicator idle"></div>
+        {{end}}
+    </div>
+    
+    <!-- Schedule and command -->
+    <div class="job-header">
+        <div class="job-schedule" title="{{.Schedule}}">
+            <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <code>{{.Schedule}}</code>
+        </div>
+    </div>
+    
+    <div class="job-command">
+        <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/>
+            <path d="M7 10l2 2-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M13 14h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <code title="{{.Command}}">{{truncate .Command 60}}</code>
+    </div>
+    
+    <!-- Timing info -->
+    <div class="job-timing">
+        <div class="timing-item">
+            <span class="timing-label">Next run:</span>
+            <span class="timing-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
+                {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
+            </span>
+        </div>
+        <div class="timing-item">
+            <span class="timing-label">Last run:</span>
+            <span class="timing-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
+        </div>
+    </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "jobs-list"}}
+<table class="jobs-table">
+    <thead>
+        <tr>
+            <th class="th-status">Status</th>
+            <th class="th-schedule cron">Schedule</th>
+            <th class="th-command">Command</th>
+            <th class="th-next numeric">Next Run</th>
+            <th class="th-last numeric">Last Run</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Jobs}}
+        <tr class="job-row" 
+            data-job-id="{{.ID}}"
+            data-job-status="{{.LastStatus}}"
+            data-next-run="{{.NextRun.Unix}}">
+            
+            <td class="td-status">
+                {{if .IsRunning}}
+                <div class="status-badge running">
+                    <div class="status-dot"></div>
+                    Running
+                </div>
+                {{else if eq .LastStatus.String "success"}}
+                <div class="status-badge success">
+                    <div class="status-dot"></div>
+                    Success
+                </div>
+                {{else if eq .LastStatus.String "failed"}}
+                <div class="status-badge failed">
+                    <div class="status-dot"></div>
+                    Failed
+                </div>
+                {{else}}
+                <div class="status-badge idle">
+                    <div class="status-dot"></div>
+                    Idle
+                </div>
+                {{end}}
+            </td>
+            
+            <td class="td-schedule">
+                <code class="schedule-code">{{.Schedule}}</code>
+            </td>
+            
+            <td class="td-command command">
+                <code class="command-text" title="{{.Command}}">{{truncate .Command 80}}</code>
+            </td>
+            
+            <td class="td-next numeric">
+                <span class="time-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
+                    {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
+                </span>
+            </td>
+            
+            <td class="td-last numeric">
+                <span class="time-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{end}}

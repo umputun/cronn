@@ -736,6 +736,42 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 	})
 }
 
+func TestScheduler_JobEventHandler(t *testing.T) {
+	t.Run("job event handler gets called with correct exit codes", func(t *testing.T) {
+		var capturedExitCodes []int
+		var capturedErrors []error
+
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, schedule string, startTime time.Time) {},
+			OnJobCompleteFunc: func(command, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+				capturedExitCodes = append(capturedExitCodes, exitCode)
+				capturedErrors = append(capturedErrors, err)
+			},
+		}
+
+		svc := &Scheduler{JobEventHandler: mockEventHandler}
+
+		// test successful job (exit code 0)
+		svc.JobEventHandler.OnJobComplete("echo test", "* * * * *", time.Now(), time.Now(), 0, nil)
+
+		// test failed job with specific exit code
+		svc.JobEventHandler.OnJobComplete("exit 42", "* * * * *", time.Now(), time.Now(), 42, errors.New("exit status 42"))
+
+		// test generic error (non-exec)
+		svc.JobEventHandler.OnJobComplete("invalid", "* * * * *", time.Now(), time.Now(), 1, errors.New("command not found"))
+
+		// verify captured values
+		require.Len(t, capturedExitCodes, 3)
+		assert.Equal(t, 0, capturedExitCodes[0], "successful job should have exit code 0")
+		assert.Equal(t, 42, capturedExitCodes[1], "failed job should have specific exit code")
+		assert.Equal(t, 1, capturedExitCodes[2], "generic error should have exit code 1")
+
+		assert.NoError(t, capturedErrors[0])
+		assert.Error(t, capturedErrors[1])
+		assert.Error(t, capturedErrors[2])
+	})
+}
+
 // helper function for tests
 func intPtr(i int) *int {
 	return &i

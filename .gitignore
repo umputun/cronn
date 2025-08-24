@@ -19,3 +19,18 @@ dist/
 site/docs/index.md
 site/site/
 cronn
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Test files
+test-crontab
+test_schedule.go
+
+# Log files
+*.log
+
+# Playwright screenshots
+.playwright-mcp/

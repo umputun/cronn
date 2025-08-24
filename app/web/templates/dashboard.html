@@ -1,0 +1,32 @@
+{{define "main"}}
+<div class="dashboard">
+    <!-- Stats bar -->
+    <div class="stats-bar">
+        <div class="stat">
+            <span class="stat-value">{{len .Jobs}}</span>
+            <span class="stat-label">Total Jobs</span>
+        </div>
+        <div class="stat">
+            <span class="stat-value" id="running-count">{{.RunningCount}}</span>
+            <span class="stat-label">Running</span>
+        </div>
+        <div class="stat">
+            <span class="stat-value" id="next-run">{{.NextRunTime}}</span>
+            <span class="stat-label">Next Run</span>
+        </div>
+    </div>
+
+    <!-- Jobs container with auto-refresh -->
+    <div id="jobs-container" 
+         hx-get="/api/jobs" 
+         hx-trigger="load, every 5s"
+         hx-swap="innerHTML"
+         class="jobs-container {{.ViewMode}}">
+        <!-- Jobs will be loaded here via HTMX -->
+        <div class="loading">
+            <div class="spinner"></div>
+            <span>Loading jobs...</span>
+        </div>
+    </div>
+</div>
+{{end}}

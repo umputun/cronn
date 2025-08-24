@@ -899,6 +899,10 @@ func (s *Server) sortJobs(jobs []*JobInfo, sortMode string) {
 			if jobs[j].LastRun.IsZero() {
 				return true
 			}
+			// if times are equal, use SortIndex for stable ordering
+			if jobs[i].LastRun.Equal(jobs[j].LastRun) {
+				return jobs[i].SortIndex < jobs[j].SortIndex
+			}
 			return jobs[i].LastRun.After(jobs[j].LastRun)
 		})
 	case "nextrun":
@@ -913,6 +917,10 @@ func (s *Server) sortJobs(jobs []*JobInfo, sortMode string) {
 			}
 			if jobs[j].NextRun.IsZero() {
 				return true
+			}
+			// if times are equal, use SortIndex for stable ordering
+			if jobs[i].NextRun.Equal(jobs[j].NextRun) {
+				return jobs[i].SortIndex < jobs[j].SortIndex
 			}
 			return jobs[i].NextRun.Before(jobs[j].NextRun)
 		})

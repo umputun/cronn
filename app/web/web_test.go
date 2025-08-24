@@ -121,6 +121,44 @@ func TestServer_sortJobs(t *testing.T) {
 		assert.Equal(t, "1", sorted[2].ID) // 2 hours
 		assert.Equal(t, "4", sorted[3].ID) // never (zero time)
 	})
+
+	t.Run("stable sort with equal times", func(t *testing.T) {
+		// create jobs with some having equal next run times
+		sameTime := now.Add(1 * time.Hour)
+		sameTime2 := now.Add(2 * time.Hour)
+		jobsEqual := []*JobInfo{
+			{ID: "A", Command: "cmdA", SortIndex: 0, NextRun: sameTime, LastRun: sameTime2},
+			{ID: "B", Command: "cmdB", SortIndex: 1, NextRun: sameTime, LastRun: sameTime2},
+			{ID: "C", Command: "cmdC", SortIndex: 2, NextRun: sameTime, LastRun: sameTime2},
+			{ID: "D", Command: "cmdD", SortIndex: 3, NextRun: now.Add(30 * time.Minute), LastRun: now},
+			{ID: "E", Command: "cmdE", SortIndex: 4, NextRun: sameTime, LastRun: sameTime2},
+		}
+
+		// test next run sorting stability
+		sortedNext := make([]*JobInfo, len(jobsEqual))
+		copy(sortedNext, jobsEqual)
+		server.sortJobs(sortedNext, "nextrun")
+
+		// d should be first (30 minutes), then A,B,C,E in original order (all 1 hour)
+		assert.Equal(t, "D", sortedNext[0].ID, "D should be first (soonest)")
+		assert.Equal(t, "A", sortedNext[1].ID, "A should maintain position relative to B,C,E")
+		assert.Equal(t, "B", sortedNext[2].ID, "B should maintain position relative to C,E")
+		assert.Equal(t, "C", sortedNext[3].ID, "C should maintain position relative to E")
+		assert.Equal(t, "E", sortedNext[4].ID, "E should be last among equal times")
+
+		// test last run sorting stability
+		sortedLast := make([]*JobInfo, len(jobsEqual))
+		copy(sortedLast, jobsEqual)
+		server.sortJobs(sortedLast, "lastrun")
+
+		// a,B,C,E have same LastRun (2 hours from now), D is different (now)
+		// since LastRun sorts most recent first, A,B,C,E should come first in original order
+		assert.Equal(t, "A", sortedLast[0].ID, "A should maintain position relative to B,C,E")
+		assert.Equal(t, "B", sortedLast[1].ID, "B should maintain position relative to C,E")
+		assert.Equal(t, "C", sortedLast[2].ID, "C should maintain position relative to E")
+		assert.Equal(t, "E", sortedLast[3].ID, "E should be last among equal times")
+		assert.Equal(t, "D", sortedLast[4].ID, "D should be last (oldest)")
+	})
 }
 
 func TestServer_getSortMode(t *testing.T) {

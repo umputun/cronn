@@ -25,7 +25,6 @@ func TestNew(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -243,7 +242,6 @@ func TestServer_OnJobStart(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -288,7 +286,6 @@ func TestServer_OnJobComplete(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -374,7 +371,6 @@ func TestServer_syncWithCrontab(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -412,7 +408,6 @@ func TestServer_handleDashboard(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -456,7 +451,6 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -522,7 +516,6 @@ func TestServer_handleToggleTheme(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -570,7 +563,6 @@ func TestServer_handleToggleView(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -626,7 +618,6 @@ func TestServer_parseJobSpecs(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -671,7 +662,6 @@ func TestServer_Templates(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -745,7 +735,6 @@ func TestServer_handleSortToggle(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -913,7 +902,6 @@ func TestServer_render_ErrorHandling(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -962,7 +950,6 @@ func TestServer_getViewMode_CookieErrors(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -1001,7 +988,6 @@ func TestServer_getTheme_CookieErrors(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -1040,7 +1026,6 @@ func TestServer_getSortMode_CookieErrors(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -1079,7 +1064,6 @@ func TestServer_sortJobs_EdgeCases(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":8080",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -1170,7 +1154,6 @@ func TestServer_Run(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0", // use random port
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,

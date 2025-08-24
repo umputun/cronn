@@ -34,7 +34,6 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -156,7 +155,6 @@ func TestServer_ProcessEvents(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -223,7 +221,6 @@ func TestServer_PersistJobs(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -327,7 +324,6 @@ func TestServer_SyncJobs(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: 100 * time.Millisecond,
@@ -378,7 +374,6 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -468,7 +463,6 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -562,7 +556,6 @@ func TestServer_HandleJobEvent(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -650,7 +643,6 @@ func TestServer_ConcurrentJobEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -764,7 +756,6 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -872,7 +863,6 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
@@ -992,7 +982,6 @@ func TestServer_EventChannelStress(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := Config{
-		Address:        ":0",
 		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,

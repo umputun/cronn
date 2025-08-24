@@ -84,7 +84,6 @@ var opts struct {
 	Web struct {
 		Enabled        bool          `long:"enabled" env:"ENABLED" description:"enable web UI"`
 		Address        string        `long:"address" env:"ADDRESS" default:":8080" description:"web UI address"`
-		NoAuth         bool          `long:"no-auth" env:"NO_AUTH" description:"disable authentication (default: true for minimal version)"`
 		DBPath         string        `long:"db-path" env:"DB_PATH" default:"cronn.db" description:"path to SQLite database"`
 		UpdateInterval time.Duration `long:"update-interval" env:"UPDATE_INTERVAL" default:"30s" description:"interval to sync crontab file"`
 	} `group:"web" namespace:"web" env-namespace:"CRONN_WEB"`
@@ -143,7 +142,6 @@ func main() {
 	var eventHandler service.JobEventHandler
 	if opts.Web.Enabled {
 		cfg := web.Config{
-			Address:        opts.Web.Address,
 			CrontabFile:    opts.CrontabFile,
 			DBPath:         opts.Web.DBPath,
 			UpdateInterval: opts.Web.UpdateInterval,

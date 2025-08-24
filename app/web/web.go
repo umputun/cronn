@@ -65,16 +65,17 @@ type JobEvent struct {
 
 // TemplateData holds data for templates
 type TemplateData struct {
-	Jobs        []persistence.JobInfo
-	CurrentYear int
-	ViewMode    enums.ViewMode
-	Theme       enums.Theme
-	SortMode    enums.SortMode
+	Jobs         []persistence.JobInfo
+	CurrentYear  int
+	ViewMode     enums.ViewMode
+	Theme        enums.Theme
+	SortMode     enums.SortMode
+	RunningCount int    // for stats display
+	NextRunTime  string // formatted next run time for stats
 }
 
 // Config holds server configuration
 type Config struct {
-	Address        string
 	CrontabFile    string
 	DBPath         string
 	UpdateInterval time.Duration
@@ -425,28 +426,58 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	theme := s.getTheme(r)
 	sortMode := s.getSortMode(r)
 
+	jobs, runningCount, nextRunTime := s.getJobsWithStats(sortMode)
+
+	data := TemplateData{
+		Jobs:         jobs,
+		CurrentYear:  time.Now().Year(),
+		ViewMode:     viewMode,
+		Theme:        theme,
+		SortMode:     sortMode,
+		RunningCount: runningCount,
+		NextRunTime:  nextRunTime,
+	}
+
+	s.render(w, "base.html", "base", data)
+}
+
+// getJobsWithStats retrieves jobs with calculated stats
+func (s *Server) getJobsWithStats(sortMode enums.SortMode) ([]persistence.JobInfo, int, string) {
 	s.jobsMu.RLock()
 	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
+	runningCount := 0
+	var nearestNextRun *time.Time
+	
 	for _, job := range s.jobs {
-		// work with a copy, recalculate next run times before sorting
+		// work with a copy, recalculate next run times
 		jobCopy := job
 		s.updateNextRun(&jobCopy)
 		jobs = append(jobs, jobCopy)
+		
+		// count running jobs
+		if jobCopy.IsRunning {
+			runningCount++
+		}
+		
+		// find nearest next run
+		if !jobCopy.NextRun.IsZero() {
+			if nearestNextRun == nil || jobCopy.NextRun.Before(*nearestNextRun) {
+				nearestNextRun = &jobCopy.NextRun
+			}
+		}
 	}
 	s.jobsMu.RUnlock()
 
 	// sort jobs based on selected mode
 	s.sortJobs(jobs, sortMode)
 
-	data := TemplateData{
-		Jobs:        jobs,
-		CurrentYear: time.Now().Year(),
-		ViewMode:    viewMode,
-		Theme:       theme,
-		SortMode:    sortMode,
+	// format next run time
+	nextRunTime := "-"
+	if nearestNextRun != nil {
+		nextRunTime = s.humanTime(*nearestNextRun)
 	}
 
-	s.render(w, "base.html", "base", data)
+	return jobs, runningCount, nextRunTime
 }
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
@@ -454,31 +485,45 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	viewMode := s.getViewMode(r)
 	sortMode := s.getSortMode(r)
 
-	s.jobsMu.RLock()
-	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
-	for _, job := range s.jobs {
-		// work with a copy, recalculate next run times
-		jobCopy := job
-		s.updateNextRun(&jobCopy)
-		jobs = append(jobs, jobCopy)
-	}
-	s.jobsMu.RUnlock()
-
-	// sort jobs based on selected mode
-	s.sortJobs(jobs, sortMode)
+	jobs, runningCount, nextRunTime := s.getJobsWithStats(sortMode)
 
 	data := TemplateData{
-		Jobs:     jobs,
-		ViewMode: viewMode,
-		SortMode: sortMode,
+		Jobs:         jobs,
+		ViewMode:     viewMode,
+		SortMode:     sortMode,
+		RunningCount: runningCount,
+		NextRunTime:  nextRunTime,
 	}
 
+	// render jobs partial
 	tmplName := "jobs-cards"
 	if viewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 
-	s.render(w, "partials/jobs.html", tmplName, data)
+	// render template to buffer first to add OOB swaps
+	tmpl, ok := s.templates["partials/jobs.html"]
+	if !ok {
+		http.Error(w, "Template not found", http.StatusInternalServerError)
+		return
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, tmplName, data); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+		return
+	}
+
+	// write response with OOB swaps for stats
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	
+	// write the jobs content
+	_, _ = buf.WriteTo(w)
+	
+	// add OOB swaps for stats updates
+	fmt.Fprintf(w, `<span id="running-count" hx-swap-oob="innerHTML">%d</span>`, runningCount)
+	fmt.Fprintf(w, `<span id="next-run" hx-swap-oob="innerHTML">%s</span>`, nextRunTime)
 }
 
 // handleViewModeToggle toggles between card and list view
@@ -563,18 +608,7 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 
 	// get sorted jobs for the new mode
 	viewMode := s.getViewMode(r)
-	s.jobsMu.RLock()
-	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
-	for _, job := range s.jobs {
-		// work with a copy, recalculate next run times before sorting
-		jobCopy := job
-		s.updateNextRun(&jobCopy)
-		jobs = append(jobs, jobCopy)
-	}
-	s.jobsMu.RUnlock()
-
-	// sort jobs based on new mode
-	s.sortJobs(jobs, nextMode)
+	jobs, _, _ := s.getJobsWithStats(nextMode)
 
 	// prepare template data
 	data := TemplateData{

@@ -7,11 +7,11 @@
             <span class="stat-label">Total Jobs</span>
         </div>
         <div class="stat">
-            <span class="stat-value" id="running-count">0</span>
+            <span class="stat-value" id="running-count">{{.RunningCount}}</span>
             <span class="stat-label">Running</span>
         </div>
         <div class="stat">
-            <span class="stat-value" id="next-run">-</span>
+            <span class="stat-value" id="next-run">{{.NextRunTime}}</span>
             <span class="stat-label">Next Run</span>
         </div>
     </div>
@@ -29,53 +29,4 @@
         </div>
     </div>
 </div>
-
-<script>
-    // update stats from job data
-    function updateStats() {
-        const jobs = document.querySelectorAll('[data-job-status]');
-        let runningCount = 0;
-        let nextRunTime = null;
-        
-        jobs.forEach(job => {
-            if (job.dataset.jobStatus === 'running') {
-                runningCount++;
-            }
-            
-            const nextRun = parseInt(job.dataset.nextRun);
-            if (nextRun && (!nextRunTime || nextRun < nextRunTime)) {
-                nextRunTime = nextRun;
-            }
-        });
-        
-        document.getElementById('running-count').textContent = runningCount;
-        
-        if (nextRunTime) {
-            const nextRunDate = new Date(nextRunTime * 1000);
-            
-            // Format same as cards: "Jan 2, 15:04"
-            const dateTimeStr = nextRunDate.toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            });
-            
-            document.getElementById('next-run').textContent = dateTimeStr;
-        } else {
-            document.getElementById('next-run').textContent = '-';
-        }
-    }
-    
-    // update stats after each HTMX swap
-    document.body.addEventListener('htmx:afterSwap', function(evt) {
-        if (evt.target.id === 'jobs-container') {
-            updateStats();
-        }
-    });
-    
-    // update countdown every second
-    setInterval(updateStats, 1000);
-</script>
 {{end}}

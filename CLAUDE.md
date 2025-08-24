@@ -16,6 +16,7 @@
 ## Web UI Architecture
 - Server implements `JobEventHandler` interface to receive job events
 - Uses Go templates with `html/template` and `embed` for static files
+- **IMPORTANT**: Templates and static files are embedded at compile time - must rebuild after any changes to templates or CSS
 - HTMX for 5-second auto-refresh polling
 - Cookie-based persistence for theme and view preferences
 - SHA256 hashing for job identity tracking

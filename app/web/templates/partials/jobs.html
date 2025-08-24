@@ -37,6 +37,31 @@
             </svg>
             <code>{{.Schedule}}</code>
         </div>
+        <div class="job-header-actions">
+            {{if and .Enabled (not .IsRunning)}}
+            <button class="btn-compact"
+                    style="display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; font-size: 11px;"
+                    hx-post="/api/jobs/{{.ID}}/run"
+                    hx-swap="none"
+                    hx-indicator="#run-spinner-{{.ID}}"
+                    hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)">
+                <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M5 3l14 9-14 9V3z" fill="currentColor"/>
+                </svg>
+                <span>Run</span>
+            </button>
+            <span id="run-spinner-{{.ID}}" class="htmx-indicator spinner-small"></span>
+            {{else if .IsRunning}}
+            <button class="btn-compact" disabled>
+                <div class="spinner-small inline"></div>
+                Running
+            </button>
+            {{else}}
+            <button class="btn-compact" disabled>
+                Run
+            </button>
+            {{end}}
+        </div>
     </div>
     
     <div class="job-command">
@@ -61,6 +86,7 @@
             <span class="timing-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
         </div>
     </div>
+    
 </div>
 {{end}}
 {{end}}
@@ -74,6 +100,7 @@
             <th class="th-command">Command</th>
             <th class="th-next numeric">Next Run</th>
             <th class="th-last numeric">Last Run</th>
+            <th class="th-actions">Actions</th>
         </tr>
     </thead>
     <tbody>
@@ -123,6 +150,31 @@
             
             <td class="td-last numeric">
                 <span class="time-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
+            </td>
+            
+            <td class="td-actions">
+                {{if and .Enabled (not .IsRunning)}}
+                <button class="btn-run-now btn-small"
+                        hx-post="/api/jobs/{{.ID}}/run"
+                        hx-swap="none"
+                        hx-indicator="#run-spinner-{{.ID}}"
+                        hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)">
+                    <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <path d="M5 3l14 9-14 9V3z" fill="currentColor"/>
+                    </svg>
+                    Run
+                </button>
+                <span id="run-spinner-{{.ID}}" class="htmx-indicator spinner-small"></span>
+                {{else if .IsRunning}}
+                <button class="btn-run-now btn-small" disabled>
+                    <div class="spinner-small inline"></div>
+                    Running
+                </button>
+                {{else}}
+                <button class="btn-run-now btn-small" disabled>
+                    Run
+                </button>
+                {{end}}
             </td>
         </tr>
         {{end}}

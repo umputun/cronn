@@ -56,7 +56,14 @@ type Scheduler struct {
 	}
 	Stdout          io.Writer
 	NotifyTimeout   time.Duration
-	JobEventHandler JobEventHandler // handler for job execution events
+	JobEventHandler JobEventHandler           // handler for job execution events
+	ManualTrigger   chan ManualJobRequest // channel for manual job triggers
+}
+
+// ManualJobRequest represents a request to manually trigger a job
+type ManualJobRequest struct {
+	Command  string
+	Schedule string
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -133,6 +140,12 @@ func (s *Scheduler) Do(ctx context.Context) {
 		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
 		go s.reload(ctx) // start background updater
 	}
+	
+	// start manual trigger listener if channel is provided
+	if s.ManualTrigger != nil {
+		go s.listenForManualTriggers(ctx)
+	}
+	
 	if err := s.loadFromFileParser(ctx); err != nil {
 		log.Printf("[WARN] can't load crontab file, %v", err)
 		return
@@ -329,6 +342,53 @@ func (s *Scheduler) reload(ctx context.Context) {
 			if err = s.loadFromFileParser(ctx); err != nil {
 				log.Printf("[WARN] failed to update jobs, %v", err)
 			}
+		}
+	}
+}
+
+// listenForManualTriggers listens for manual job trigger requests
+func (s *Scheduler) listenForManualTriggers(ctx context.Context) {
+	log.Printf("[INFO] manual trigger listener started")
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[INFO] manual trigger listener stopped: %v", ctx.Err())
+			return
+		case req, ok := <-s.ManualTrigger:
+			if !ok {
+				log.Printf("[INFO] manual trigger channel closed")
+				return
+			}
+			
+			log.Printf("[INFO] manual trigger requested for command: %s", req.Command)
+			
+			// create a JobSpec from the request
+			jobSpec := crontab.JobSpec{
+				Spec:    req.Schedule,
+				Command: req.Command,
+			}
+			
+			// parse the schedule
+			sched, err := cron.ParseStandard(req.Schedule)
+			if err != nil {
+				log.Printf("[WARN] manual trigger failed: invalid schedule %s: %v", req.Schedule, err)
+				continue
+			}
+			
+			// execute job in a new goroutine with context check
+			go func(js crontab.JobSpec, schedule Schedule) {
+				// check if context is still valid before executing
+				select {
+				case <-ctx.Done():
+					log.Printf("[WARN] skipping manual execution of %s, context canceled", js.Command)
+					return
+				default:
+					log.Printf("[INFO] manually executing job: %s", js.Command)
+					// create and execute the job function
+					jobFunc := s.jobFunc(ctx, js, schedule)
+					jobFunc.Run()
+				}
+			}(jobSpec, sched)
 		}
 	}
 }

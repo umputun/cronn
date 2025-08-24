@@ -138,6 +138,12 @@ func main() {
 		jitterDuration = opts.JitterDuration
 	}
 
+	// create manual trigger channel if web UI is enabled
+	var manualTrigger chan service.ManualJobRequest
+	if opts.Web.Enabled {
+		manualTrigger = make(chan service.ManualJobRequest, 100)
+	}
+
 	// initialize web server if enabled
 	var eventHandler service.JobEventHandler
 	if opts.Web.Enabled {
@@ -146,6 +152,7 @@ func main() {
 			DBPath:         opts.Web.DBPath,
 			UpdateInterval: opts.Web.UpdateInterval,
 			Version:        revision,
+			ManualTrigger:  manualTrigger,
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {
@@ -180,6 +187,7 @@ func main() {
 		DeDup:             service.NewDeDup(opts.DeDup),
 		NotifyTimeout:     opts.Notify.TimeOut,
 		JobEventHandler:   eventHandler,
+		ManualTrigger:     manualTrigger,
 	}
 
 	cronService.RepeaterDefaults.Attempts = opts.Repeater.Attempts

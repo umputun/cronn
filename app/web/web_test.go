@@ -944,6 +944,220 @@ func TestServer_render_ErrorHandling(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		assert.Contains(t, rec.Body.String(), "Template error")
 	})
+
+	t.Run("template with nil data", func(t *testing.T) {
+		server.templates["test.html"] = template.Must(template.New("test").Parse(`<div>Test</div>`))
+
+		rec := httptest.NewRecorder()
+
+		server.render(rec, "test.html", "test", nil)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "<div>Test</div>")
+	})
+}
+
+func TestServer_getViewMode_CookieErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		Address:        ":8080",
+		CrontabFile:    "crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	t.Run("invalid view mode value", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.AddCookie(&http.Cookie{
+			Name:  "view-mode",
+			Value: "invalid-mode",
+		})
+
+		mode := server.getViewMode(req)
+		assert.Equal(t, enums.ViewModeCards, mode) // should return default
+	})
+
+	t.Run("empty cookie value", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.AddCookie(&http.Cookie{
+			Name:  "view-mode",
+			Value: "",
+		})
+
+		mode := server.getViewMode(req)
+		assert.Equal(t, enums.ViewModeCards, mode) // should return default
+	})
+}
+
+func TestServer_getTheme_CookieErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		Address:        ":8080",
+		CrontabFile:    "crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	t.Run("invalid theme value", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.AddCookie(&http.Cookie{
+			Name:  "theme",
+			Value: "invalid-theme",
+		})
+
+		theme := server.getTheme(req)
+		assert.Equal(t, enums.ThemeAuto, theme) // should return default
+	})
+
+	t.Run("empty cookie value", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.AddCookie(&http.Cookie{
+			Name:  "theme",
+			Value: "",
+		})
+
+		theme := server.getTheme(req)
+		assert.Equal(t, enums.ThemeAuto, theme) // should return default
+	})
+}
+
+func TestServer_getSortMode_CookieErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		Address:        ":8080",
+		CrontabFile:    "crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	t.Run("invalid sort mode value", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.AddCookie(&http.Cookie{
+			Name:  "sort-mode",
+			Value: "invalid-sort",
+		})
+
+		mode := server.getSortMode(req)
+		assert.Equal(t, enums.SortModeDefault, mode) // should return default
+	})
+
+	t.Run("empty cookie value", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.AddCookie(&http.Cookie{
+			Name:  "sort-mode",
+			Value: "",
+		})
+
+		mode := server.getSortMode(req)
+		assert.Equal(t, enums.SortModeDefault, mode) // should return default
+	})
+}
+
+func TestServer_sortJobs_EdgeCases(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		Address:        ":8080",
+		CrontabFile:    "crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	now := time.Now()
+
+	t.Run("sort by next run with zero times", func(t *testing.T) {
+		jobs := []persistence.JobInfo{
+			{ID: "1", Command: "cmd1", NextRun: time.Time{}},
+			{ID: "2", Command: "cmd2", NextRun: now.Add(time.Hour)},
+			{ID: "3", Command: "cmd3", NextRun: time.Time{}},
+			{ID: "4", Command: "cmd4", NextRun: now.Add(-time.Hour)},
+		}
+
+		server.sortJobs(jobs, enums.SortModeNextrun)
+		sorted := jobs
+
+		// zero times should be sorted last
+		assert.Equal(t, "4", sorted[0].ID) // past time first
+		assert.Equal(t, "2", sorted[1].ID) // future time second
+		assert.Equal(t, "1", sorted[2].ID) // zero times last
+		assert.Equal(t, "3", sorted[3].ID) // zero times last
+	})
+
+	t.Run("sort by last run with zero times", func(t *testing.T) {
+		jobs := []persistence.JobInfo{
+			{ID: "1", Command: "cmd1", LastRun: now},
+			{ID: "2", Command: "cmd2", LastRun: time.Time{}},
+			{ID: "3", Command: "cmd3", LastRun: now.Add(-time.Hour)},
+			{ID: "4", Command: "cmd4", LastRun: time.Time{}},
+		}
+
+		server.sortJobs(jobs, enums.SortModeLastrun)
+		sorted := jobs
+
+		// most recent first, zero times last
+		assert.Equal(t, "1", sorted[0].ID) // most recent
+		assert.Equal(t, "3", sorted[1].ID) // older
+		assert.Equal(t, "2", sorted[2].ID) // zero time
+		assert.Equal(t, "4", sorted[3].ID) // zero time
+	})
+
+	t.Run("empty job list", func(t *testing.T) {
+		jobs := []persistence.JobInfo{}
+		server.sortJobs(jobs, enums.SortModeDefault)
+		assert.Empty(t, jobs)
+	})
+
+	t.Run("single job", func(t *testing.T) {
+		jobs := []persistence.JobInfo{
+			{ID: "1", Command: "cmd1"},
+		}
+		server.sortJobs(jobs, enums.SortModeDefault)
+		assert.Len(t, jobs, 1)
+		assert.Equal(t, "1", jobs[0].ID)
+	})
+
+	t.Run("sort by status with all same status", func(t *testing.T) {
+		jobs := []persistence.JobInfo{
+			{ID: "1", Command: "zzz", LastStatus: enums.JobStatusSuccess},
+			{ID: "2", Command: "aaa", LastStatus: enums.JobStatusSuccess},
+			{ID: "3", Command: "mmm", LastStatus: enums.JobStatusSuccess},
+		}
+
+		server.sortJobs(jobs, enums.SortModeDefault)
+		sorted := jobs
+
+		// when all statuses are same, should maintain original order
+		assert.Equal(t, "1", sorted[0].ID)
+		assert.Equal(t, "2", sorted[1].ID)
+		assert.Equal(t, "3", sorted[2].ID)
+	})
 }
 
 func TestServer_Run(t *testing.T) {

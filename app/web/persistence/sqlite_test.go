@@ -12,14 +12,23 @@ import (
 )
 
 func TestNewSQLiteStore(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	t.Run("successful creation", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
 
-	store, err := NewSQLiteStore(dbPath)
-	require.NoError(t, err)
-	assert.NotNil(t, store)
-	err = store.Close()
-	require.NoError(t, err)
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		assert.NotNil(t, store)
+		err = store.Close()
+		require.NoError(t, err)
+	})
+
+	t.Run("invalid path", func(t *testing.T) {
+		// try to create database in non-existent directory
+		store, err := NewSQLiteStore("/invalid/path/that/does/not/exist/test.db")
+		assert.Error(t, err)
+		assert.Nil(t, store)
+	})
 }
 
 func TestSQLiteStore_Initialize(t *testing.T) {
@@ -231,4 +240,56 @@ func TestSQLiteStore_WALMode(t *testing.T) {
 	err = store.db.QueryRow("PRAGMA journal_mode").Scan(&mode)
 	require.NoError(t, err)
 	assert.Equal(t, "wal", mode)
+}
+
+func TestSQLiteStore_LoadJobs_Error(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	// don't initialize tables, so query will fail
+	jobs, err := store.LoadJobs()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to query jobs")
+	assert.Nil(t, jobs)
+}
+
+func TestSQLiteStore_SaveJobs_Error(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	// don't initialize tables, so insert will fail
+	jobs := []JobInfo{
+		{
+			ID:       "test",
+			Command:  "echo test",
+			Schedule: "* * * * *",
+		},
+	}
+
+	err = store.SaveJobs(jobs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to save job")
+}
+
+func TestSQLiteStore_Initialize_Error(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+
+	// close the database to cause error on Initialize
+	_ = store.db.Close()
+
+	err = store.Initialize()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to execute query")
 }

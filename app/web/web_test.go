@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/web/enums"
 )
 
 func TestNew(t *testing.T) {
@@ -84,7 +85,7 @@ func TestServer_sortJobs(t *testing.T) {
 	t.Run("default sort", func(t *testing.T) {
 		sorted := make([]JobInfo, len(jobs))
 		copy(sorted, jobs)
-		server.sortJobs(sorted, "default")
+		server.sortJobs(sorted, enums.SortModeDefault)
 
 		// should be sorted by SortIndex
 		assert.Equal(t, "2", sorted[0].ID)
@@ -96,7 +97,7 @@ func TestServer_sortJobs(t *testing.T) {
 	t.Run("sort by last run", func(t *testing.T) {
 		sorted := make([]JobInfo, len(jobs))
 		copy(sorted, jobs)
-		server.sortJobs(sorted, "lastrun")
+		server.sortJobs(sorted, enums.SortModeLastrun)
 
 		// should be sorted by LastRun, most recent first
 		assert.Equal(t, "2", sorted[0].ID, "First should be ID 2 (1 hour ago - most recent)")
@@ -113,7 +114,7 @@ func TestServer_sortJobs(t *testing.T) {
 	t.Run("sort by next run", func(t *testing.T) {
 		sorted := make([]JobInfo, len(jobs))
 		copy(sorted, jobs)
-		server.sortJobs(sorted, "nextrun")
+		server.sortJobs(sorted, enums.SortModeNextrun)
 
 		// should be sorted by NextRun, soonest first
 		assert.Equal(t, "3", sorted[0].ID) // 30 minutes
@@ -137,7 +138,7 @@ func TestServer_sortJobs(t *testing.T) {
 		// test next run sorting stability
 		sortedNext := make([]JobInfo, len(jobsEqual))
 		copy(sortedNext, jobsEqual)
-		server.sortJobs(sortedNext, "nextrun")
+		server.sortJobs(sortedNext, enums.SortModeNextrun)
 
 		// d should be first (30 minutes), then A,B,C,E in original order (all 1 hour)
 		assert.Equal(t, "D", sortedNext[0].ID, "D should be first (soonest)")
@@ -149,7 +150,7 @@ func TestServer_sortJobs(t *testing.T) {
 		// test last run sorting stability
 		sortedLast := make([]JobInfo, len(jobsEqual))
 		copy(sortedLast, jobsEqual)
-		server.sortJobs(sortedLast, "lastrun")
+		server.sortJobs(sortedLast, enums.SortModeLastrun)
 
 		// a,B,C,E have same LastRun (2 hours from now), D is different (now)
 		// since LastRun sorts most recent first, A,B,C,E should come first in original order
@@ -167,13 +168,13 @@ func TestServer_getSortMode(t *testing.T) {
 	tests := []struct {
 		name      string
 		cookieVal string
-		wantSort  string
+		wantSort  enums.SortMode
 	}{
-		{"no cookie", "", "default"},
-		{"default sort", "default", "default"},
-		{"last run sort", "lastrun", "lastrun"},
-		{"next run sort", "nextrun", "nextrun"},
-		{"invalid sort", "invalid", "default"},
+		{"no cookie", "", enums.SortModeDefault},
+		{"default sort", "default", enums.SortModeDefault},
+		{"last run sort", "lastrun", enums.SortModeLastrun},
+		{"next run sort", "nextrun", enums.SortModeNextrun},
+		{"invalid sort", "invalid", enums.SortModeDefault},
 	}
 
 	for _, tt := range tests {
@@ -275,7 +276,7 @@ func TestServer_OnJobStart(t *testing.T) {
 	assert.Equal(t, "echo test", job.Command)
 	assert.Equal(t, "* * * * *", job.Schedule)
 	assert.True(t, job.IsRunning)
-	assert.Equal(t, "running", job.LastStatus)
+	assert.Equal(t, enums.JobStatusRunning.String(), job.LastStatus.String())
 	assert.Equal(t, startTime.Unix(), job.LastRun.Unix())
 }
 
@@ -308,7 +309,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
 		job, exists := server.jobs[HashCommand("echo test")]
-		return exists && job.LastStatus == "running"
+		return exists && job.LastStatus == enums.JobStatusRunning
 	}, time.Second, 10*time.Millisecond)
 
 	// then complete it successfully
@@ -317,7 +318,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
 		job, exists := server.jobs[HashCommand("echo test")]
-		return exists && job.LastStatus == "success"
+		return exists && job.LastStatus == enums.JobStatusSuccess
 	}, time.Second, 10*time.Millisecond)
 
 	// verify job status was updated in memory
@@ -327,7 +328,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
-	assert.Equal(t, "success", job.LastStatus)
+	assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
 
 	// test with error
 	server.OnJobStart("echo error", "* * * * *", startTime)
@@ -335,7 +336,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
 		job, exists := server.jobs[HashCommand("echo error")]
-		return exists && job.LastStatus == "running"
+		return exists && job.LastStatus == enums.JobStatusRunning
 	}, time.Second, 10*time.Millisecond)
 
 	server.OnJobComplete("echo error", "* * * * *", startTime, endTime, 1, fmt.Errorf("test error"))
@@ -343,7 +344,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
 		job, exists := server.jobs[HashCommand("echo error")]
-		return exists && job.LastStatus == "failed"
+		return exists && job.LastStatus == enums.JobStatusFailed
 	}, time.Second, 10*time.Millisecond)
 
 	server.jobsMu.RLock()
@@ -352,7 +353,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 
 	assert.True(t, exists2)
 	assert.False(t, job2.IsRunning)
-	assert.Equal(t, "failed", job2.LastStatus)
+	assert.Equal(t, enums.JobStatusFailed, job2.LastStatus)
 }
 
 func TestServer_syncWithCrontab(t *testing.T) {
@@ -723,7 +724,7 @@ func TestServer_Templates(t *testing.T) {
 					ID:         "test123",
 					Command:    "echo test",
 					Schedule:   "* * * * *",
-					LastStatus: "success",
+					LastStatus: enums.JobStatusSuccess,
 					LastRun:    time.Now(),
 					NextRun:    time.Now().Add(time.Minute),
 					IsRunning:  false,

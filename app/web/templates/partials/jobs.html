@@ -11,13 +11,13 @@
         <div class="status-indicator running">
             <div class="pulse"></div>
         </div>
-        {{else if eq .LastStatus "success"}}
+        {{else if eq .LastStatus.String "success"}}
         <div class="status-indicator success">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </div>
-        {{else if eq .LastStatus "failed"}}
+        {{else if eq .LastStatus.String "failed"}}
         <div class="status-indicator failed">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -89,12 +89,12 @@
                     <div class="status-dot"></div>
                     Running
                 </div>
-                {{else if eq .LastStatus "success"}}
+                {{else if eq .LastStatus.String "success"}}
                 <div class="status-badge success">
                     <div class="status-dot"></div>
                     Success
                 </div>
-                {{else if eq .LastStatus "failed"}}
+                {{else if eq .LastStatus.String "failed"}}
                 <div class="status-badge failed">
                     <div class="status-dot"></div>
                     Failed

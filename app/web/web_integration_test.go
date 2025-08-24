@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/cronn/app/web/enums"
 )
 
 func TestServer_IntegrationHandlers(t *testing.T) {
@@ -171,7 +173,7 @@ func TestServer_ProcessEvents(t *testing.T) {
 		JobID:     HashCommand("test command"),
 		Command:   "test command",
 		Schedule:  "* * * * *",
-		EventType: "started",
+		EventType: enums.EventTypeStarted,
 		StartedAt: time.Now(),
 	}
 
@@ -192,7 +194,7 @@ func TestServer_ProcessEvents(t *testing.T) {
 		JobID:      HashCommand("test command"),
 		Command:    "test command",
 		Schedule:   "* * * * *",
-		EventType:  "completed",
+		EventType:  enums.EventTypeCompleted,
 		ExitCode:   0,
 		FinishedAt: time.Now(),
 	}
@@ -207,7 +209,7 @@ func TestServer_ProcessEvents(t *testing.T) {
 
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
-	assert.Equal(t, "success", job.LastStatus)
+	assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
 }
 
 func TestServer_PersistJobs(t *testing.T) {
@@ -233,7 +235,7 @@ func TestServer_PersistJobs(t *testing.T) {
 		Command:    "test1",
 		Schedule:   "* * * * *",
 		LastRun:    now,
-		LastStatus: "success",
+		LastStatus: enums.JobStatusSuccess,
 		IsRunning:  false,
 		Enabled:    true,
 		CreatedAt:  now,
@@ -244,7 +246,7 @@ func TestServer_PersistJobs(t *testing.T) {
 		Command:    "test2",
 		Schedule:   "@daily",
 		LastRun:    now,
-		LastStatus: "failed",
+		LastStatus: enums.JobStatusFailed,
 		IsRunning:  false, // not running so LastStatus should persist as "failed"
 		Enabled:    true,
 		CreatedAt:  now,
@@ -279,10 +281,10 @@ func TestServer_PersistJobs(t *testing.T) {
 	assert.Len(t, jobs, 2)
 	assert.Equal(t, "test1", jobs[0].Command)
 	assert.Equal(t, "* * * * *", jobs[0].Schedule)
-	assert.Equal(t, "success", jobs[0].Status)
+	assert.Equal(t, enums.JobStatusSuccess.String(), jobs[0].Status)
 	assert.Equal(t, "test2", jobs[1].Command)
 	assert.Equal(t, "@daily", jobs[1].Schedule)
-	assert.Equal(t, "failed", jobs[1].Status)
+	assert.Equal(t, enums.JobStatusFailed.String(), jobs[1].Status)
 
 	// CRITICAL: Test round-trip - clear memory and reload from database
 	server.jobsMu.Lock()
@@ -420,8 +422,8 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	server1.jobsMu.RLock()
 	job1 := server1.jobs[HashCommand("echo test1")]
 	job2 := server1.jobs[HashCommand("echo test2")]
-	require.Equal(t, "success", job1.LastStatus)
-	require.Equal(t, "failed", job2.LastStatus)
+	require.Equal(t, enums.JobStatusSuccess, job1.LastStatus)
+	require.Equal(t, enums.JobStatusFailed, job2.LastStatus)
 	require.False(t, job1.LastRun.IsZero())
 	require.False(t, job2.LastRun.IsZero())
 	server1.jobsMu.RUnlock()
@@ -449,8 +451,8 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	require.True(t, exists2, "job2 should exist after restart")
 
 	// verify execution history persisted
-	assert.Equal(t, "success", restoredJob1.LastStatus, "job1 status should persist")
-	assert.Equal(t, "failed", restoredJob2.LastStatus, "job2 status should persist")
+	assert.Equal(t, enums.JobStatusSuccess, restoredJob1.LastStatus, "job1 status should persist")
+	assert.Equal(t, enums.JobStatusFailed, restoredJob2.LastStatus, "job2 status should persist")
 	assert.False(t, restoredJob1.LastRun.IsZero(), "job1 last run should persist")
 	assert.False(t, restoredJob2.LastRun.IsZero(), "job2 last run should persist")
 
@@ -483,7 +485,7 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 		VALUES 
 			(?, 'echo test1', '* * * * *', ?, ?, 'success', 1, ?, ?),
 			(?, 'echo test2', '0 * * * *', ?, ?, 'failed', 1, ?, ?),
-			(?, 'echo test3', '@daily', ?, ?, '', 1, ?, ?)
+			(?, 'echo test3', '@daily', ?, ?, 'idle', 1, ?, ?)
 	`,
 		HashCommand("echo test1"), now.Add(time.Minute).Unix(), now.Unix(), now.Unix(), now.Unix(),
 		HashCommand("echo test2"), now.Add(time.Hour).Unix(), now.Add(-time.Hour).Unix(), now.Unix(), now.Unix(),
@@ -509,7 +511,7 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 	require.NotNil(t, job1)
 	assert.Equal(t, "echo test1", job1.Command)
 	assert.Equal(t, "* * * * *", job1.Schedule)
-	assert.Equal(t, "success", job1.LastStatus)
+	assert.Equal(t, enums.JobStatusSuccess, job1.LastStatus)
 	assert.False(t, job1.LastRun.IsZero())
 	assert.False(t, job1.NextRun.IsZero())
 
@@ -517,14 +519,14 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 	require.NotNil(t, job2)
 	assert.Equal(t, "echo test2", job2.Command)
 	assert.Equal(t, "0 * * * *", job2.Schedule)
-	assert.Equal(t, "failed", job2.LastStatus)
+	assert.Equal(t, enums.JobStatusFailed, job2.LastStatus)
 	assert.False(t, job2.LastRun.IsZero())
 
 	job3 := server.jobs[HashCommand("echo test3")]
 	require.NotNil(t, job3)
 	assert.Equal(t, "echo test3", job3.Command)
 	assert.Equal(t, "@daily", job3.Schedule)
-	assert.Equal(t, "", job3.LastStatus)
+	assert.Equal(t, enums.JobStatusIdle, job3.LastStatus)
 	assert.Equal(t, int64(0), job3.LastRun.Unix(), "job3 should have zero LastRun timestamp")
 	assert.False(t, job3.NextRun.IsZero(), "NextRun should be calculated from schedule")
 }
@@ -549,7 +551,7 @@ func TestServer_HandleJobEvent(t *testing.T) {
 		JobID:     HashCommand("test"),
 		Command:   "test",
 		Schedule:  "* * * * *",
-		EventType: "started",
+		EventType: enums.EventTypeStarted,
 		StartedAt: time.Now(),
 	}
 
@@ -561,14 +563,14 @@ func TestServer_HandleJobEvent(t *testing.T) {
 
 	assert.True(t, exists)
 	assert.True(t, job.IsRunning)
-	assert.Equal(t, "running", job.LastStatus)
+	assert.Equal(t, enums.JobStatusRunning, job.LastStatus)
 
 	// test job complete event
 	event = JobEvent{
 		JobID:      HashCommand("test"),
 		Command:    "test",
 		Schedule:   "* * * * *",
-		EventType:  "completed",
+		EventType:  enums.EventTypeCompleted,
 		ExitCode:   0,
 		FinishedAt: time.Now(),
 	}
@@ -581,14 +583,14 @@ func TestServer_HandleJobEvent(t *testing.T) {
 
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
-	assert.Equal(t, "success", job.LastStatus)
+	assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
 
 	// test job failed event
 	event = JobEvent{
 		JobID:      HashCommand("test"),
 		Command:    "test",
 		Schedule:   "* * * * *",
-		EventType:  "failed",
+		EventType:  enums.EventTypeFailed,
 		ExitCode:   1,
 		FinishedAt: time.Now(),
 	}
@@ -601,5 +603,5 @@ func TestServer_HandleJobEvent(t *testing.T) {
 
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
-	assert.Equal(t, "failed", job.LastStatus)
+	assert.Equal(t, enums.JobStatusFailed, job.LastStatus)
 }

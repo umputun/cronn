@@ -19,6 +19,7 @@ import (
 	_ "modernc.org/sqlite" // SQLite driver
 
 	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/web/enums"
 )
 
 //go:embed templates/*.html templates/partials/*.html
@@ -46,7 +47,7 @@ type JobInfo struct {
 	Schedule   string
 	NextRun    time.Time
 	LastRun    time.Time
-	LastStatus string // "success", "failed", "running", ""
+	LastStatus enums.JobStatus
 	IsRunning  bool
 	Enabled    bool
 	CreatedAt  time.Time
@@ -59,7 +60,7 @@ type JobEvent struct {
 	JobID      string
 	Command    string
 	Schedule   string
-	EventType  string // "started", "completed", "failed"
+	EventType  enums.EventType
 	ExitCode   int
 	StartedAt  time.Time
 	FinishedAt time.Time
@@ -69,9 +70,9 @@ type JobEvent struct {
 type TemplateData struct {
 	Jobs        []JobInfo
 	CurrentYear int
-	ViewMode    string // "cards" or "list"
-	Theme       string // "light", "dark", "auto"
-	SortMode    string // "default", "lastrun", "nextrun"
+	ViewMode    enums.ViewMode
+	Theme       enums.Theme
+	SortMode    enums.SortMode
 }
 
 // Config holds server configuration
@@ -173,7 +174,7 @@ func (s *Server) OnJobStart(command, schedule string, startTime time.Time) {
 		JobID:     HashCommand(command),
 		Command:   command,
 		Schedule:  schedule,
-		EventType: "started",
+		EventType: enums.EventTypeStarted,
 		StartedAt: startTime,
 	}
 	select {
@@ -185,9 +186,9 @@ func (s *Server) OnJobStart(command, schedule string, startTime time.Time) {
 
 // OnJobComplete implements service.JobEventHandler interface
 func (s *Server) OnJobComplete(command, schedule string, startTime, endTime time.Time, exitCode int, err error) {
-	eventType := "completed"
+	eventType := enums.EventTypeCompleted
 	if err != nil {
-		eventType = "failed"
+		eventType = enums.EventTypeFailed
 	}
 	event := JobEvent{
 		JobID:      HashCommand(command),
@@ -351,7 +352,7 @@ func (s *Server) persistJobs() {
 		// determine status to save
 		status := job.LastStatus
 		if job.IsRunning {
-			status = "running"
+			status = enums.JobStatusRunning
 		}
 
 		_, err := tx.Exec(`
@@ -411,17 +412,17 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	}
 
 	switch event.EventType {
-	case "started":
+	case enums.EventTypeStarted:
 		job.IsRunning = true
 		job.LastRun = event.StartedAt
-		job.LastStatus = "running"
-	case "completed":
+		job.LastStatus = enums.JobStatusRunning
+	case enums.EventTypeCompleted:
 		job.IsRunning = false
-		job.LastStatus = "success"
+		job.LastStatus = enums.JobStatusSuccess
 		s.updateNextRun(&job)
-	case "failed":
+	case enums.EventTypeFailed:
 		job.IsRunning = false
-		job.LastStatus = "failed"
+		job.LastStatus = enums.JobStatusFailed
 		s.updateNextRun(&job)
 	}
 	job.UpdatedAt = time.Now()
@@ -498,7 +499,7 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmplName := "jobs-cards"
-	if viewMode == "list" {
+	if viewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 
@@ -508,14 +509,14 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 // handleViewModeToggle toggles between card and list view
 func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	currentMode := getViewMode(r)
-	newMode := "list"
-	if currentMode == "list" {
-		newMode = "cards"
+	newMode := enums.ViewModeList
+	if currentMode == enums.ViewModeList {
+		newMode = enums.ViewModeCards
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "view-mode",
-		Value:    newMode,
+		Value:    newMode.String(),
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
@@ -532,19 +533,21 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	currentTheme := getTheme(r)
 
 	// cycle: light -> dark -> auto -> light
-	nextTheme := "light"
+	var nextTheme enums.Theme
 	switch currentTheme {
-	case "light":
-		nextTheme = "dark"
-	case "dark":
-		nextTheme = "auto"
-	case "auto":
-		nextTheme = "light"
+	case enums.ThemeLight:
+		nextTheme = enums.ThemeDark
+	case enums.ThemeDark:
+		nextTheme = enums.ThemeAuto
+	case enums.ThemeAuto:
+		nextTheme = enums.ThemeLight
+	default:
+		nextTheme = enums.ThemeLight
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "theme",
-		Value:    nextTheme,
+		Value:    nextTheme.String(),
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: false,              // allow JS to read for immediate update
@@ -561,19 +564,22 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	currentMode := s.getSortMode(r)
 
 	// cycle: default -> lastrun -> nextrun -> default
-	nextMode := "default"
+	var nextMode enums.SortMode
 	switch currentMode {
-	case "default":
-		nextMode = "lastrun"
-	case "lastrun":
-		nextMode = "nextrun"
-	case "nextrun":
-		nextMode = "default"
+	case enums.SortModeDefault:
+		nextMode = enums.SortModeLastrun
+	case enums.SortModeLastrun:
+		nextMode = enums.SortModeNextrun
+	case enums.SortModeNextrun:
+		nextMode = enums.SortModeDefault
+	default:
+		// if somehow we get an unexpected value, default to default sort
+		nextMode = enums.SortModeDefault
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sort-mode",
-		Value:    nextMode,
+		Value:    nextMode.String(),
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
@@ -604,7 +610,7 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 
 	// determine template name
 	tmplName := "jobs-cards"
-	if viewMode == "list" {
+	if viewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 
@@ -624,9 +630,9 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	// get sort button label
 	sortLabel := "Original Order"
 	switch nextMode {
-	case "lastrun":
+	case enums.SortModeLastrun:
 		sortLabel = "Last Run"
-	case "nextrun":
+	case enums.SortModeNextrun:
 		sortLabel = "Next Run"
 	}
 
@@ -638,19 +644,18 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 
 // handleSortModeChange changes the sort mode
 func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
-	sortMode := r.FormValue("sort")
+	sortModeStr := r.FormValue("sort")
 
-	// validate sort mode
-	switch sortMode {
-	case "default", "lastrun", "nextrun":
-		// valid
-	default:
-		sortMode = "default"
+	// parse and validate sort mode
+	sortMode, err := enums.ParseSortMode(sortModeStr)
+	if err != nil {
+		log.Printf("[WARN] invalid sort mode %q: %v", sortModeStr, err)
+		sortMode = enums.SortModeDefault
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sort-mode",
-		Value:    sortMode,
+		Value:    sortMode.String(),
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
@@ -680,7 +685,7 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmplName := "jobs-cards"
-	if viewMode == "list" {
+	if viewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 
@@ -791,28 +796,30 @@ func HashCommand(cmd string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func getViewMode(r *http.Request) string {
+func getViewMode(r *http.Request) enums.ViewMode {
 	cookie, err := r.Cookie("view-mode")
 	if err != nil {
-		return "cards" // default
+		return enums.ViewModeCards // default
 	}
-	if cookie.Value == "list" {
-		return "list"
+	mode, err := enums.ParseViewMode(cookie.Value)
+	if err != nil {
+		log.Printf("[WARN] invalid view mode %q: %v", cookie.Value, err)
+		return enums.ViewModeCards // default on parse error
 	}
-	return "cards"
+	return mode
 }
 
-func getTheme(r *http.Request) string {
+func getTheme(r *http.Request) enums.Theme {
 	cookie, err := r.Cookie("theme")
 	if err != nil {
-		return "auto" // default
+		return enums.ThemeAuto // default
 	}
-	switch cookie.Value {
-	case "light", "dark", "auto":
-		return cookie.Value
-	default:
-		return "auto"
+	theme, err := enums.ParseTheme(cookie.Value)
+	if err != nil {
+		log.Printf("[WARN] invalid theme %q: %v", cookie.Value, err)
+		return enums.ThemeAuto // default on parse error
 	}
+	return theme
 }
 
 // template helper functions
@@ -856,18 +863,17 @@ func truncate(s string, n int) string {
 }
 
 // getSortMode gets the sort mode from cookie or defaults to "default"
-func (s *Server) getSortMode(r *http.Request) string {
+func (s *Server) getSortMode(r *http.Request) enums.SortMode {
 	cookie, err := r.Cookie("sort-mode")
 	if err != nil || cookie.Value == "" {
-		return "default"
+		return enums.SortModeDefault
 	}
-	// validate sort mode
-	switch cookie.Value {
-	case "default", "lastrun", "nextrun":
-		return cookie.Value
-	default:
-		return "default"
+	mode, err := enums.ParseSortMode(cookie.Value)
+	if err != nil {
+		log.Printf("[WARN] invalid sort mode cookie %q: %v", cookie.Value, err)
+		return enums.SortModeDefault
 	}
+	return mode
 }
 
 // updateNextRun updates the next run time for a job based on its schedule
@@ -881,9 +887,9 @@ func (s *Server) updateNextRun(job *JobInfo) {
 }
 
 // sortJobs sorts jobs based on the sort mode
-func (s *Server) sortJobs(jobs []JobInfo, sortMode string) {
+func (s *Server) sortJobs(jobs []JobInfo, sortMode enums.SortMode) {
 	switch sortMode {
-	case "lastrun":
+	case enums.SortModeLastrun:
 		// sort by last run time, most recent first
 		sort.Slice(jobs, func(i, j int) bool {
 			// handle zero times - put them at the end
@@ -902,7 +908,7 @@ func (s *Server) sortJobs(jobs []JobInfo, sortMode string) {
 			}
 			return jobs[i].LastRun.After(jobs[j].LastRun)
 		})
-	case "nextrun":
+	case enums.SortModeNextrun:
 		// sort by next run time, soonest first
 		sort.Slice(jobs, func(i, j int) bool {
 			// handle zero times - put them at the end

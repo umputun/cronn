@@ -1,6 +1,6 @@
 {{define "base"}}
 <!DOCTYPE html>
-<html lang="en" {{if ne .Theme "auto"}}data-theme="{{.Theme}}"{{end}}>
+<html lang="en" {{if ne .Theme.String "auto"}}data-theme="{{.Theme.String}}"{{end}}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
@@ -33,7 +33,7 @@
                             <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                         </svg>
                         <span class="sort-label" id="sort-label">
-                            {{if eq .SortMode "default"}}Original Order{{else if eq .SortMode "lastrun"}}Last Run{{else}}Next Run{{end}}
+                            {{if eq .SortMode.String "default"}}Original Order{{else if eq .SortMode.String "lastrun"}}Last Run{{else}}Next Run{{end}}
                         </span>
                     </button>
 
@@ -43,7 +43,7 @@
                             hx-on::after-request="htmx.trigger(document.body, 'refresh-jobs')"
                             class="control-btn view-toggle"
                             title="Toggle view mode">
-                        {{if eq .ViewMode "cards"}}
+                        {{if eq .ViewMode.String "cards"}}
                         <!-- List icon (switch to list) -->
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -69,13 +69,13 @@
                             hx-trigger="click"
                             class="control-btn theme-toggle"
                             title="Toggle theme">
-                        {{if eq .Theme "auto"}}
+                        {{if eq .Theme.String "auto"}}
                         <!-- Auto mode icon -->
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <rect x="5" y="6" width="14" height="10" rx="2" stroke="currentColor" stroke-width="2"/>
                             <path d="M9 19h6M12 16v3" stroke="currentColor" stroke-width="2"/>
                         </svg>
-                        {{else if eq .Theme "dark"}}
+                        {{else if eq .Theme.String "dark"}}
                         <!-- Sun icon (in dark mode, click for light) -->
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <circle cx="12" cy="12" r="4" fill="currentColor"/>

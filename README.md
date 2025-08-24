@@ -164,6 +164,7 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 
 ### Features
 - **Real-time job monitoring** with live updates every 30 seconds
+- **Persistent job history** stored in SQLite database that survives restarts
 - **Multiple view modes**: Card view and compact list view
 - **Light and dark themes** with automatic system preference detection
 - **Job statistics** showing total jobs, running jobs, and next execution time
@@ -376,6 +377,7 @@ web:
       --web.enabled               enable web dashboard [$CRONN_WEB_ENABLED]
       --web.address=              web server address (default: :8080) [$CRONN_WEB_ADDRESS]
       --web.update-interval=      dashboard update interval (default: 30s) [$CRONN_WEB_UPDATE_INTERVAL]
+      --web.db-path=              SQLite database path (default: cronn.db) [$CRONN_WEB_DB_PATH]
 
 repeater:
       --repeater.attempts=        how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]
@@ -425,3 +427,7 @@ Help Options:
 - [robfig/cron](https://github.com/robfig/cron) for parsing and scheduling.
 - [jessevdk/go-flags](https://github.com/jessevdk/go-flags) for cli parameters parser.
 - [lumberjack](https://gopkg.in/natefinch/lumberjack.v2) for rotated logs
+- [jmoiron/sqlx](https://github.com/jmoiron/sqlx) for database operations
+- [modernc.org/sqlite](https://modernc.org/sqlite) for pure Go SQLite driver
+- [go-pkgz/routegroup](https://github.com/go-pkgz/routegroup) for HTTP routing
+- [go-pkgz/rest](https://github.com/go-pkgz/rest) for REST utilities

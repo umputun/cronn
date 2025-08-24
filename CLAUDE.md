@@ -20,6 +20,11 @@
 - Cookie-based persistence for theme and view preferences
 - SHA256 hashing for job identity tracking
 
+## Interface Design Patterns
+- **Consumer-side interfaces**: Persistence interface defined in web package (consumer) not persistence package, following Go idioms
+- **Minimal interface principle**: Interfaces only expose operations needed by consumers, internal details like initialization are hidden
+- **Return concrete types**: Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
+
 ## Testing and Development Workflow
 
 ### Restarting Services
@@ -49,7 +54,7 @@ This prevents port conflicts and ensures clean restarts.
 Jobs table stores:
 - id (SHA256 hash)
 - command, schedule
-- next_run, last_run (Unix timestamps)
+- next_run, last_run (DATETIME format)
 - last_status (idle/running/success/failed)
 - enabled, created_at, updated_at
 
@@ -76,18 +81,22 @@ Jobs table stores:
 - **Component-based design**: Reusable CSS patterns for cards, lists, buttons, and status indicators
 
 ## SQLite Persistence Architecture
+- **SQLx Integration**: Uses `github.com/jmoiron/sqlx` for cleaner database operations with struct scanning and named parameters
+- **Pure Go SQLite Driver**: Uses `modernc.org/sqlite` driver that handles DATETIME format natively with time.Time
+- **Single-phase initialization**: SQLiteStore initializes database tables automatically in constructor, eliminating two-phase initialization anti-pattern
 - **Critical startup sequence**: Server must call `loadJobsFromDB()` BEFORE `loadJobsFromCrontab()` to preserve execution history
 - **Smart state merging**: `loadJobsFromCrontab()` preserves database-loaded execution state (LastRun, LastStatus) when updating job definitions  
 - **Event persistence timing**: Job events are persisted to database only when `persistJobs()` is called during crontab sync, not immediately after events
-- **Database loading patterns**: `loadJobsFromDB()` handles SQL NULL timestamps gracefully and recalculates NextRun for jobs missing schedule calculations
+- **Database loading patterns**: `loadJobsFromDB()` handles empty timestamps gracefully and recalculates NextRun for jobs missing schedule calculations
 
 ## Testing Architecture Critical Patterns
 - **Persistence testing anti-pattern**: Write-only tests that verify database writes but never test reading data back miss critical failures
 - **Round-trip verification requirement**: Persistence systems require tests that simulate complete restart cycles (write -> restart -> read -> verify)
 - **Async event testing**: Tests processing job events must start `processEvents()` goroutine AND call `persistJobs()` manually since persistence is decoupled from event handling
 - **Test failure design**: Tests must use `require.NoError()` for all operations - never ignore errors with `_` in test code
+- **Error path testing**: Drop database tables after initialization to test error conditions rather than trying to skip initialization
 
 ## Database Architecture Patterns
 - **Event-driven persistence**: Job execution history is updated in memory via `JobEventHandler` interface but persisted separately during sync cycles
 - **State reconciliation**: Database state is loaded first, then merged with crontab definitions to preserve execution history while respecting configuration changes
-- **Timestamp handling**: Database stores Unix timestamps, with `sql.NullInt64` for optional last_run values and zero-value handling in business logic
+- **Timestamp handling**: Database stores DATETIME format, handled transparently by modernc.org/sqlite driver with time.Time types

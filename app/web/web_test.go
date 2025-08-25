@@ -1196,6 +1196,7 @@ func TestServer_handleFilterToggle(t *testing.T) {
 	tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
 	tmpl = template.Must(tmpl.New("jobs-list").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
 	tmpl = template.Must(tmpl.New("filter-button").Parse(`<button><span id="filter-label">{{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else}}Failed{{end}}</span></button>`))
+	tmpl = template.Must(tmpl.New("stats-updates").Parse(`{{if .IsOOB}}<span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span><span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span><span id="total-count" hx-swap-oob="innerHTML">{{.TotalCount}}</span>{{end}}`))
 	server.templates = map[string]*template.Template{
 		"partials/jobs.html": tmpl,
 	}
@@ -1239,6 +1240,30 @@ func TestServer_handleFilterToggle(t *testing.T) {
 			assert.Contains(t, body, `id="filter-label"`)
 		})
 	}
+
+	t.Run("stats template error", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/filter-toggle", http.NoBody)
+		w := httptest.NewRecorder()
+
+		// create a template without stats-updates to trigger error
+		tmpl := template.New("partials")
+		tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
+		tmpl = template.Must(tmpl.New("filter-button").Parse(`<button>test</button>`))
+		// intentionally missing stats-updates template
+		server.templates = map[string]*template.Template{
+			"partials/jobs.html": tmpl,
+		}
+
+		server.handleFilterToggle(w, req)
+
+		resp := w.Result()
+		defer resp.Body.Close()
+
+		// should get error response
+		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+		body := w.Body.String()
+		assert.Equal(t, "Failed to render jobs\n", body)
+	})
 }
 
 func TestServer_getJobsWithStats_WithFilter(t *testing.T) {

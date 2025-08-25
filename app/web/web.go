@@ -805,11 +805,23 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
 		return fmt.Errorf("failed to render filter button template: %w", err)
 	}
 
+	// render stats updates with OOB
+	statsData := TemplateData{
+		RunningCount: data.RunningCount,
+		NextRunTime:  data.NextRunTime,
+		TotalCount:   data.TotalCount,
+		IsOOB:        true,
+	}
+	var statsHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&statsHTML, "stats-updates", statsData); err != nil {
+		return fmt.Errorf("failed to render stats updates template: %w", err)
+	}
+
 	// write response with all OOB updates
 	w.Header().Set("Content-Type", "text/html")
 	_, _ = w.Write(jobsHTML.Bytes())
 	_, _ = w.Write(filterButtonHTML.Bytes())
-	fmt.Fprintf(w, `<span id="total-count" hx-swap-oob="innerHTML">%d</span>`, data.TotalCount)
+	_, _ = w.Write(statsHTML.Bytes())
 	
 	return nil
 }

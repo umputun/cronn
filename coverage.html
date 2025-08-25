@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/umputun/cronn/app/web/web.go (75.2%)</option>
+				<option value="file0">github.com/umputun/cronn/app/web/web.go (89.5%)</option>
 				
 				</select>
 			</div>
@@ -75,21 +75,26 @@ import (
         "bytes"
         "context"
         "crypto/sha256"
-        "database/sql"
         "embed"
         "encoding/hex"
         "fmt"
         "html/template"
+        "io/fs"
         "net/http"
         "sort"
         "sync"
         "time"
 
         log "github.com/go-pkgz/lgr"
+        "github.com/go-pkgz/rest"
+        "github.com/go-pkgz/rest/logger"
+        "github.com/go-pkgz/routegroup"
         "github.com/robfig/cron/v3"
-        _ "modernc.org/sqlite" // SQLite driver
 
         "github.com/umputun/cronn/app/crontab"
+        "github.com/umputun/cronn/app/service"
+        "github.com/umputun/cronn/app/web/enums"
+        "github.com/umputun/cronn/app/web/persistence"
 )
 
 //go:embed templates/*.html templates/partials/*.html
@@ -100,29 +105,24 @@ var staticFS embed.FS
 
 // Server represents the web server
 type Server struct {
-        db             *sql.DB
+        store          Persistence
         templates      map[string]*template.Template
         crontabFile    string
         jobsMu         sync.RWMutex
-        jobs           map[string]*JobInfo // job id -&gt; job info
-        parser         *cron.Parser
+        jobs           map[string]persistence.JobInfo // job id -&gt; job info
+        parser         cron.Parser
         eventChan      chan JobEvent
         updateInterval time.Duration
+        version        string
+        manualTrigger  chan&lt;- service.ManualJobRequest // channel to send manual trigger requests to scheduler
 }
 
-// JobInfo represents a cron job in the UI
-type JobInfo struct {
-        ID         string // SHA256 of command
-        Command    string
-        Schedule   string
-        NextRun    time.Time
-        LastRun    time.Time
-        LastStatus string // "success", "failed", "running", ""
-        IsRunning  bool
-        Enabled    bool
-        CreatedAt  time.Time
-        UpdatedAt  time.Time
-        SortIndex  int // original order in crontab
+// Persistence defines storage operations for job management
+type Persistence interface {
+        LoadJobs() ([]persistence.JobInfo, error)
+        SaveJobs(jobs []persistence.JobInfo) error
+        RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error
+        Close() error
 }
 
 // JobEvent represents job execution events
@@ -130,7 +130,7 @@ type JobEvent struct {
         JobID      string
         Command    string
         Schedule   string
-        EventType  string // "started", "completed", "failed"
+        EventType  enums.EventType
         ExitCode   int
         StartedAt  time.Time
         FinishedAt time.Time
@@ -138,85 +138,83 @@ type JobEvent struct {
 
 // TemplateData holds data for templates
 type TemplateData struct {
-        Jobs        []*JobInfo
-        CurrentYear int
-        ViewMode    string // "cards" or "list"
-        Theme       string // "light", "dark", "auto"
-        SortMode    string // "default", "lastrun", "nextrun"
+        Jobs         []persistence.JobInfo
+        CurrentYear  int
+        ViewMode     enums.ViewMode
+        Theme        enums.Theme
+        SortMode     enums.SortMode
+        FilterMode   enums.FilterMode
+        RunningCount int    // for stats display
+        NextRunTime  string // formatted next run time for stats
+        TotalCount   int    // total jobs before filtering
+        IsOOB        bool   // for OOB template rendering
+}
+
+// jobsStats holds statistics about jobs
+type jobsStats struct {
+        jobs         []persistence.JobInfo
+        runningCount int
+        nextRunTime  string
+        totalCount   int
 }
 
 // Config holds server configuration
 type Config struct {
-        Address        string
         CrontabFile    string
         DBPath         string
         UpdateInterval time.Duration
+        Version        string
+        ManualTrigger  chan&lt;- service.ManualJobRequest // channel for sending manual trigger requests
 }
 
 // New creates a new web server
 func New(cfg Config) (*Server, error) <span class="cov8" title="1">{
-        // open database
-        db, err := sql.Open("sqlite", cfg.DBPath)
+        // create persistence store (it initializes itself)
+        store, err := persistence.NewSQLiteStore(cfg.DBPath)
         if err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("failed to open database: %w", err)
-        }</span>
-
-        // enable WAL mode for better concurrency
-        <span class="cov8" title="1">if _, walErr := db.Exec("PRAGMA journal_mode=WAL"); walErr != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("failed to set WAL mode: %w", walErr)
-        }</span>
-
-        // create tables
-        <span class="cov8" title="1">if createErr := createTables(db); createErr != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("failed to create tables: %w", createErr)
-        }</span>
-
-        // parse templates
-        <span class="cov8" title="1">templates, err := parseTemplates()
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("failed to parse templates: %w", err)
+                return nil, fmt.Errorf("failed to create store: %w", err)
         }</span>
 
         <span class="cov8" title="1">parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-        return &amp;Server{
-                db:             db,
-                templates:      templates,
+        s := &amp;Server{
+                store:          store,
                 crontabFile:    cfg.CrontabFile,
-                jobs:           make(map[string]*JobInfo),
-                parser:         &amp;parser,
+                jobs:           make(map[string]persistence.JobInfo),
+                parser:         parser,
                 eventChan:      make(chan JobEvent, 1000),
                 updateInterval: cfg.UpdateInterval,
-        }, nil</span>
+                version:        cfg.Version,
+                manualTrigger:  cfg.ManualTrigger,
+        }
+
+        // parse templates
+        templates, err := s.parseTemplates()
+        if err != nil </span><span class="cov0" title="0">{
+                if closeErr := store.Close(); closeErr != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to parse templates: %w (also failed to close: %v)", err, closeErr)
+                }</span>
+                <span class="cov0" title="0">return nil, fmt.Errorf("failed to parse templates: %w", err)</span>
+        }
+        <span class="cov8" title="1">s.templates = templates
+
+        return s, nil</span>
 }
 
 // Run starts the web server
 func (s *Server) Run(ctx context.Context, address string) error <span class="cov8" title="1">{
+        // load existing job history from database
+        s.loadJobsFromDB()
+
         // start background job sync
         go s.syncJobs(ctx)
 
         // start event processor
         go s.processEvents(ctx)
 
-        // setup routes
-        mux := http.NewServeMux()
-
-        // pages
-        mux.HandleFunc("GET /", s.handleDashboard)
-
-        // api endpoints for HTMX
-        mux.HandleFunc("GET /api/jobs", s.handleJobsPartial)
-        mux.HandleFunc("POST /api/view-mode", s.handleViewModeToggle)
-        mux.HandleFunc("POST /api/theme", s.handleThemeToggle)
-        mux.HandleFunc("POST /api/sort-mode", s.handleSortModeChange)
-        mux.HandleFunc("POST /api/sort-toggle", s.handleSortToggle)
-
-        // static files
-        mux.Handle("GET /static/", http.FileServer(http.FS(staticFS)))
-
         server := &amp;http.Server{
                 Addr:              address,
-                Handler:           mux,
+                Handler:           s.routes(),
                 ReadHeaderTimeout: 5 * time.Second,
                 WriteTimeout:      30 * time.Second,
                 IdleTimeout:       30 * time.Second,
@@ -227,12 +225,59 @@ func (s *Server) Run(ctx context.Context, address string) error <span class="cov
                 shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
                 defer cancel()
                 if err := server.Shutdown(shutdownCtx); err != nil </span><span class="cov0" title="0">{
-                        log.Printf("[ERROR] failed to shutdown server: %v", err)
+                        log.Printf("[WARN] failed to shutdown server: %v", err)
                 }</span>
         }()
 
         <span class="cov8" title="1">log.Printf("[INFO] starting web server on %s", address)
         return server.ListenAndServe()</span>
+}
+
+// routes returns the http.Handler with all routes configured
+func (s *Server) routes() http.Handler <span class="cov8" title="1">{
+        router := routegroup.New(http.NewServeMux())
+
+        // global middleware - applied to all routes
+        router.Use(
+                rest.RealIP,
+                rest.Recoverer(log.Default()),
+                rest.Throttle(1000),
+                rest.AppInfo("cronn", "umputun", s.version),
+                rest.Ping,
+                rest.Trace,
+                rest.SizeLimit(64*1024), // 64KB max request size
+                logger.New(logger.Log(log.Default()), logger.Prefix("[DEBUG]")).Handler,
+        )
+
+        // dashboard route
+        router.HandleFunc("GET /", s.handleDashboard)
+
+        // api routes with grouping
+        router.Mount("/api").Route(func(api *routegroup.Bundle) </span><span class="cov8" title="1">{
+                // api-specific middleware
+                api.Use(rest.NoCache) // prevent caching of API responses
+
+                // HTMX endpoints
+                api.HandleFunc("GET /jobs", s.handleJobsPartial)
+                api.HandleFunc("POST /view-mode", s.handleViewModeToggle)
+                api.HandleFunc("POST /theme", s.handleThemeToggle)
+                api.HandleFunc("POST /sort-mode", s.handleSortModeChange)
+                api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
+                api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
+                api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
+        }</span>)
+
+        // static files with proper error handling
+        <span class="cov8" title="1">fsys, err := fs.Sub(staticFS, "static")
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("[ERROR] failed to create static file system: %v", err)
+                // fallback to direct FileServer if Sub fails
+                router.Handle("GET /static/", http.FileServer(http.FS(staticFS)))
+        }</span> else<span class="cov8" title="1"> {
+                router.HandleFiles("/static/", http.FS(fsys))
+        }</span>
+
+        <span class="cov8" title="1">return router</span>
 }
 
 // OnJobStart implements service.JobEventHandler interface
@@ -241,7 +286,7 @@ func (s *Server) OnJobStart(command, schedule string, startTime time.Time) <span
                 JobID:     HashCommand(command),
                 Command:   command,
                 Schedule:  schedule,
-                EventType: "started",
+                EventType: enums.EventTypeStarted,
                 StartedAt: startTime,
         }
         select </span>{
@@ -253,9 +298,9 @@ func (s *Server) OnJobStart(command, schedule string, startTime time.Time) <span
 
 // OnJobComplete implements service.JobEventHandler interface
 func (s *Server) OnJobComplete(command, schedule string, startTime, endTime time.Time, exitCode int, err error) <span class="cov8" title="1">{
-        eventType := "completed"
+        eventType := enums.EventTypeCompleted
         if err != nil </span><span class="cov8" title="1">{
-                eventType = "failed"
+                eventType = enums.EventTypeFailed
         }</span>
         <span class="cov8" title="1">event := JobEvent{
                 JobID:      HashCommand(command),
@@ -297,18 +342,38 @@ func (s *Server) syncJobs(ctx context.Context) <span class="cov8" title="1">{
         }
 }
 
-// loadJobsFromCrontab loads jobs from crontab file
-func (s *Server) loadJobsFromCrontab() <span class="cov8" title="1">{
-        parser := crontab.New(s.crontabFile, 0, nil)
-        specs, err := parser.List()
+// loadJobsFromDB loads existing job history from database
+func (s *Server) loadJobsFromDB() <span class="cov8" title="1">{
+        jobs, err := s.store.LoadJobs()
         if err != nil </span><span class="cov0" title="0">{
-                log.Printf("[ERROR] failed to parse crontab: %v", err)
+                log.Printf("[WARN] failed to load jobs from database: %v", err)
                 return
         }</span>
 
         <span class="cov8" title="1">s.jobsMu.Lock()
         defer s.jobsMu.Unlock()
 
+        for _, job := range jobs </span><span class="cov8" title="1">{
+                // calculate next run from schedule if not set
+                if job.NextRun.IsZero() </span><span class="cov8" title="1">{
+                        s.updateNextRun(&amp;job)
+                }</span>
+
+                <span class="cov8" title="1">s.jobs[job.ID] = job
+                log.Printf("[DEBUG] loaded job from DB: %s (%s)", job.Command, job.LastStatus)</span>
+        }
+}
+
+// loadJobsFromCrontab loads jobs from crontab file
+func (s *Server) loadJobsFromCrontab() <span class="cov8" title="1">{
+        parser := crontab.New(s.crontabFile, 0, nil)
+        specs, err := parser.List()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("[WARN] failed to parse crontab: %v", err)
+                return
+        }</span>
+
+        <span class="cov8" title="1">s.jobsMu.Lock()
         // mark all jobs as potentially removed
         oldJobs := make(map[string]bool)
         for id := range s.jobs </span><span class="cov8" title="1">{
@@ -332,59 +397,49 @@ func (s *Server) loadJobsFromCrontab() <span class="cov8" title="1">{
                         job.UpdatedAt = time.Now()
                         job.SortIndex = idx // update sort index in case order changed
                         delete(oldJobs, id)
+                        s.jobs[id] = job
                 }</span> else<span class="cov8" title="1"> {
-                        s.jobs[id] = &amp;JobInfo{
-                                ID:        id,
-                                Command:   spec.Command,
-                                Schedule:  spec.Spec,
-                                NextRun:   schedule.Next(time.Now()),
-                                Enabled:   true,
-                                CreatedAt: time.Now(),
-                                UpdatedAt: time.Now(),
-                                SortIndex: idx,
+                        s.jobs[id] = persistence.JobInfo{
+                                ID:         id,
+                                Command:    spec.Command,
+                                Schedule:   spec.Spec,
+                                NextRun:    schedule.Next(time.Now()),
+                                LastStatus: enums.JobStatusIdle,
+                                Enabled:    true,
+                                CreatedAt:  time.Now(),
+                                UpdatedAt:  time.Now(),
+                                SortIndex:  idx,
                         }
                 }</span>
         }
 
         // remove jobs that no longer exist
-        <span class="cov8" title="1">for id := range oldJobs </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">for id := range oldJobs </span><span class="cov8" title="1">{
                 delete(s.jobs, id)
         }</span>
+        <span class="cov8" title="1">s.jobsMu.Unlock()
 
-        // persist to database
-        <span class="cov8" title="1">s.persistJobs()</span>
+        // persist to database (after releasing the lock)
+        s.persistJobs()</span>
 }
 
 // persistJobs saves jobs to database
 func (s *Server) persistJobs() <span class="cov8" title="1">{
-        tx, err := s.db.Begin()
-        if err != nil </span><span class="cov0" title="0">{
-                log.Printf("[ERROR] failed to begin transaction: %v", err)
-                return
-        }</span>
-        <span class="cov8" title="1">defer tx.Rollback()
-
+        s.jobsMu.RLock()
+        jobs := make([]persistence.JobInfo, 0, len(s.jobs))
         for _, job := range s.jobs </span><span class="cov8" title="1">{
                 // determine status to save
                 status := job.LastStatus
                 if job.IsRunning </span><span class="cov8" title="1">{
-                        status = "running"
+                        status = enums.JobStatusRunning
                 }</span>
-
-                <span class="cov8" title="1">_, err := tx.Exec(`
-                        INSERT OR REPLACE INTO jobs 
-                        (id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at, sort_index)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        job.ID, job.Command, job.Schedule, job.NextRun.Unix(),
-                        job.LastRun.Unix(), status, job.Enabled,
-                        job.CreatedAt.Unix(), job.UpdatedAt.Unix(), job.SortIndex)
-                if err != nil </span><span class="cov0" title="0">{
-                        log.Printf("[ERROR] failed to persist job: %v", err)
-                }</span>
+                <span class="cov8" title="1">job.LastStatus = status
+                jobs = append(jobs, job)</span>
         }
+        <span class="cov8" title="1">s.jobsMu.RUnlock()
 
-        <span class="cov8" title="1">if err := tx.Commit(); err != nil </span><span class="cov0" title="0">{
-                log.Printf("[ERROR] failed to commit transaction: %v", err)
+        if err := s.store.SaveJobs(jobs); err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] failed to persist jobs: %v", err)
         }</span>
 }
 
@@ -410,138 +465,195 @@ func (s *Server) handleJobEvent(event JobEvent) <span class="cov8" title="1">{
         job, exists := s.jobs[id]
         if !exists </span><span class="cov8" title="1">{
                 // create new job entry if it doesn't exist
-                job = &amp;JobInfo{
-                        ID:        id,
-                        Command:   event.Command,
-                        Schedule:  event.Schedule,
-                        CreatedAt: time.Now(),
-                        UpdatedAt: time.Now(),
-                        Enabled:   true,
+                job = persistence.JobInfo{
+                        ID:         id,
+                        Command:    event.Command,
+                        Schedule:   event.Schedule,
+                        LastStatus: enums.JobStatusIdle,
+                        CreatedAt:  time.Now(),
+                        UpdatedAt:  time.Now(),
+                        Enabled:    true,
                 }
                 // calculate next run for new job
-                if schedule, err := s.parser.Parse(event.Schedule); err == nil </span><span class="cov8" title="1">{
-                        job.NextRun = schedule.Next(time.Now())
+                s.updateNextRun(&amp;job)
+                if !job.NextRun.IsZero() </span><span class="cov8" title="1">{
                         log.Printf("[DEBUG] calculated NextRun for new job %s: %v", event.Command, job.NextRun)
                 }</span> else<span class="cov0" title="0"> {
-                        log.Printf("[ERROR] failed to parse schedule %q for job %s: %v", event.Schedule, event.Command, err)
+                        log.Printf("[WARN] failed to parse schedule %q for job %s", event.Schedule, event.Command)
                 }</span>
-                <span class="cov8" title="1">s.jobs[id] = job</span>
         }
 
         <span class="cov8" title="1">switch event.EventType </span>{
-        case "started":<span class="cov8" title="1">
+        case enums.EventTypeStarted:<span class="cov8" title="1">
                 job.IsRunning = true
                 job.LastRun = event.StartedAt
-                job.LastStatus = "running"
-                job.UpdatedAt = time.Now()</span>
-        case "completed":<span class="cov8" title="1">
+                job.LastStatus = enums.JobStatusRunning</span>
+        case enums.EventTypeCompleted:<span class="cov8" title="1">
                 job.IsRunning = false
-                job.LastStatus = "success"
-                job.UpdatedAt = time.Now()
-                // recalculate next run after job completion
-                if schedule, err := s.parser.Parse(job.Schedule); err == nil </span><span class="cov8" title="1">{
-                        job.NextRun = schedule.Next(time.Now())
-                }</span>
-        case "failed":<span class="cov8" title="1">
+                job.LastStatus = enums.JobStatusSuccess
+                s.updateNextRun(&amp;job)</span>
+        case enums.EventTypeFailed:<span class="cov8" title="1">
                 job.IsRunning = false
-                job.LastStatus = "failed"
-                job.UpdatedAt = time.Now()
-                // recalculate next run after job failure
-                if schedule, err := s.parser.Parse(job.Schedule); err == nil </span><span class="cov8" title="1">{
-                        job.NextRun = schedule.Next(time.Now())
-                }</span>
+                job.LastStatus = enums.JobStatusFailed
+                s.updateNextRun(&amp;job)</span>
         }
         <span class="cov8" title="1">job.UpdatedAt = time.Now()
 
-        // save execution to database
-        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-        defer cancel()
+        // store the updated job back in the map
+        s.jobs[id] = job
 
-        _, err := s.db.ExecContext(ctx, `
-                INSERT INTO executions (job_id, started_at, finished_at, status, exit_code)
-                VALUES (?, ?, ?, ?, ?)`,
-                id, event.StartedAt.Unix(), event.FinishedAt.Unix(),
-                job.LastStatus, event.ExitCode)
-        if err != nil </span><span class="cov0" title="0">{
-                log.Printf("[ERROR] failed to save execution: %v", err)
+        // save execution to database
+        if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] failed to save execution: %v", err)
         }</span>
 }
 
 // handleDashboard renders the main dashboard
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
-        viewMode := getViewMode(r)
-        theme := getTheme(r)
+        viewMode := s.getViewMode(r)
+        theme := s.getTheme(r)
         sortMode := s.getSortMode(r)
+        filterMode := s.getFilterMode(r)
 
+        stats := s.getJobsWithStats(sortMode, filterMode)
+
+        data := TemplateData{
+                Jobs:         stats.jobs,
+                CurrentYear:  time.Now().Year(),
+                ViewMode:     viewMode,
+                Theme:        theme,
+                SortMode:     sortMode,
+                FilterMode:   filterMode,
+                RunningCount: stats.runningCount,
+                NextRunTime:  stats.nextRunTime,
+                TotalCount:   stats.totalCount,
+        }
+
+        s.render(w, "base.html", "base", data)
+}</span>
+
+// getJobsWithStats retrieves jobs with calculated stats and applies filtering
+func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.FilterMode) jobsStats <span class="cov8" title="1">{
         s.jobsMu.RLock()
-        jobs := make([]*JobInfo, 0, len(s.jobs))
+        allJobs := make([]persistence.JobInfo, 0, len(s.jobs))
+        runningCount := 0
+        var nearestNextRun *time.Time
+
+        // first collect all jobs and calculate stats
         for _, job := range s.jobs </span><span class="cov8" title="1">{
-                // recalculate next run times before sorting
-                if schedule, err := s.parser.Parse(job.Schedule); err == nil </span><span class="cov8" title="1">{
-                        job.NextRun = schedule.Next(time.Now())
+                // work with a copy, recalculate next run times
+                jobCopy := job
+                s.updateNextRun(&amp;jobCopy)
+                allJobs = append(allJobs, jobCopy)
+
+                // count running jobs
+                if jobCopy.IsRunning </span><span class="cov8" title="1">{
+                        runningCount++
                 }</span>
-                <span class="cov8" title="1">jobs = append(jobs, job)</span>
+
+                // find nearest next run
+                <span class="cov8" title="1">if !jobCopy.NextRun.IsZero() </span><span class="cov8" title="1">{
+                        if nearestNextRun == nil || jobCopy.NextRun.Before(*nearestNextRun) </span><span class="cov8" title="1">{
+                                nearestNextRun = &amp;jobCopy.NextRun
+                        }</span>
+                }
         }
         <span class="cov8" title="1">s.jobsMu.RUnlock()
+
+        // store total count before filtering
+        totalCount := len(allJobs)
+
+        // apply filtering
+        jobs := s.filterJobs(allJobs, filterMode)
 
         // sort jobs based on selected mode
         s.sortJobs(jobs, sortMode)
 
-        data := TemplateData{
-                Jobs:        jobs,
-                CurrentYear: time.Now().Year(),
-                ViewMode:    viewMode,
-                Theme:       theme,
-                SortMode:    sortMode,
-        }
+        // format next run time
+        nextRunTime := "-"
+        if nearestNextRun != nil </span><span class="cov8" title="1">{
+                nextRunTime = s.humanTime(*nearestNextRun)
+        }</span>
 
-        s.render(w, http.StatusOK, "base.html", "base", data)</span>
+        <span class="cov8" title="1">return jobsStats{
+                jobs:         jobs,
+                runningCount: runningCount,
+                nextRunTime:  nextRunTime,
+                totalCount:   totalCount,
+        }</span>
 }
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
-        viewMode := getViewMode(r)
+        viewMode := s.getViewMode(r)
         sortMode := s.getSortMode(r)
-
-        s.jobsMu.RLock()
-        jobs := make([]*JobInfo, 0, len(s.jobs))
-        for _, job := range s.jobs </span><span class="cov8" title="1">{
-                // recalculate next run times
-                if schedule, err := s.parser.Parse(job.Schedule); err == nil </span><span class="cov8" title="1">{
-                        job.NextRun = schedule.Next(time.Now())
-                }</span>
-                <span class="cov8" title="1">jobs = append(jobs, job)</span>
-        }
-        <span class="cov8" title="1">s.jobsMu.RUnlock()
-
-        // sort jobs based on selected mode
-        s.sortJobs(jobs, sortMode)
+        filterMode := s.getFilterMode(r)
+        stats := s.getJobsWithStats(sortMode, filterMode)
 
         data := TemplateData{
-                Jobs:     jobs,
-                ViewMode: viewMode,
-                SortMode: sortMode,
+                Jobs:         stats.jobs,
+                ViewMode:     viewMode,
+                SortMode:     sortMode,
+                FilterMode:   filterMode,
+                RunningCount: stats.runningCount,
+                NextRunTime:  stats.nextRunTime,
+                TotalCount:   stats.totalCount,
+                IsOOB:        true, // enable OOB for stats updates
         }
 
+        // render jobs partial with stats updates
+        if err := s.renderJobsWithStats(w, data); err != nil </span><span class="cov0" title="0">{
+                log.Printf("[ERROR] failed to render jobs partial: %v", err)
+                http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
+        }</span>
+}
+
+// renderJobsWithStats renders the jobs template with OOB stats updates
+func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) error <span class="cov8" title="1">{
+        // determine template name based on view mode
         tmplName := "jobs-cards"
-        if viewMode == "list" </span><span class="cov8" title="1">{
+        if data.ViewMode == enums.ViewModeList </span><span class="cov8" title="1">{
                 tmplName = "jobs-list"
         }</span>
 
-        <span class="cov8" title="1">s.render(w, http.StatusOK, "partials/jobs.html", tmplName, data)</span>
+        // get the template
+        <span class="cov8" title="1">tmpl, ok := s.templates["partials/jobs.html"]
+        if !ok </span><span class="cov0" title="0">{
+                return fmt.Errorf("partials template not found")
+        }</span>
+
+        // render the jobs template
+        <span class="cov8" title="1">var jobsHTML bytes.Buffer
+        if err := tmpl.ExecuteTemplate(&amp;jobsHTML, tmplName, data); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to render jobs template: %w", err)
+        }</span>
+
+        // render stats updates template
+        <span class="cov8" title="1">var statsHTML bytes.Buffer
+        if err := tmpl.ExecuteTemplate(&amp;statsHTML, "stats-updates", data); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to render stats updates: %w", err)
+        }</span>
+
+        // write response
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html; charset=utf-8")
+        w.WriteHeader(http.StatusOK)
+        _, _ = w.Write(jobsHTML.Bytes())
+        _, _ = w.Write(statsHTML.Bytes())
+
+        return nil</span>
 }
 
 // handleViewModeToggle toggles between card and list view
 func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
-        currentMode := getViewMode(r)
-        newMode := "list"
-        if currentMode == "list" </span><span class="cov8" title="1">{
-                newMode = "cards"
+        currentMode := s.getViewMode(r)
+        newMode := enums.ViewModeList
+        if currentMode == enums.ViewModeList </span><span class="cov8" title="1">{
+                newMode = enums.ViewModeCards
         }</span>
 
         <span class="cov8" title="1">http.SetCookie(w, &amp;http.Cookie{
                 Name:     "view-mode",
-                Value:    newMode,
+                Value:    newMode.String(),
                 Path:     "/",
                 MaxAge:   365 * 24 * 60 * 60, // 1 year
                 HttpOnly: true,
@@ -555,22 +667,24 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) <s
 
 // handleThemeToggle toggles the theme
 func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
-        currentTheme := getTheme(r)
+        currentTheme := s.getTheme(r)
 
         // cycle: light -&gt; dark -&gt; auto -&gt; light
-        nextTheme := "light"
+        var nextTheme enums.Theme
         switch currentTheme </span>{
-        case "light":<span class="cov8" title="1">
-                nextTheme = "dark"</span>
-        case "dark":<span class="cov8" title="1">
-                nextTheme = "auto"</span>
-        case "auto":<span class="cov8" title="1">
-                nextTheme = "light"</span>
+        case enums.ThemeLight:<span class="cov8" title="1">
+                nextTheme = enums.ThemeDark</span>
+        case enums.ThemeDark:<span class="cov8" title="1">
+                nextTheme = enums.ThemeAuto</span>
+        case enums.ThemeAuto:<span class="cov8" title="1">
+                nextTheme = enums.ThemeLight</span>
+        default:<span class="cov0" title="0">
+                nextTheme = enums.ThemeLight</span>
         }
 
         <span class="cov8" title="1">http.SetCookie(w, &amp;http.Cookie{
                 Name:     "theme",
-                Value:    nextTheme,
+                Value:    nextTheme.String(),
                 Path:     "/",
                 MaxAge:   365 * 24 * 60 * 60, // 1 year
                 HttpOnly: false,              // allow JS to read for immediate update
@@ -583,101 +697,220 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) <span
 }
 
 // handleSortToggle toggles between sort modes
-func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
         currentMode := s.getSortMode(r)
+        nextMode := s.cycleSortMode(currentMode)
+        s.setSortCookie(w, nextMode)
 
-        // cycle: default -&gt; lastrun -&gt; nextrun -&gt; default
-        nextMode := "default"
-        switch currentMode </span>{
-        case "default":<span class="cov0" title="0">
-                nextMode = "lastrun"</span>
-        case "lastrun":<span class="cov0" title="0">
-                nextMode = "nextrun"</span>
-        case "nextrun":<span class="cov0" title="0">
-                nextMode = "default"</span>
+        // get sorted jobs for the new mode
+        viewMode := s.getViewMode(r)
+        filterMode := s.getFilterMode(r)
+        stats := s.getJobsWithStats(nextMode, filterMode)
+
+        // prepare template data
+        data := TemplateData{
+                Jobs:         stats.jobs,
+                ViewMode:     viewMode,
+                SortMode:     nextMode,
+                FilterMode:   filterMode,
+                RunningCount: stats.runningCount,
+                NextRunTime:  stats.nextRunTime,
+                TotalCount:   stats.totalCount,
         }
 
-        <span class="cov0" title="0">http.SetCookie(w, &amp;http.Cookie{
+        // render jobs and send response with OOB updates
+        if err := s.renderSortedJobs(w, data); err != nil </span><span class="cov0" title="0">{
+                log.Printf("[ERROR] failed to render sorted jobs: %v", err)
+                http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
+        }</span>
+}
+
+// cycleSortMode cycles through sort modes: default -&gt; lastrun -&gt; nextrun -&gt; default
+func (s *Server) cycleSortMode(current enums.SortMode) enums.SortMode <span class="cov8" title="1">{
+        switch current </span>{
+        case enums.SortModeDefault:<span class="cov8" title="1">
+                return enums.SortModeLastrun</span>
+        case enums.SortModeLastrun:<span class="cov8" title="1">
+                return enums.SortModeNextrun</span>
+        case enums.SortModeNextrun:<span class="cov8" title="1">
+                return enums.SortModeDefault</span>
+        default:<span class="cov0" title="0">
+                return enums.SortModeDefault</span>
+        }
+}
+
+// setSortCookie sets the sort mode cookie
+func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode) <span class="cov8" title="1">{
+        http.SetCookie(w, &amp;http.Cookie{
                 Name:     "sort-mode",
-                Value:    nextMode,
+                Value:    mode.String(),
                 Path:     "/",
                 MaxAge:   365 * 24 * 60 * 60, // 1 year
                 HttpOnly: true,
                 SameSite: http.SameSiteLaxMode,
         })
+}</span>
 
-        // get sorted jobs for the new mode
-        viewMode := getViewMode(r)
-        s.jobsMu.RLock()
-        jobs := make([]*JobInfo, 0, len(s.jobs))
-        for _, job := range s.jobs </span><span class="cov0" title="0">{
-                // recalculate next run times before sorting
-                if schedule, err := s.parser.Parse(job.Schedule); err == nil </span><span class="cov0" title="0">{
-                        job.NextRun = schedule.Next(time.Now())
-                }</span>
-                <span class="cov0" title="0">jobs = append(jobs, job)</span>
-        }
-        <span class="cov0" title="0">s.jobsMu.RUnlock()
-
-        // sort jobs based on new mode
-        s.sortJobs(jobs, nextMode)
-
-        // prepare template data
-        data := TemplateData{
-                Jobs:     jobs,
-                ViewMode: viewMode,
-                SortMode: nextMode,
-        }
-
-        // determine template name
+// renderSortedJobs renders the jobs template with OOB updates for sort button
+func (s *Server) renderSortedJobs(w http.ResponseWriter, data TemplateData) error <span class="cov8" title="1">{
+        // determine template name based on view mode
         tmplName := "jobs-cards"
-        if viewMode == "list" </span><span class="cov0" title="0">{
+        if data.ViewMode == enums.ViewModeList </span><span class="cov0" title="0">{
                 tmplName = "jobs-list"
         }</span>
 
-        // get the template and render jobs HTML
-        <span class="cov0" title="0">tmpl, ok := s.templates["partials/jobs.html"]
+        // get the template
+        <span class="cov8" title="1">tmpl, ok := s.templates["partials/jobs.html"]
         if !ok </span><span class="cov0" title="0">{
-                http.Error(w, "Template not found", http.StatusInternalServerError)
-                return
+                return fmt.Errorf("partials template not found")
         }</span>
 
-        <span class="cov0" title="0">var jobsHTML bytes.Buffer
+        // render the jobs template
+        <span class="cov8" title="1">var jobsHTML bytes.Buffer
         if err := tmpl.ExecuteTemplate(&amp;jobsHTML, tmplName, data); err != nil </span><span class="cov0" title="0">{
-                http.Error(w, "Template error", http.StatusInternalServerError)
-                return
+                return fmt.Errorf("failed to render jobs template: %w", err)
         }</span>
 
-        // get sort button label
-        <span class="cov0" title="0">sortLabel := "Original Order"
-        switch nextMode </span>{
-        case "lastrun":<span class="cov0" title="0">
-                sortLabel = "Last Run"</span>
-        case "nextrun":<span class="cov0" title="0">
-                sortLabel = "Next Run"</span>
+        // prepare data for sort button with OOB flag
+        <span class="cov8" title="1">buttonData := data
+        buttonData.IsOOB = true
+
+        // render sort button with OOB
+        var sortButtonHTML bytes.Buffer
+        if err := tmpl.ExecuteTemplate(&amp;sortButtonHTML, "sort-button", buttonData); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to render sort button template: %w", err)
+        }</span>
+
+        // write response with all OOB updates
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html")
+        _, _ = w.Write(jobsHTML.Bytes())
+        _, _ = w.Write(sortButtonHTML.Bytes())
+        
+        return nil</span>
+}
+
+// handleFilterToggle cycles through filter modes
+func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        currentMode := s.getFilterMode(r)
+        nextMode := s.cycleFilterMode(currentMode)
+        s.setFilterCookie(w, nextMode)
+
+        // get filtered jobs for the new mode
+        viewMode := s.getViewMode(r)
+        sortMode := s.getSortMode(r)
+        stats := s.getJobsWithStats(sortMode, nextMode)
+
+        // prepare template data
+        data := TemplateData{
+                Jobs:         stats.jobs,
+                ViewMode:     viewMode,
+                SortMode:     sortMode,
+                FilterMode:   nextMode,
+                RunningCount: stats.runningCount,
+                NextRunTime:  stats.nextRunTime,
+                TotalCount:   stats.totalCount,
         }
 
-        // return jobs with OOB update for sort button
-        <span class="cov0" title="0">fmt.Fprintf(w, `%s
-&lt;span class="sort-label" hx-swap-oob="innerHTML" id="sort-label"&gt;%s&lt;/span&gt;`,
-                jobsHTML.String(), sortLabel)</span>
+        // render jobs and send response with OOB updates
+        if err := s.renderFilteredJobs(w, data); err != nil </span><span class="cov0" title="0">{
+                log.Printf("[ERROR] failed to render filtered jobs: %v", err)
+                http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
+        }</span>
+}
+
+// cycleFilterMode cycles through filter modes: all -&gt; running -&gt; success -&gt; failed -&gt; all
+func (s *Server) cycleFilterMode(current enums.FilterMode) enums.FilterMode <span class="cov8" title="1">{
+        switch current </span>{
+        case enums.FilterModeAll:<span class="cov8" title="1">
+                return enums.FilterModeRunning</span>
+        case enums.FilterModeRunning:<span class="cov8" title="1">
+                return enums.FilterModeSuccess</span>
+        case enums.FilterModeSuccess:<span class="cov8" title="1">
+                return enums.FilterModeFailed</span>
+        case enums.FilterModeFailed:<span class="cov8" title="1">
+                return enums.FilterModeAll</span>
+        default:<span class="cov0" title="0">
+                return enums.FilterModeAll</span>
+        }
+}
+
+// setFilterCookie sets the filter mode cookie
+func (s *Server) setFilterCookie(w http.ResponseWriter, mode enums.FilterMode) <span class="cov8" title="1">{
+        http.SetCookie(w, &amp;http.Cookie{
+                Name:     "filter-mode",
+                Value:    mode.String(),
+                Path:     "/",
+                MaxAge:   365 * 24 * 60 * 60, // 1 year
+                HttpOnly: true,
+                SameSite: http.SameSiteLaxMode,
+        })
+}</span>
+
+// renderFilteredJobs renders the jobs template with OOB updates
+func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) error <span class="cov8" title="1">{
+        // determine template name based on view mode
+        tmplName := "jobs-cards"
+        if data.ViewMode == enums.ViewModeList </span><span class="cov0" title="0">{
+                tmplName = "jobs-list"
+        }</span>
+
+        // get the template
+        <span class="cov8" title="1">tmpl, ok := s.templates["partials/jobs.html"]
+        if !ok </span><span class="cov0" title="0">{
+                return fmt.Errorf("partials template not found")
+        }</span>
+
+        // render the jobs template
+        <span class="cov8" title="1">var jobsHTML bytes.Buffer
+        if err := tmpl.ExecuteTemplate(&amp;jobsHTML, tmplName, data); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to render jobs template: %w", err)
+        }</span>
+
+        // prepare data for filter button with OOB flag
+        <span class="cov8" title="1">buttonData := data
+        buttonData.IsOOB = true
+
+        // render filter button with OOB
+        var filterButtonHTML bytes.Buffer
+        if err := tmpl.ExecuteTemplate(&amp;filterButtonHTML, "filter-button", buttonData); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to render filter button template: %w", err)
+        }</span>
+
+        // render stats updates with OOB
+        <span class="cov8" title="1">statsData := TemplateData{
+                RunningCount: data.RunningCount,
+                NextRunTime:  data.NextRunTime,
+                TotalCount:   data.TotalCount,
+                IsOOB:        true,
+        }
+        var statsHTML bytes.Buffer
+        if err := tmpl.ExecuteTemplate(&amp;statsHTML, "stats-updates", statsData); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to render stats updates template: %w", err)
+        }</span>
+
+        // write response with all OOB updates
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html")
+        _, _ = w.Write(jobsHTML.Bytes())
+        _, _ = w.Write(filterButtonHTML.Bytes())
+        _, _ = w.Write(statsHTML.Bytes())
+        
+        return nil</span>
 }
 
 // handleSortModeChange changes the sort mode
 func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
-        sortMode := r.FormValue("sort")
+        sortModeStr := r.FormValue("sort")
 
-        // validate sort mode
-        switch sortMode </span>{
-        case "default", "lastrun", "nextrun":<span class="cov8" title="1"></span>
-                // valid
-        default:<span class="cov8" title="1">
-                sortMode = "default"</span>
-        }
+        // parse and validate sort mode
+        sortMode, err := enums.ParseSortMode(sortModeStr)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] invalid sort mode %q: %v", sortModeStr, err)
+                sortMode = enums.SortModeDefault
+        }</span>
 
         <span class="cov8" title="1">http.SetCookie(w, &amp;http.Cookie{
                 Name:     "sort-mode",
-                Value:    sortMode,
+                Value:    sortMode.String(),
                 Path:     "/",
                 MaxAge:   365 * 24 * 60 * 60, // 1 year
                 HttpOnly: true,
@@ -685,17 +918,16 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) <s
         })
 
         // return the jobs partial with sorted jobs
-        viewMode := getViewMode(r)
+        viewMode := s.getViewMode(r)
 
         s.jobsMu.RLock()
-        jobs := make([]*JobInfo, 0, len(s.jobs))
-        for _, job := range s.jobs </span><span class="cov0" title="0">{
-                // recalculate next run times
-                if schedule, err := s.parser.Parse(job.Schedule); err == nil </span><span class="cov0" title="0">{
-                        job.NextRun = schedule.Next(time.Now())
-                }</span>
-                <span class="cov0" title="0">jobs = append(jobs, job)</span>
-        }
+        jobs := make([]persistence.JobInfo, 0, len(s.jobs))
+        for _, job := range s.jobs </span><span class="cov8" title="1">{
+                // work with a copy, recalculate next run times
+                jobCopy := job
+                s.updateNextRun(&amp;jobCopy)
+                jobs = append(jobs, jobCopy)
+        }</span>
         <span class="cov8" title="1">s.jobsMu.RUnlock()
 
         // sort jobs based on selected mode
@@ -708,7 +940,7 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) <s
         }
 
         tmplName := "jobs-cards"
-        if viewMode == "list" </span><span class="cov0" title="0">{
+        if viewMode == enums.ViewModeList </span><span class="cov0" title="0">{
                 tmplName = "jobs-list"
         }</span>
 
@@ -716,48 +948,100 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) <s
         <span class="cov8" title="1">w.Header().Set("HX-Retarget", "#jobs-container")
         w.Header().Set("HX-Reswap", "innerHTML")
 
-        s.render(w, http.StatusOK, "partials/jobs.html", tmplName, data)</span>
+        s.render(w, "partials/jobs.html", tmplName, data)</span>
+}
+
+// handleRunJob handles manual job trigger requests
+func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        jobID := r.PathValue("id")
+        if jobID == "" </span><span class="cov0" title="0">{
+                http.Error(w, "Job ID required", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">s.jobsMu.RLock()
+        job, exists := s.jobs[jobID]
+        s.jobsMu.RUnlock()
+
+        if !exists </span><span class="cov8" title="1">{
+                http.Error(w, "Job not found", http.StatusNotFound)
+                return
+        }</span>
+
+        <span class="cov8" title="1">if !job.Enabled </span><span class="cov8" title="1">{
+                http.Error(w, "Job is disabled", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">if job.IsRunning </span><span class="cov8" title="1">{
+                http.Error(w, "Job already running", http.StatusConflict)
+                return
+        }</span>
+
+        // check if manual trigger channel is available
+        <span class="cov8" title="1">if s.manualTrigger == nil </span><span class="cov8" title="1">{
+                http.Error(w, "Manual trigger not configured", http.StatusServiceUnavailable)
+                return
+        }</span>
+
+        // use request context with timeout for sending
+        <span class="cov8" title="1">ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+        defer cancel()
+
+        select </span>{
+        case &lt;-ctx.Done():<span class="cov0" title="0">
+                http.Error(w, "Request canceled", http.StatusRequestTimeout)
+                return</span>
+        case s.manualTrigger &lt;- service.ManualJobRequest{
+                Command:  job.Command,
+                Schedule: job.Schedule,
+        }:<span class="cov8" title="1">
+                log.Printf("[INFO] manual trigger sent for job %s: %s", jobID, job.Command)
+                w.WriteHeader(http.StatusAccepted)
+                _, _ = w.Write([]byte("Job triggered"))</span>
+        default:<span class="cov8" title="1">
+                // non-blocking send failed, channel full
+                http.Error(w, "System busy, too many manual triggers", http.StatusServiceUnavailable)</span>
+        }
 }
 
 // render renders a template
-func (s *Server) render(w http.ResponseWriter, status int, page, tmplName string, data any) <span class="cov8" title="1">{
+func (s *Server) render(w http.ResponseWriter, page, tmplName string, data any) <span class="cov8" title="1">{
         tmpl, ok := s.templates[page]
-        if !ok </span><span class="cov0" title="0">{
-                log.Printf("[ERROR] template %s not found", page)
+        if !ok </span><span class="cov8" title="1">{
+                log.Printf("[WARN] template %s not found", page)
                 http.Error(w, "Template not found", http.StatusInternalServerError)
                 return
         }</span>
 
         <span class="cov8" title="1">buf := new(bytes.Buffer)
-        if err := tmpl.ExecuteTemplate(buf, tmplName, data); err != nil </span><span class="cov0" title="0">{
-                log.Printf("[ERROR] failed to execute template: %v", err)
+        if err := tmpl.ExecuteTemplate(buf, tmplName, data); err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] failed to execute template: %v", err)
                 http.Error(w, "Template error", http.StatusInternalServerError)
                 return
         }</span>
 
         <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html; charset=utf-8")
-        w.WriteHeader(status)
+        w.WriteHeader(http.StatusOK)
         if _, err := buf.WriteTo(w); err != nil </span><span class="cov0" title="0">{
-                log.Printf("[ERROR] failed to write response: %v", err)
+                log.Printf("[WARN] failed to write response: %v", err)
         }</span>
 }
 
 // parseTemplates parses all templates
-func parseTemplates() (map[string]*template.Template, error) <span class="cov8" title="1">{
+func (s *Server) parseTemplates() (map[string]*template.Template, error) <span class="cov8" title="1">{
         templates := make(map[string]*template.Template)
 
         funcMap := template.FuncMap{
-                "humanTime":     humanTime,
-                "humanDuration": humanDuration,
-                "truncate":      truncate,
-                "timeUntil":     timeUntil,
+                "humanTime":     s.humanTime,
+                "humanDuration": s.humanDuration,
+                "truncate":      s.truncate,
+                "timeUntil":     s.timeUntil,
         }
 
         // parse base template with all partials
         base, err := template.New("base.html").Funcs(funcMap).ParseFS(templatesFS,
-                "templates/base.html",
-                "templates/dashboard.html",
-                "templates/partials/*.html")
+                "templates/base.html", "templates/dashboard.html", "templates/partials/*.html")
         if err != nil </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("failed to parse base template: %w", err)
         }</span>
@@ -774,160 +1058,108 @@ func parseTemplates() (map[string]*template.Template, error) <span class="cov8" 
         return templates, nil</span>
 }
 
-// createTables creates database tables
-func createTables(db *sql.DB) error <span class="cov8" title="1">{
-        queries := []string{
-                `CREATE TABLE IF NOT EXISTS jobs (
-                        id TEXT PRIMARY KEY,
-                        command TEXT NOT NULL,
-                        schedule TEXT NOT NULL,
-                        next_run INTEGER,
-                        last_run INTEGER,
-                        last_status TEXT,
-                        enabled BOOLEAN DEFAULT 1,
-                        created_at INTEGER,
-                        updated_at INTEGER,
-                        sort_index INTEGER DEFAULT 0
-                )`,
-                `CREATE TABLE IF NOT EXISTS executions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        job_id TEXT,
-                        started_at INTEGER,
-                        finished_at INTEGER,
-                        status TEXT,
-                        exit_code INTEGER,
-                        FOREIGN KEY (job_id) REFERENCES jobs(id)
-                )`,
-                `CREATE INDEX IF NOT EXISTS idx_executions_job_id ON executions(job_id)`,
-                `CREATE INDEX IF NOT EXISTS idx_executions_started_at ON executions(started_at)`,
-        }
-
-        for _, query := range queries </span><span class="cov8" title="1">{
-                if _, err := db.Exec(query); err != nil </span><span class="cov0" title="0">{
-                        return fmt.Errorf("failed to execute query: %w", err)
-                }</span>
-        }
-
-        <span class="cov8" title="1">return nil</span>
-}
-
-// helper functions
-
-// HashCommand generates a SHA256 hash of a command for use as a unique ID
-func HashCommand(cmd string) string <span class="cov8" title="1">{
-        h := sha256.Sum256([]byte(cmd))
-        return hex.EncodeToString(h[:])
-}</span>
-
-func getViewMode(r *http.Request) string <span class="cov8" title="1">{
+func (s *Server) getViewMode(r *http.Request) enums.ViewMode <span class="cov8" title="1">{
         cookie, err := r.Cookie("view-mode")
         if err != nil </span><span class="cov8" title="1">{
-                return "cards" // default
+                return enums.ViewModeCards // default
         }</span>
-        <span class="cov8" title="1">if cookie.Value == "list" </span><span class="cov8" title="1">{
-                return "list"
+        <span class="cov8" title="1">mode, err := enums.ParseViewMode(cookie.Value)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] invalid view mode %q: %v", cookie.Value, err)
+                return enums.ViewModeCards // default on parse error
         }</span>
-        <span class="cov8" title="1">return "cards"</span>
+        <span class="cov8" title="1">return mode</span>
 }
 
-func getTheme(r *http.Request) string <span class="cov8" title="1">{
+func (s *Server) getTheme(r *http.Request) enums.Theme <span class="cov8" title="1">{
         cookie, err := r.Cookie("theme")
         if err != nil </span><span class="cov8" title="1">{
-                return "auto" // default
+                return enums.ThemeAuto // default
         }</span>
-        <span class="cov8" title="1">switch cookie.Value </span>{
-        case "light", "dark", "auto":<span class="cov8" title="1">
-                return cookie.Value</span>
-        default:<span class="cov0" title="0">
-                return "auto"</span>
-        }
-}
-
-// template helper functions
-
-func humanTime(t time.Time) string <span class="cov8" title="1">{
-        if t.IsZero() </span><span class="cov0" title="0">{
-                return "Never"
+        <span class="cov8" title="1">theme, err := enums.ParseTheme(cookie.Value)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] invalid theme %q: %v", cookie.Value, err)
+                return enums.ThemeAuto // default on parse error
         }</span>
-        <span class="cov8" title="1">return t.Format("Jan 2, 15:04:05")</span>
-}
-
-func humanDuration(d time.Duration) string <span class="cov8" title="1">{
-        if d &lt; time.Minute </span><span class="cov8" title="1">{
-                return fmt.Sprintf("%ds", int(d.Seconds()))
-        }</span>
-        <span class="cov8" title="1">if d &lt; time.Hour </span><span class="cov8" title="1">{
-                return fmt.Sprintf("%dm", int(d.Minutes()))
-        }</span>
-        <span class="cov8" title="1">if d &lt; 24*time.Hour </span><span class="cov8" title="1">{
-                return fmt.Sprintf("%dh", int(d.Hours()))
-        }</span>
-        <span class="cov0" title="0">return fmt.Sprintf("%dd", int(d.Hours()/24))</span>
-}
-
-func timeUntil(t time.Time) string <span class="cov8" title="1">{
-        if t.IsZero() </span><span class="cov0" title="0">{
-                return "Never"
-        }</span>
-        <span class="cov8" title="1">d := time.Until(t)
-        if d &lt; 0 </span><span class="cov0" title="0">{
-                return "Overdue"
-        }</span>
-        <span class="cov8" title="1">return humanDuration(d)</span>
-}
-
-func truncate(s string, n int) string <span class="cov8" title="1">{
-        if len(s) &lt;= n </span><span class="cov8" title="1">{
-                return s
-        }</span>
-        <span class="cov0" title="0">return s[:n] + "..."</span>
+        <span class="cov8" title="1">return theme</span>
 }
 
 // getSortMode gets the sort mode from cookie or defaults to "default"
-func (s *Server) getSortMode(r *http.Request) string <span class="cov8" title="1">{
+func (s *Server) getSortMode(r *http.Request) enums.SortMode <span class="cov8" title="1">{
         cookie, err := r.Cookie("sort-mode")
         if err != nil || cookie.Value == "" </span><span class="cov8" title="1">{
-                return "default"
+                return enums.SortModeDefault
         }</span>
-        // validate sort mode
-        <span class="cov8" title="1">switch cookie.Value </span>{
-        case "default", "lastrun", "nextrun":<span class="cov8" title="1">
-                return cookie.Value</span>
-        default:<span class="cov8" title="1">
-                return "default"</span>
-        }
+        <span class="cov8" title="1">mode, err := enums.ParseSortMode(cookie.Value)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] invalid sort mode cookie %q: %v", cookie.Value, err)
+                return enums.SortModeDefault
+        }</span>
+        <span class="cov8" title="1">return mode</span>
+}
+
+// getFilterMode gets the filter mode from cookie or defaults to "all"
+func (s *Server) getFilterMode(r *http.Request) enums.FilterMode <span class="cov8" title="1">{
+        cookie, err := r.Cookie("filter-mode")
+        if err != nil </span><span class="cov8" title="1">{
+                return enums.FilterModeAll // default to all
+        }</span>
+        <span class="cov8" title="1">mode, err := enums.ParseFilterMode(cookie.Value)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("[WARN] invalid filter mode %q: %v", cookie.Value, err)
+                return enums.FilterModeAll
+        }</span>
+        <span class="cov8" title="1">return mode</span>
+}
+
+// updateNextRun updates the next run time for a job based on its schedule
+func (s *Server) updateNextRun(job *persistence.JobInfo) <span class="cov8" title="1">{
+        if job.Schedule == "" </span><span class="cov8" title="1">{
+                return
+        }</span>
+        <span class="cov8" title="1">if schedule, err := s.parser.Parse(job.Schedule); err == nil </span><span class="cov8" title="1">{
+                job.NextRun = schedule.Next(time.Now())
+        }</span>
 }
 
 // sortJobs sorts jobs based on the sort mode
-func (s *Server) sortJobs(jobs []*JobInfo, sortMode string) <span class="cov8" title="1">{
+func (s *Server) sortJobs(jobs []persistence.JobInfo, sortMode enums.SortMode) <span class="cov8" title="1">{
         switch sortMode </span>{
-        case "lastrun":<span class="cov8" title="1">
+        case enums.SortModeLastrun:<span class="cov8" title="1">
                 // sort by last run time, most recent first
                 sort.Slice(jobs, func(i, j int) bool </span><span class="cov8" title="1">{
                         // handle zero times - put them at the end
-                        if jobs[i].LastRun.IsZero() &amp;&amp; jobs[j].LastRun.IsZero() </span><span class="cov0" title="0">{
+                        if jobs[i].LastRun.IsZero() &amp;&amp; jobs[j].LastRun.IsZero() </span><span class="cov8" title="1">{
                                 return jobs[i].SortIndex &lt; jobs[j].SortIndex // maintain default order for unrun jobs
                         }</span>
                         <span class="cov8" title="1">if jobs[i].LastRun.IsZero() </span><span class="cov8" title="1">{
                                 return false
                         }</span>
-                        <span class="cov8" title="1">if jobs[j].LastRun.IsZero() </span><span class="cov0" title="0">{
+                        <span class="cov8" title="1">if jobs[j].LastRun.IsZero() </span><span class="cov8" title="1">{
                                 return true
+                        }</span>
+                        // if times are equal, use SortIndex for stable ordering
+                        <span class="cov8" title="1">if jobs[i].LastRun.Equal(jobs[j].LastRun) </span><span class="cov8" title="1">{
+                                return jobs[i].SortIndex &lt; jobs[j].SortIndex
                         }</span>
                         <span class="cov8" title="1">return jobs[i].LastRun.After(jobs[j].LastRun)</span>
                 })
-        case "nextrun":<span class="cov8" title="1">
+        case enums.SortModeNextrun:<span class="cov8" title="1">
                 // sort by next run time, soonest first
                 sort.Slice(jobs, func(i, j int) bool </span><span class="cov8" title="1">{
                         // handle zero times - put them at the end
-                        if jobs[i].NextRun.IsZero() &amp;&amp; jobs[j].NextRun.IsZero() </span><span class="cov0" title="0">{
+                        if jobs[i].NextRun.IsZero() &amp;&amp; jobs[j].NextRun.IsZero() </span><span class="cov8" title="1">{
                                 return jobs[i].SortIndex &lt; jobs[j].SortIndex
                         }</span>
                         <span class="cov8" title="1">if jobs[i].NextRun.IsZero() </span><span class="cov8" title="1">{
                                 return false
                         }</span>
-                        <span class="cov8" title="1">if jobs[j].NextRun.IsZero() </span><span class="cov0" title="0">{
+                        <span class="cov8" title="1">if jobs[j].NextRun.IsZero() </span><span class="cov8" title="1">{
                                 return true
+                        }</span>
+                        // if times are equal, use SortIndex for stable ordering
+                        <span class="cov8" title="1">if jobs[i].NextRun.Equal(jobs[j].NextRun) </span><span class="cov8" title="1">{
+                                return jobs[i].SortIndex &lt; jobs[j].SortIndex
                         }</span>
                         <span class="cov8" title="1">return jobs[i].NextRun.Before(jobs[j].NextRun)</span>
                 })
@@ -938,6 +1170,80 @@ func (s *Server) sortJobs(jobs []*JobInfo, sortMode string) <span class="cov8" t
                 }</span>)
         }
 }
+
+// filterJobs filters jobs based on the selected filter mode
+func (s *Server) filterJobs(jobs []persistence.JobInfo, filterMode enums.FilterMode) []persistence.JobInfo <span class="cov8" title="1">{
+        if filterMode == enums.FilterModeAll </span><span class="cov8" title="1">{
+                return jobs
+        }</span>
+
+        <span class="cov8" title="1">filtered := make([]persistence.JobInfo, 0, len(jobs))
+        for _, job := range jobs </span><span class="cov8" title="1">{
+                switch filterMode </span>{
+                case enums.FilterModeRunning:<span class="cov8" title="1">
+                        if job.IsRunning </span><span class="cov8" title="1">{
+                                filtered = append(filtered, job)
+                        }</span>
+                case enums.FilterModeSuccess:<span class="cov8" title="1">
+                        if job.LastStatus == enums.JobStatusSuccess </span><span class="cov8" title="1">{
+                                filtered = append(filtered, job)
+                        }</span>
+                case enums.FilterModeFailed:<span class="cov8" title="1">
+                        if job.LastStatus == enums.JobStatusFailed </span><span class="cov8" title="1">{
+                                filtered = append(filtered, job)
+                        }</span>
+                }
+        }
+        <span class="cov8" title="1">return filtered</span>
+}
+
+// template helper functions
+
+func (s *Server) humanTime(t time.Time) string <span class="cov8" title="1">{
+        if t.IsZero() </span><span class="cov8" title="1">{
+                return "Never"
+        }</span>
+        <span class="cov8" title="1">return t.Format("Jan 2, 15:04:05")</span>
+}
+
+func (s *Server) humanDuration(d time.Duration) string <span class="cov8" title="1">{
+        if d &lt; time.Minute </span><span class="cov8" title="1">{
+                return fmt.Sprintf("%ds", int(d.Seconds()))
+        }</span>
+        <span class="cov8" title="1">if d &lt; time.Hour </span><span class="cov8" title="1">{
+                return fmt.Sprintf("%dm", int(d.Minutes()))
+        }</span>
+        <span class="cov8" title="1">if d &lt; 24*time.Hour </span><span class="cov8" title="1">{
+                return fmt.Sprintf("%dh", int(d.Hours()))
+        }</span>
+        <span class="cov8" title="1">return fmt.Sprintf("%dd", int(d.Hours()/24))</span>
+}
+
+func (s *Server) timeUntil(t time.Time) string <span class="cov8" title="1">{
+        if t.IsZero() </span><span class="cov8" title="1">{
+                return "Never"
+        }</span>
+        <span class="cov8" title="1">d := time.Until(t)
+        if d &lt; 0 </span><span class="cov8" title="1">{
+                return "Overdue"
+        }</span>
+        <span class="cov8" title="1">return s.humanDuration(d)</span>
+}
+
+func (s *Server) truncate(str string, n int) string <span class="cov8" title="1">{
+        if len(str) &lt;= n </span><span class="cov8" title="1">{
+                return str
+        }</span>
+        <span class="cov8" title="1">return str[:n] + "..."</span>
+}
+
+// helper functions
+
+// HashCommand generates a SHA256 hash of a command for use as a unique ID
+func HashCommand(cmd string) string <span class="cov8" title="1">{
+        h := sha256.Sum256([]byte(cmd))
+        return hex.EncodeToString(h[:])
+}</span>
 </pre>
 		
 		</div>

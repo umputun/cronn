@@ -40,20 +40,25 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// enable WAL mode for better concurrency
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		if closeErr := db.Close(); closeErr != nil {
-			return nil, fmt.Errorf("failed to set WAL mode: %w (also failed to close db: %v)", err, closeErr)
+	// helper to execute pragma with proper error handling
+	execPragma := func(pragma, errMsgPrefix string) error {
+		if _, err := db.Exec(pragma); err != nil {
+			if closeErr := db.Close(); closeErr != nil {
+				return fmt.Errorf("%s: %w (also failed to close db: %v)", errMsgPrefix, err, closeErr)
+			}
+			return fmt.Errorf("%s: %w", errMsgPrefix, err)
 		}
-		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
+		return nil
+	}
+
+	// enable WAL mode for better concurrency
+	if err := execPragma("PRAGMA journal_mode=WAL", "failed to set WAL mode"); err != nil {
+		return nil, err
 	}
 
 	// set busy timeout to wait when database is locked
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		if closeErr := db.Close(); closeErr != nil {
-			return nil, fmt.Errorf("failed to set busy timeout: %w (also failed to close db: %v)", err, closeErr)
-		}
-		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
+	if err := execPragma("PRAGMA busy_timeout=5000", "failed to set busy timeout"); err != nil {
+		return nil, err
 	}
 
 	store := &SQLiteStore{db: db}

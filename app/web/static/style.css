@@ -307,6 +307,7 @@ code {
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     box-shadow: var(--shadow-sm);
+    contain: layout;
 }
 
 .job-card:hover {
@@ -389,20 +390,22 @@ code {
 }
 
 .job-header {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto 1fr 56px;
     align-items: center;
-    justify-content: space-between;
     margin-bottom: var(--spacing-md);
     position: relative;
     z-index: 1;
     padding-right: 40px; /* Space for status icon */
+    gap: 12px;
 }
 
 .job-header-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 4px;
-    flex-shrink: 0;
+    width: 56px;
 }
 
 .job-schedule {
@@ -481,12 +484,40 @@ code {
     background: var(--color-surface);
     border-radius: 12px;
     border: 1px solid var(--color-border);
-    overflow: hidden;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .jobs-table {
     width: 100%;
     border-collapse: collapse;
+}
+
+/* Minimum column widths for stable layout */
+.th-status, .td-status {
+    min-width: 80px;
+}
+
+.th-schedule, .td-schedule {
+    min-width: 100px;
+}
+
+.th-command, .td-command {
+    min-width: 200px;
+}
+
+.th-next, .td-next {
+    min-width: 140px;
+    white-space: nowrap;
+}
+
+.th-last, .td-last {
+    min-width: 120px;
+    white-space: nowrap;
+}
+
+.th-actions, .td-actions {
+    min-width: 60px;
 }
 
 .jobs-table thead {
@@ -525,7 +556,6 @@ code {
 
 .jobs-table tbody tr:hover {
     background: var(--color-surface-hover);
-    transform: translateX(2px);
 }
 
 .jobs-table td {
@@ -685,6 +715,7 @@ code {
 .time-value {
     color: var(--color-text);
     line-height: 1.3;
+    font-size: var(--text-sm);
 }
 
 .time-value small {
@@ -751,13 +782,10 @@ code {
 }
 
 /* HTMX indicator */
-.htmx-indicator {
-    display: none;
-}
-
-.htmx-request .htmx-indicator {
-    display: inline-block;
-}
+.htmx-indicator { display: none; }
+/* Show only for the element making the request or its adjacent spinner */
+.htmx-indicator.htmx-request { display: inline-block; }
+.btn-compact.htmx-request + .htmx-indicator { display: inline-block; }
 
 /* Responsive design */
 @media (max-width: 768px) {
@@ -1033,10 +1061,15 @@ code {
     border-radius: var(--radius-sm);
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 3px;
     cursor: pointer;
     font-weight: 500;
     white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    min-width: 56px;
+    height: 20px;
     transition: none !important;
 }
 
@@ -1061,14 +1094,9 @@ code {
 }
 
 .btn-compact .icon {
-    width: 10px;
-    height: 10px;
-}
-
-.btn-compact span {
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
 }
 
 .btn-run-now .icon {
@@ -1079,7 +1107,8 @@ code {
 /* Job actions in table */
 .td-actions {
     white-space: nowrap;
-    text-align: center;
+    text-align: left;
+    padding-left: 12px;
 }
 
 .th-actions {
@@ -1103,13 +1132,10 @@ code {
     margin-right: 4px;
 }
 
-.htmx-indicator {
-    display: none;
-}
-
-.htmx-request .htmx-indicator {
-    display: inline-block;
-}
+.htmx-indicator { display: none; }
+/* Same scoping as above to avoid global reveal during auto-refresh */
+.htmx-indicator.htmx-request { display: inline-block; }
+.btn-compact.htmx-request + .htmx-indicator { display: inline-block; }
 
 .htmx-request.btn-run-now {
     opacity: 0.6;

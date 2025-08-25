@@ -20,7 +20,7 @@
     <div id="jobs-container" 
          hx-get="/api/jobs" 
          hx-trigger="load, every 5s"
-         hx-swap="innerHTML"
+         hx-swap="innerHTML settle:0ms"
          class="jobs-container {{.ViewMode}}">
         <!-- Jobs will be loaded here via HTMX -->
         <div class="loading">

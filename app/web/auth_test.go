@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -337,6 +339,7 @@ func TestServer_validateSession(t *testing.T) {
 		Version:        "test",
 		JobsProvider:   createTestProvider(t, tmpDir),
 		PasswordHash:   "test",
+		LoginTTL:       2 * time.Hour, // custom TTL for testing
 	}
 
 	server, err := New(cfg)
@@ -356,15 +359,15 @@ func TestServer_validateSession(t *testing.T) {
 		assert.False(t, server.validateSession("invalid-token"))
 	})
 
-	t.Run("rejects expired session", func(t *testing.T) {
+	t.Run("rejects expired session with custom TTL", func(t *testing.T) {
 		// create a session
 		token, err := server.createSession()
 		require.NoError(t, err)
 
-		// manually expire it
+		// manually expire it (3 hours ago, past our 2 hour TTL)
 		server.sessionsMu.Lock()
 		sess := server.sessions[token]
-		sess.createdAt = time.Now().Add(-25 * time.Hour) // 25 hours ago
+		sess.createdAt = time.Now().Add(-3 * time.Hour)
 		server.sessions[token] = sess
 		server.sessionsMu.Unlock()
 
@@ -376,6 +379,180 @@ func TestServer_validateSession(t *testing.T) {
 		_, exists := server.sessions[token]
 		server.sessionsMu.Unlock()
 		assert.False(t, exists)
+	})
+
+	t.Run("accepts session within custom TTL", func(t *testing.T) {
+		// create a session
+		token, err := server.createSession()
+		require.NoError(t, err)
+
+		// manually set to 1 hour ago (within our 2 hour TTL)
+		server.sessionsMu.Lock()
+		sess := server.sessions[token]
+		sess.createdAt = time.Now().Add(-1 * time.Hour)
+		server.sessions[token] = sess
+		server.sessionsMu.Unlock()
+
+		// should still be valid
+		assert.True(t, server.validateSession(token))
+	})
+}
+
+func TestServer_handleLoginEdgeCases(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	passwordHash := "$2y$10$qOIpGITktzktHpcnWXiow.penxJmMcapV3G2ZRQaK0QRW7BSmAuJG" //nolint:gosec // test password hash
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+		PasswordHash:   passwordHash,
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	t.Run("handleLogin with missing password field", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/login", strings.NewReader(""))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+
+		server.handleLogin(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Password is required")
+	})
+
+	t.Run("handleLogin with empty password", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("password="))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+
+		server.handleLogin(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Password is required")
+	})
+
+	t.Run("handleLogin with malformed form data", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("not_a_form"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+
+		server.handleLogin(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("handleLogin with correct password redirects", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+
+		server.handleLogin(rec, req)
+
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"))
+		
+		// check cookie was set
+		cookies := rec.Result().Cookies()
+		require.Len(t, cookies, 1)
+		assert.Equal(t, "cronn-auth", cookies[0].Name)
+	})
+
+	t.Run("handleLogin createSession error", func(t *testing.T) {
+		// fill up sessions to trigger error
+		server.sessionsMu.Lock()
+		for i := 0; i < 10000; i++ {
+			server.sessions[fmt.Sprintf("token-%d", i)] = session{createdAt: time.Now()}
+		}
+		server.sessionsMu.Unlock()
+
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+
+		server.handleLogin(rec, req)
+
+		// should still succeed, just with potentially lower quality token
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+
+		// cleanup
+		server.sessionsMu.Lock()
+		server.sessions = make(map[string]session)
+		server.sessionsMu.Unlock()
+	})
+}
+
+func TestServer_renderLoginTemplate(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+		PasswordHash:   "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	t.Run("renderLoginTemplate success", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		rec := httptest.NewRecorder()
+		server.renderLoginTemplate(rec, req, "", http.StatusOK)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Enter password")
+		assert.Contains(t, rec.Body.String(), "Cronn Dashboard")
+	})
+
+	t.Run("renderLoginTemplate with error message", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		rec := httptest.NewRecorder()
+		server.renderLoginTemplate(rec, req, "Test error message", http.StatusUnauthorized)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Test error message")
+	})
+
+	t.Run("renderLoginTemplate template not found", func(t *testing.T) {
+		// temporarily remove template
+		originalTemplate := server.templates["login"]
+		delete(server.templates, "login")
+		defer func() {
+			server.templates["login"] = originalTemplate
+		}()
+
+		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		rec := httptest.NewRecorder()
+		server.renderLoginTemplate(rec, req, "", http.StatusOK)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("renderLoginTemplate template execution error", func(t *testing.T) {
+		// create a template with an error
+		badTemplate := template.Must(template.New("login").Parse(`{{.NonExistentField}}`))
+		originalTemplate := server.templates["login"]
+		server.templates["login"] = badTemplate
+		defer func() {
+			server.templates["login"] = originalTemplate
+		}()
+
+		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		rec := httptest.NewRecorder()
+		server.renderLoginTemplate(rec, req, "", http.StatusOK)
+
+		// should return 500 on template execution error
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
 }
 

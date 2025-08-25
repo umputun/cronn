@@ -2,6 +2,7 @@ package resumer
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -61,5 +62,51 @@ func TestResumer_List(t *testing.T) {
 	r.enabled = false
 	res = r.List()
 	assert.Equal(t, 0, len(res))
+}
 
+func TestResumer_ListEdgeCases(t *testing.T) {
+	t.Run("list with non-existent location", func(t *testing.T) {
+		r := New("/nonexistent/path/that/does/not/exist", true)
+		res := r.List()
+		assert.Equal(t, 0, len(res))
+	})
+
+	t.Run("list with file instead of directory", func(t *testing.T) {
+		// create a temporary file
+		tmpFile, err := os.CreateTemp("", "resumer-test-*.tmp")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+		require.NoError(t, tmpFile.Close())
+
+		r := New(tmpFile.Name(), true)
+		res := r.List()
+		assert.Equal(t, 0, len(res))
+	})
+
+	t.Run("list with empty cronn files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		r := New(tmpDir, true)
+
+		// create empty cronn file
+		err := os.WriteFile(filepath.Join(tmpDir, "empty.cronn"), []byte(""), 0o600)
+		require.NoError(t, err)
+
+		// create cronn file with just whitespace
+		err = os.WriteFile(filepath.Join(tmpDir, "whitespace.cronn"), []byte("   \n\t  "), 0o600)
+		require.NoError(t, err)
+
+		// create valid cronn file
+		err = os.WriteFile(filepath.Join(tmpDir, "valid.cronn"), []byte("echo test"), 0o600)
+		require.NoError(t, err)
+
+		res := r.List()
+		// check that we get all 3 files
+		assert.Equal(t, 3, len(res))
+		// verify that the echo test command is in there
+		commands := make([]string, len(res))
+		for i, cmd := range res {
+			commands[i] = cmd.Command
+		}
+		assert.Contains(t, commands, "echo test")
+	})
 }

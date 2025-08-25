@@ -33,28 +33,47 @@ func TestNew(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-	}
+	t.Run("default LoginTTL", func(t *testing.T) {
+		cfg := Config{
+			DBPath:         dbPath,
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   createTestProvider(t, tmpDir),
+			// LoginTTL not set, should default to 24h
+		}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, server)
-	assert.NotNil(t, server.store)
-	assert.NotNil(t, server.templates)
-	assert.NotNil(t, server.jobs)
-	assert.NotNil(t, server.parser)
-	assert.NotNil(t, server.eventChan)
+		server, err := New(cfg)
+		require.NoError(t, err)
+		assert.NotNil(t, server)
+		assert.NotNil(t, server.store)
+		assert.NotNil(t, server.templates)
+		assert.NotNil(t, server.jobs)
+		assert.NotNil(t, server.parser)
+		assert.NotNil(t, server.eventChan)
+		assert.Equal(t, 24*time.Hour, server.loginTTL)
 
-	// verify store is initialized by loading jobs (should not fail)
-	jobs, err := server.store.LoadJobs()
-	require.NoError(t, err)
-	assert.NotNil(t, jobs)
+		// verify store is initialized by loading jobs (should not fail)
+		jobs, err := server.store.LoadJobs()
+		require.NoError(t, err)
+		assert.NotNil(t, jobs)
 
-	_ = server.store.Close()
+		_ = server.store.Close()
+	})
+
+	t.Run("custom LoginTTL", func(t *testing.T) {
+		cfg := Config{
+			DBPath:         filepath.Join(tmpDir, "test2.db"),
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   createTestProvider(t, tmpDir),
+			LoginTTL:       12 * time.Hour,
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		assert.Equal(t, 12*time.Hour, server.loginTTL)
+		_ = server.store.Close()
+	})
 }
 
 func TestHashCommand(t *testing.T) {
@@ -364,6 +383,192 @@ func TestServer_OnJobComplete(t *testing.T) {
 	assert.True(t, exists2)
 	assert.False(t, job2.IsRunning)
 	assert.Equal(t, enums.JobStatusFailed, job2.LastStatus)
+}
+
+func TestServer_handleViewModeToggle(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// add test jobs
+	startTime := time.Now()
+	server.OnJobStart("echo test1", "* * * * *", startTime)
+	server.OnJobComplete("echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
+	server.OnJobStart("echo test2", "0 * * * *", startTime.Add(-time.Hour))
+	server.OnJobComplete("echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-59*time.Minute), 1, fmt.Errorf("failed"))
+
+	// start event processor
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go server.processEvents(ctx)
+
+	// wait for events to be processed
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		return len(server.jobs) == 2
+	}, time.Second, 10*time.Millisecond)
+
+	tests := []struct {
+		name             string
+		currentCookie    string
+		expectedNextMode string
+		expectedInBody   []string
+	}{
+		{
+			name:             "cards to list view",
+			currentCookie:    "cards",
+			expectedNextMode: "list",
+			expectedInBody:   []string{"jobs-container list", "jobs-table", "th-schedule", "th-command"},
+		},
+		{
+			name:             "list to cards view",
+			currentCookie:    "list",
+			expectedNextMode: "cards",
+			expectedInBody:   []string{"jobs-container cards", "job-card", "job-schedule", "job-command"},
+		},
+		{
+			name:             "no cookie defaults to list",
+			currentCookie:    "",
+			expectedNextMode: "list",
+			expectedInBody:   []string{"jobs-container list", "jobs-table"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+			if tt.currentCookie != "" {
+				req.AddCookie(&http.Cookie{Name: "view-mode", Value: tt.currentCookie})
+			}
+			rec := httptest.NewRecorder()
+
+			server.handleViewModeToggle(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			// check cookie was set
+			cookies := rec.Result().Cookies()
+			require.Len(t, cookies, 1)
+			assert.Equal(t, "view-mode", cookies[0].Name)
+			assert.Equal(t, tt.expectedNextMode, cookies[0].Value)
+
+			// check response contains expected content
+			body := rec.Body.String()
+			for _, expected := range tt.expectedInBody {
+				assert.Contains(t, body, expected)
+			}
+
+			// verify that stats updates and view mode button are rendered as OOB
+			assert.Contains(t, body, "hx-swap-oob")
+			assert.Contains(t, body, "view-toggle")
+			assert.Contains(t, body, "id=\"running-count\"")
+			assert.Contains(t, body, "id=\"next-run\"")
+		})
+	}
+
+	// test template not found error case
+	t.Run("template not found", func(t *testing.T) {
+		// temporarily rename template to simulate not found
+		originalTemplate := server.templates["partials/jobs.html"]
+		delete(server.templates, "partials/jobs.html")
+		defer func() {
+			server.templates["partials/jobs.html"] = originalTemplate
+		}()
+
+		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		server.handleViewModeToggle(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	// test template execution error
+	t.Run("template execution error", func(t *testing.T) {
+		// create a template with an error
+		badTemplate := template.Must(template.New("partials/jobs.html").Parse(`{{define "jobs-container"}}{{.NonExistentField}}{{end}}`))
+		originalTemplate := server.templates["partials/jobs.html"]
+		server.templates["partials/jobs.html"] = badTemplate
+		defer func() {
+			server.templates["partials/jobs.html"] = originalTemplate
+		}()
+
+		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		server.handleViewModeToggle(rec, req)
+
+		// should still return 200 but log the error
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+func TestServer_OnJobStartEdgeCases(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// start event processor
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go server.processEvents(ctx)
+
+	// test with invalid schedule that will fail to parse
+	startTime := time.Now()
+	server.OnJobStart("echo test", "invalid schedule", startTime)
+
+	// wait a bit for processing
+	time.Sleep(50 * time.Millisecond)
+
+	// job should still be created but NextRun calculation might fail
+	server.jobsMu.RLock()
+	job, exists := server.jobs[HashCommand("echo test")]
+	server.jobsMu.RUnlock()
+
+	assert.True(t, exists)
+	assert.Equal(t, "echo test", job.Command)
+	assert.Equal(t, "invalid schedule", job.Schedule)
+	assert.True(t, job.IsRunning)
+	assert.Equal(t, enums.JobStatusRunning, job.LastStatus)
+
+	// test updating an existing job - schedule should NOT change from events
+	server.OnJobStart("echo test", "* * * * *", startTime.Add(time.Hour))
+
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		job, exists := server.jobs[HashCommand("echo test")]
+		return exists && job.LastRun.Equal(startTime.Add(time.Hour))
+	}, time.Second, 10*time.Millisecond)
+
+	server.jobsMu.RLock()
+	updatedJob := server.jobs[HashCommand("echo test")]
+	server.jobsMu.RUnlock()
+
+	// schedule should remain unchanged - job events don't update schedule
+	assert.Equal(t, "invalid schedule", updatedJob.Schedule)
+	assert.True(t, updatedJob.IsRunning)
 }
 
 func TestServer_syncWithCrontab(t *testing.T) {

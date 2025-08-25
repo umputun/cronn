@@ -264,7 +264,9 @@ The web dashboard supports optional password authentication. When enabled, users
 #### Authentication Features
 
 - Custom styled login form matching the dashboard theme
-- Cookie-based authentication (24-hour expiration)
+- Cookie-based authentication with configurable session TTL (default: 24 hours)
+  - Configure with `--web.login-ttl` flag (e.g., `--web.login-ttl=12h` for 12 hours)
+  - Or via environment variable: `CRONN_WEB_LOGIN_TTL=48h`
 - Fallback to HTTP Basic Auth for API clients
 - Username is fixed as "cronn"
 - No authentication required for static resources
@@ -442,6 +444,7 @@ web:
       --web.update-interval=      dashboard update interval (default: 30s) [$CRONN_WEB_UPDATE_INTERVAL]
       --web.db-path=              SQLite database path (default: cronn.db) [$CRONN_WEB_DB_PATH]
       --web.password-hash=        bcrypt hash for basic auth (username: cronn) [$CRONN_WEB_PASSWORD_HASH]
+      --web.login-ttl=            login session TTL (default: 24h) [$CRONN_WEB_LOGIN_TTL]
 
 repeater:
       --repeater.attempts=        how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]

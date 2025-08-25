@@ -51,6 +51,7 @@ type Server struct {
 	updateInterval time.Duration
 	version        string
 	passwordHash   string                          // bcrypt hash for basic auth
+	loginTTL       time.Duration                   // session TTL
 	manualTrigger  chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
 	csrfProtection *http.CrossOriginProtection     // csrf protection for POST endpoints
 	sessions       map[string]session              // active user sessions
@@ -115,6 +116,7 @@ type Config struct {
 	ManualTrigger  chan<- service.ManualJobRequest // channel for sending manual trigger requests
 	JobsProvider   JobsProvider                    // interface for loading job specifications
 	PasswordHash   string                          // bcrypt hash for basic auth (empty to disable)
+	LoginTTL       time.Duration                   // session TTL, defaults to 24h if not set
 }
 
 // New creates a new web server
@@ -135,6 +137,12 @@ func New(cfg Config) (*Server, error) {
 	// create CSRF protection
 	csrfProtection := http.NewCrossOriginProtection()
 
+	// set default LoginTTL if not specified
+	loginTTL := cfg.LoginTTL
+	if loginTTL == 0 {
+		loginTTL = 24 * time.Hour
+	}
+
 	s := &Server{
 		store:          store,
 		jobs:           make(map[string]persistence.JobInfo),
@@ -144,6 +152,7 @@ func New(cfg Config) (*Server, error) {
 		updateInterval: cfg.UpdateInterval,
 		version:        cfg.Version,
 		passwordHash:   cfg.PasswordHash,
+		loginTTL:       loginTTL,
 		manualTrigger:  cfg.ManualTrigger,
 		csrfProtection: csrfProtection,
 	}

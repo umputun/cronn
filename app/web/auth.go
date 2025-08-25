@@ -232,8 +232,8 @@ func (s *Server) validateSession(token string) bool {
 		return false
 	}
 
-	// check if session is expired (24 hours)
-	if time.Since(sess.createdAt) > 24*time.Hour {
+	// check if session is expired
+	if time.Since(sess.createdAt) > s.loginTTL {
 		delete(s.sessions, token)
 		return false
 	}
@@ -252,7 +252,7 @@ func (s *Server) invalidateSession(token string) {
 func (s *Server) cleanupExpiredSessions() {
 	now := time.Now()
 	for token, sess := range s.sessions {
-		if now.Sub(sess.createdAt) > 24*time.Hour {
+		if now.Sub(sess.createdAt) > s.loginTTL {
 			delete(s.sessions, token)
 		}
 	}

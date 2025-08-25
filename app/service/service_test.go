@@ -954,6 +954,216 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 	})
 }
 
+func TestScheduler_reload(t *testing.T) {
+	t.Run("reload with changes updates jobs", func(t *testing.T) {
+		changeChan := make(chan []crontab.JobSpec, 1)
+
+		mockParser := &mocks.CrontabParserMock{
+			ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+				return changeChan, nil
+			},
+			ListFunc: func() ([]crontab.JobSpec, error) {
+				return []crontab.JobSpec{
+					{Spec: "* * * * *", Command: "echo updated"},
+				}, nil
+			},
+			StringFunc: func() string { return "test.crontab" },
+		}
+
+		mockCron := &mocks.CronMock{
+			StartFunc: func() {},
+			StopFunc:  context.Background,
+			EntriesFunc: func() []cron.Entry {
+				return []cron.Entry{}
+			},
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		s := &Scheduler{
+			Cron:          mockCron,
+			CrontabParser: mockParser,
+			Resumer:       resumer.New("", false),
+			DeDup:         NewDeDup(false),
+			Stdout:        &bytes.Buffer{},
+			Repeater:      repeater.New(&strategy.Once{}),
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// start reload in background
+		go s.reload(ctx)
+
+		// send a change
+		changeChan <- []crontab.JobSpec{
+			{Spec: "* * * * *", Command: "echo test"},
+		}
+
+		// wait for processing
+		time.Sleep(100 * time.Millisecond)
+
+		// verify parser was called
+		assert.Equal(t, 1, len(mockParser.ListCalls()))
+	})
+
+	t.Run("reload with parser error returns early", func(t *testing.T) {
+		mockParser := &mocks.CrontabParserMock{
+			ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+				return nil, errors.New("parser error")
+			},
+		}
+
+		s := &Scheduler{
+			CrontabParser: mockParser,
+		}
+
+		ctx := context.Background()
+		// this should return immediately without blocking
+		s.reload(ctx)
+
+		// verify Changes was called
+		assert.Equal(t, 1, len(mockParser.ChangesCalls()))
+	})
+
+	t.Run("reload stops on context cancel", func(t *testing.T) {
+		changeChan := make(chan []crontab.JobSpec)
+
+		mockParser := &mocks.CrontabParserMock{
+			ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+				return changeChan, nil
+			},
+		}
+
+		s := &Scheduler{
+			CrontabParser: mockParser,
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// start reload in background
+		done := make(chan struct{})
+		go func() {
+			s.reload(ctx)
+			close(done)
+		}()
+
+		// cancel context
+		cancel()
+
+		// wait for reload to finish
+		select {
+		case <-done:
+			// success, reload stopped
+		case <-time.After(time.Second):
+			t.Fatal("reload did not stop on context cancel")
+		}
+	})
+
+	t.Run("reload stops on channel close", func(t *testing.T) {
+		changeChan := make(chan []crontab.JobSpec)
+
+		mockParser := &mocks.CrontabParserMock{
+			ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+				return changeChan, nil
+			},
+		}
+
+		s := &Scheduler{
+			CrontabParser: mockParser,
+		}
+
+		ctx := context.Background()
+
+		// start reload in background
+		done := make(chan struct{})
+		go func() {
+			s.reload(ctx)
+			close(done)
+		}()
+
+		// close the change channel
+		close(changeChan)
+
+		// wait for reload to finish
+		select {
+		case <-done:
+			// success, reload stopped
+		case <-time.After(time.Second):
+			t.Fatal("reload did not stop on channel close")
+		}
+	})
+
+	t.Run("reload handles load error gracefully", func(t *testing.T) {
+		changeChan := make(chan []crontab.JobSpec, 1)
+		callCount := 0
+
+		mockParser := &mocks.CrontabParserMock{
+			ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+				return changeChan, nil
+			},
+			ListFunc: func() ([]crontab.JobSpec, error) {
+				callCount++
+				if callCount == 1 {
+					return nil, errors.New("load error")
+				}
+				return []crontab.JobSpec{
+					{Spec: "* * * * *", Command: "echo success"},
+				}, nil
+			},
+			StringFunc: func() string { return "test.crontab" },
+		}
+
+		mockCron := &mocks.CronMock{
+			StartFunc: func() {},
+			StopFunc:  context.Background,
+			EntriesFunc: func() []cron.Entry {
+				return []cron.Entry{}
+			},
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		s := &Scheduler{
+			Cron:          mockCron,
+			CrontabParser: mockParser,
+			Resumer:       resumer.New("", false),
+			DeDup:         NewDeDup(false),
+			Stdout:        &bytes.Buffer{},
+			Repeater:      repeater.New(&strategy.Once{}),
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// start reload in background
+		go s.reload(ctx)
+
+		// send first change (will fail)
+		changeChan <- []crontab.JobSpec{
+			{Spec: "* * * * *", Command: "echo test"},
+		}
+
+		// wait for processing
+		time.Sleep(50 * time.Millisecond)
+
+		// send second change (will succeed)
+		changeChan <- []crontab.JobSpec{
+			{Spec: "* * * * *", Command: "echo test2"},
+		}
+
+		// wait for processing
+		time.Sleep(50 * time.Millisecond)
+
+		// verify parser was called twice
+		assert.Equal(t, 2, len(mockParser.ListCalls()))
+	})
+}
+
 // helper function for tests
 func intPtr(i int) *int {
 	return &i

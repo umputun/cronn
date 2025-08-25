@@ -203,6 +203,50 @@
 </button>
 {{end}}
 
+{{define "jobs-container"}}
+<div id="jobs-container" 
+     hx-get="/api/jobs" 
+     hx-trigger="load, every 5s"
+     hx-swap="innerHTML settle:0ms"
+     class="jobs-container {{.ViewMode}}">
+{{if eq .ViewMode.String "cards"}}
+    {{template "jobs-cards" .}}
+{{else}}
+    {{template "jobs-list" .}}
+{{end}}
+</div>
+{{end}}
+
+{{define "view-mode-button"}}
+<button hx-post="/api/view-mode" 
+        hx-trigger="click"
+        hx-target="#jobs-container"
+        hx-swap="outerHTML"
+        hx-swap-oob="outerHTML:.view-toggle"
+        class="control-btn view-toggle"
+        title="Toggle view mode">
+    {{if eq .ViewMode.String "cards"}}
+    <!-- List icon (switch to list) -->
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <line x1="8" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <line x1="8" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="4" cy="6" r="1" fill="currentColor"/>
+        <circle cx="4" cy="12" r="1" fill="currentColor"/>
+        <circle cx="4" cy="18" r="1" fill="currentColor"/>
+    </svg>
+    {{else}}
+    <!-- Card icon (switch to cards) -->
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="3" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
+        <rect x="13" y="3" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
+        <rect x="3" y="13" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
+        <rect x="13" y="13" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
+    </svg>
+    {{end}}
+</button>
+{{end}}
+
 {{define "stats-updates"}}
 {{if .IsOOB}}
 <span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span>

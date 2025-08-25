@@ -618,11 +618,22 @@ func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) e
 		return fmt.Errorf("failed to render stats updates: %w", err)
 	}
 
+	// render view mode button if OOB
+	var buttonHTML bytes.Buffer
+	if data.IsOOB {
+		if err := tmpl.ExecuteTemplate(&buttonHTML, "view-mode-button", data); err != nil {
+			return fmt.Errorf("failed to render view mode button: %w", err)
+		}
+	}
+
 	// write response
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(jobsHTML.Bytes())
 	_, _ = w.Write(statsHTML.Bytes())
+	if buttonHTML.Len() > 0 {
+		_, _ = w.Write(buttonHTML.Bytes())
+	}
 
 	return nil
 }
@@ -644,9 +655,54 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// trigger full page refresh to update the toggle button icon
-	w.Header().Set("HX-Refresh", "true")
+	// get sorted jobs for the new view mode
+	sortMode := s.getSortMode(r)
+	filterMode := s.getFilterMode(r)
+	stats := s.getJobsWithStats(sortMode, filterMode)
+
+	// prepare template data
+	data := TemplateData{
+		Jobs:         stats.jobs,
+		ViewMode:     newMode,
+		SortMode:     sortMode,
+		FilterMode:   filterMode,
+		Theme:        s.getTheme(r),
+		TotalCount:   stats.totalCount,
+		RunningCount: stats.runningCount,
+		NextRunTime:  stats.nextRunTime,
+		CurrentYear:  time.Now().Year(),
+		IsOOB:        true,
+	}
+
+	// get the template
+	tmpl, ok := s.templates["partials/jobs.html"]
+	if !ok {
+		log.Printf("[WARN] partials template not found")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// render the entire jobs container with correct class
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
+
+	// render the container with the new view mode class
+	if err := tmpl.ExecuteTemplate(w, "jobs-container", data); err != nil {
+		log.Printf("[WARN] Failed to render view mode toggle response: %v", err)
+		return
+	}
+
+	// render stats updates as OOB
+	if err := tmpl.ExecuteTemplate(w, "stats-updates", data); err != nil {
+		log.Printf("[WARN] Failed to render stats updates: %v", err)
+		return
+	}
+
+	// render view mode button as OOB
+	if err := tmpl.ExecuteTemplate(w, "view-mode-button", data); err != nil {
+		log.Printf("[WARN] Failed to render view mode button: %v", err)
+		return
+	}
 }
 
 // handleThemeToggle toggles the theme

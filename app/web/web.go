@@ -21,6 +21,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/service"
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
@@ -42,6 +43,7 @@ type Server struct {
 	eventChan      chan JobEvent
 	updateInterval time.Duration
 	version        string
+	manualTrigger  chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
 }
 
 // Persistence defines storage operations for job management
@@ -80,6 +82,7 @@ type Config struct {
 	DBPath         string
 	UpdateInterval time.Duration
 	Version        string
+	ManualTrigger  chan<- service.ManualJobRequest // channel for sending manual trigger requests
 }
 
 // New creates a new web server
@@ -100,6 +103,7 @@ func New(cfg Config) (*Server, error) {
 		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
 		version:        cfg.Version,
+		manualTrigger:  cfg.ManualTrigger,
 	}
 
 	// parse templates
@@ -177,6 +181,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /theme", s.handleThemeToggle)
 		api.HandleFunc("POST /sort-mode", s.handleSortModeChange)
 		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
+		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 	})
 
 	// static files with proper error handling
@@ -703,6 +708,60 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Reswap", "innerHTML")
 
 	s.render(w, "partials/jobs.html", tmplName, data)
+}
+
+// handleRunJob handles manual job trigger requests
+func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		http.Error(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+	
+	s.jobsMu.RLock()
+	job, exists := s.jobs[jobID]
+	s.jobsMu.RUnlock()
+	
+	if !exists {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	
+	if !job.Enabled {
+		http.Error(w, "Job is disabled", http.StatusBadRequest)
+		return
+	}
+	
+	if job.IsRunning {
+		http.Error(w, "Job already running", http.StatusConflict)
+		return
+	}
+	
+	// check if manual trigger channel is available
+	if s.manualTrigger == nil {
+		http.Error(w, "Manual trigger not configured", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// use request context with timeout for sending
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	
+	select {
+	case <-ctx.Done():
+		http.Error(w, "Request canceled", http.StatusRequestTimeout)
+		return
+	case s.manualTrigger <- service.ManualJobRequest{
+		Command:  job.Command,
+		Schedule: job.Schedule,
+	}:
+		log.Printf("[INFO] manual trigger sent for job %s: %s", jobID, job.Command)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("Job triggered"))
+	default:
+		// non-blocking send failed, channel full
+		http.Error(w, "System busy, too many manual triggers", http.StatusServiceUnavailable)
+	}
 }
 
 // render renders a template

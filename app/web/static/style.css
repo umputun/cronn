@@ -189,7 +189,7 @@ code {
 }
 
 .control-btn {
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .control-btn:hover {
@@ -307,6 +307,7 @@ code {
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     box-shadow: var(--shadow-sm);
+    contain: layout;
 }
 
 .job-card:hover {
@@ -336,6 +337,7 @@ code {
     position: absolute;
     top: var(--spacing-md);
     right: var(--spacing-md);
+    z-index: 10;
 }
 
 .status-indicator {
@@ -388,7 +390,22 @@ code {
 }
 
 .job-header {
+    display: grid;
+    grid-template-columns: auto 1fr 56px;
+    align-items: center;
     margin-bottom: var(--spacing-md);
+    position: relative;
+    z-index: 1;
+    padding-right: 40px; /* Space for status icon */
+    gap: 12px;
+}
+
+.job-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    width: 56px;
 }
 
 .job-schedule {
@@ -467,12 +484,40 @@ code {
     background: var(--color-surface);
     border-radius: 12px;
     border: 1px solid var(--color-border);
-    overflow: hidden;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .jobs-table {
     width: 100%;
     border-collapse: collapse;
+}
+
+/* Minimum column widths for stable layout */
+.th-status, .td-status {
+    min-width: 80px;
+}
+
+.th-schedule, .td-schedule {
+    min-width: 100px;
+}
+
+.th-command, .td-command {
+    min-width: 200px;
+}
+
+.th-next, .td-next {
+    min-width: 140px;
+    white-space: nowrap;
+}
+
+.th-last, .td-last {
+    min-width: 120px;
+    white-space: nowrap;
+}
+
+.th-actions, .td-actions {
+    min-width: 60px;
 }
 
 .jobs-table thead {
@@ -506,12 +551,11 @@ code {
 }
 
 .jobs-table tbody tr {
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .jobs-table tbody tr:hover {
     background: var(--color-surface-hover);
-    transform: translateX(2px);
 }
 
 .jobs-table td {
@@ -671,6 +715,7 @@ code {
 .time-value {
     color: var(--color-text);
     line-height: 1.3;
+    font-size: var(--text-sm);
 }
 
 .time-value small {
@@ -737,13 +782,10 @@ code {
 }
 
 /* HTMX indicator */
-.htmx-indicator {
-    display: none;
-}
-
-.htmx-request .htmx-indicator {
-    display: inline-block;
-}
+.htmx-indicator { display: none; }
+/* Show only for the element making the request or its adjacent spinner */
+.htmx-indicator.htmx-request { display: inline-block; }
+.btn-compact.htmx-request + .htmx-indicator { display: inline-block; }
 
 /* Responsive design */
 @media (max-width: 768px) {
@@ -934,5 +976,172 @@ code {
     
     .command-text {
         max-width: 120px;
+    }
+}
+
+/* Run Now button styles */
+.btn-run-now {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: var(--success);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+    white-space: nowrap;
+}
+
+.btn-run-now:hover:not(:disabled) {
+    background: #15803d; /* darker green */
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.25);
+}
+
+.btn-run-now:active:not(:disabled) {
+    box-shadow: 0 2px 6px rgba(34, 197, 94, 0.25);
+}
+
+.btn-run-now:disabled {
+    background: var(--border);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.btn-run-now.btn-small {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.btn-run-now.btn-small:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.btn-run-now.btn-small:active:not(:disabled) {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+}
+
+.btn-run-now.btn-small:disabled {
+    background: transparent;
+    border-color: var(--color-border);
+    color: var(--color-text-muted);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.btn-run-now.btn-small .icon {
+    width: 10px;
+    height: 10px;
+}
+
+.btn-compact {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    cursor: pointer;
+    font-weight: 500;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    min-width: 56px;
+    height: 20px;
+    transition: none !important;
+}
+
+.btn-compact:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.btn-compact:active:not(:disabled) {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+}
+
+.btn-compact:disabled {
+    background: transparent;
+    border-color: var(--color-border);
+    color: var(--color-text-muted);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.btn-compact .icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+}
+
+.btn-run-now .icon {
+    flex-shrink: 0;
+}
+
+
+/* Job actions in table */
+.td-actions {
+    white-space: nowrap;
+    text-align: left;
+    padding-left: 12px;
+}
+
+.th-actions {
+    text-align: center;
+    width: 100px;
+}
+
+/* Spinner for loading state */
+.spinner-small {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+.spinner-small.inline {
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+.htmx-indicator { display: none; }
+.htmx-indicator.htmx-request { display: inline-block; }
+
+.htmx-request.btn-run-now {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
     }
 }

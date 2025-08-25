@@ -772,6 +772,188 @@ func TestScheduler_JobEventHandler(t *testing.T) {
 	})
 }
 
+func TestScheduler_ManualTrigger(t *testing.T) {
+	t.Run("successful manual trigger", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// create test mocks
+		mockCron := &mocks.CronMock{
+			StartFunc: func() {},
+			StopFunc:  context.Background,
+			EntriesFunc: func() []cron.Entry {
+				return []cron.Entry{}
+			},
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		mockParser := &mocks.CrontabParserMock{
+			StringFunc: func() string { return "test.crontab" },
+			ListFunc: func() ([]crontab.JobSpec, error) {
+				return []crontab.JobSpec{
+					{Spec: "* * * * *", Command: "echo test"},
+				}, nil
+			},
+		}
+
+		var capturedCommand string
+		var capturedStartTime time.Time
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, schedule string, startTime time.Time) {
+				capturedCommand = command
+				capturedStartTime = startTime
+			},
+			OnJobCompleteFunc: func(command, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+				// job complete handler
+			},
+		}
+
+		// create scheduler with manual trigger channel
+		manualTrigger := make(chan ManualJobRequest, 10)
+		s := &Scheduler{
+			Cron:             mockCron,
+			CrontabParser:    mockParser,
+			ManualTrigger:    manualTrigger,
+			Resumer:          resumer.New("", false),
+			DeDup:            NewDeDup(false),
+			JobEventHandler:  mockEventHandler,
+			Stdout:           &bytes.Buffer{},
+			ConditionChecker: conditions.NewChecker(1),
+			Repeater:         repeater.New(&strategy.Once{}),
+		}
+
+		// start the scheduler in background
+		go s.Do(ctx)
+		
+		// wait for scheduler to initialize
+		time.Sleep(100 * time.Millisecond)
+
+		// send manual trigger
+		startBefore := time.Now()
+		manualTrigger <- ManualJobRequest{
+			Command:  "echo test",
+			Schedule: "* * * * *",
+		}
+
+		// wait for job to execute
+		time.Sleep(200 * time.Millisecond)
+
+		// verify job was started
+		assert.Equal(t, "echo test", capturedCommand)
+		assert.True(t, capturedStartTime.After(startBefore))
+		assert.True(t, capturedStartTime.Before(time.Now()))
+		
+		// verify onJobStart was called
+		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
+	})
+
+	t.Run("manual trigger with invalid schedule", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		mockCron := &mocks.CronMock{
+			StartFunc:   func() {},
+			StopFunc:    context.Background,
+			EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		mockParser := &mocks.CrontabParserMock{
+			StringFunc: func() string { return "test.crontab" },
+			ListFunc:   func() ([]crontab.JobSpec, error) { return []crontab.JobSpec{}, nil },
+		}
+
+		manualTrigger := make(chan ManualJobRequest, 10)
+		s := &Scheduler{
+			Cron:             mockCron,
+			CrontabParser:    mockParser,
+			ManualTrigger:    manualTrigger,
+			Resumer:          resumer.New("", false),
+			DeDup:            NewDeDup(false),
+			Stdout:           &bytes.Buffer{},
+			ConditionChecker: conditions.NewChecker(1),
+			Repeater:         repeater.New(&strategy.Once{}),
+		}
+
+		// start the scheduler
+		go s.Do(ctx)
+		time.Sleep(100 * time.Millisecond)
+
+		// send manual trigger with invalid schedule
+		manualTrigger <- ManualJobRequest{
+			Command:  "echo test",
+			Schedule: "invalid schedule",
+		}
+
+		// wait a bit
+		time.Sleep(100 * time.Millisecond)
+
+		// no crash should occur, scheduler should continue running
+		select {
+		case <-ctx.Done():
+			t.Fatal("context was canceled unexpectedly")
+		default:
+			// context still active, good
+		}
+	})
+
+	t.Run("manual trigger channel closed on context cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		mockCron := &mocks.CronMock{
+			StartFunc:   func() {},
+			StopFunc:    context.Background,
+			EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		mockParser := &mocks.CrontabParserMock{
+			StringFunc: func() string { return "test.crontab" },
+			ListFunc:   func() ([]crontab.JobSpec, error) { return []crontab.JobSpec{}, nil },
+		}
+
+		manualTrigger := make(chan ManualJobRequest, 10)
+		s := &Scheduler{
+			Cron:             mockCron,
+			CrontabParser:    mockParser,
+			ManualTrigger:    manualTrigger,
+			Resumer:          resumer.New("", false),
+			DeDup:            NewDeDup(false),
+			Stdout:           &bytes.Buffer{},
+			ConditionChecker: conditions.NewChecker(1),
+			Repeater:         repeater.New(&strategy.Once{}),
+		}
+
+		// start the scheduler
+		go s.Do(ctx)
+		time.Sleep(100 * time.Millisecond)
+
+		// cancel context
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+
+		// try to send manual trigger after context cancel
+		select {
+		case manualTrigger <- ManualJobRequest{Command: "test", Schedule: "* * * * *"}:
+			// channel still accepts messages, but listener should have stopped
+		default:
+			// channel might be blocked, that's ok too
+		}
+		
+		// scheduler should have stopped cleanly
+		assert.Equal(t, 1, len(mockCron.StopCalls()))
+	})
+}
+
 // helper function for tests
 func intPtr(i int) *int {
 	return &i

@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/service"
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
@@ -1187,4 +1188,175 @@ func TestServer_Run(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not stop in time")
 	}
+}
+
+func TestServer_handleRunJob(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// create manual trigger channel for testing
+	manualTrigger := make(chan service.ManualJobRequest, 10)
+
+	cfg := Config{
+		CrontabFile:    "crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		ManualTrigger:  manualTrigger,
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// add test job to server
+	testJob := persistence.JobInfo{
+		ID:         "test-job-id",
+		Command:    "echo test",
+		Schedule:   "* * * * *",
+		Enabled:    true,
+		IsRunning:  false,
+		LastStatus: enums.JobStatusIdle,
+	}
+	server.jobsMu.Lock()
+	server.jobs[testJob.ID] = testJob
+	server.jobsMu.Unlock()
+
+	t.Run("successful manual trigger", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req.SetPathValue("id", "test-job-id")
+		w := httptest.NewRecorder()
+
+		server.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Equal(t, "Job triggered", w.Body.String())
+
+		// verify manual trigger was sent
+		select {
+		case trigger := <-manualTrigger:
+			assert.Equal(t, "echo test", trigger.Command)
+			assert.Equal(t, "* * * * *", trigger.Schedule)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("manual trigger not received")
+		}
+	})
+
+	t.Run("job not found", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/jobs/nonexistent/run", http.NoBody)
+		req.SetPathValue("id", "nonexistent")
+		w := httptest.NewRecorder()
+
+		server.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "Job not found")
+	})
+
+	t.Run("job disabled", func(t *testing.T) {
+		// add disabled job
+		disabledJob := persistence.JobInfo{
+			ID:        "disabled-job",
+			Command:   "echo disabled",
+			Schedule:  "* * * * *",
+			Enabled:   false,
+			IsRunning: false,
+		}
+		server.jobsMu.Lock()
+		server.jobs[disabledJob.ID] = disabledJob
+		server.jobsMu.Unlock()
+
+		req := httptest.NewRequest("POST", "/api/jobs/disabled-job/run", http.NoBody)
+		req.SetPathValue("id", "disabled-job")
+		w := httptest.NewRecorder()
+
+		server.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Job is disabled")
+	})
+
+	t.Run("job already running", func(t *testing.T) {
+		// add running job
+		runningJob := persistence.JobInfo{
+			ID:        "running-job",
+			Command:   "echo running",
+			Schedule:  "* * * * *",
+			Enabled:   true,
+			IsRunning: true,
+		}
+		server.jobsMu.Lock()
+		server.jobs[runningJob.ID] = runningJob
+		server.jobsMu.Unlock()
+
+		req := httptest.NewRequest("POST", "/api/jobs/running-job/run", http.NoBody)
+		req.SetPathValue("id", "running-job")
+		w := httptest.NewRecorder()
+
+		server.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		assert.Contains(t, w.Body.String(), "Job already running")
+	})
+
+	t.Run("manual trigger channel full", func(t *testing.T) {
+		// create server with full channel
+		fullChannel := make(chan service.ManualJobRequest, 1)
+		fullChannel <- service.ManualJobRequest{} // fill the channel
+
+		cfg := Config{
+			CrontabFile:    "crontab",
+			DBPath:         filepath.Join(tmpDir, "test2.db"),
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			ManualTrigger:  fullChannel,
+		}
+
+		server2, err := New(cfg)
+		require.NoError(t, err)
+		defer server2.store.Close()
+
+		// add test job
+		server2.jobsMu.Lock()
+		server2.jobs[testJob.ID] = testJob
+		server2.jobsMu.Unlock()
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req.SetPathValue("id", "test-job-id")
+		w := httptest.NewRecorder()
+
+		server2.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		assert.Contains(t, w.Body.String(), "System busy")
+	})
+
+	t.Run("no manual trigger configured", func(t *testing.T) {
+		// create server without manual trigger
+		cfg := Config{
+			CrontabFile:    "crontab",
+			DBPath:         filepath.Join(tmpDir, "test3.db"),
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			ManualTrigger:  nil,
+		}
+
+		server3, err := New(cfg)
+		require.NoError(t, err)
+		defer server3.store.Close()
+
+		// add test job
+		server3.jobsMu.Lock()
+		server3.jobs[testJob.ID] = testJob
+		server3.jobsMu.Unlock()
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req.SetPathValue("id", "test-job-id")
+		w := httptest.NewRecorder()
+
+		server3.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		assert.Contains(t, w.Body.String(), "Manual trigger not configured")
+	})
 }

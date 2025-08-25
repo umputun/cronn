@@ -36,14 +36,22 @@ var staticFS embed.FS
 type Server struct {
 	store          Persistence
 	templates      map[string]*template.Template
-	crontabFile    string
 	jobsMu         sync.RWMutex
 	jobs           map[string]persistence.JobInfo // job id -> job info
-	parser         cron.Parser
+	parser         cron.Parser                    // for schedule parsing (NextRun calculations)
+	jobsProvider   JobsProvider                   // for loading job specifications
 	eventChan      chan JobEvent
 	updateInterval time.Duration
 	version        string
 	manualTrigger  chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
+}
+
+// JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).
+// Implementations should return the complete list of job specifications on each call.
+type JobsProvider interface {
+	// List returns all job specifications from the configured source.
+	// It should return an error if the source cannot be read or parsed.
+	List() ([]crontab.JobSpec, error)
 }
 
 // Persistence defines storage operations for job management
@@ -89,28 +97,33 @@ type jobsStats struct {
 
 // Config holds server configuration
 type Config struct {
-	CrontabFile    string
 	DBPath         string
 	UpdateInterval time.Duration
 	Version        string
 	ManualTrigger  chan<- service.ManualJobRequest // channel for sending manual trigger requests
+	JobsProvider   JobsProvider                    // interface for loading job specifications
 }
 
 // New creates a new web server
 func New(cfg Config) (*Server, error) {
+	// validate required dependencies
+	if cfg.JobsProvider == nil {
+		return nil, fmt.Errorf("web server initialization failed: JobsProvider is required")
+	}
+
 	// create persistence store (it initializes itself)
 	store, err := persistence.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create store: %w", err)
+		return nil, fmt.Errorf("web server initialization failed: failed to create SQLite store at %q: %w", cfg.DBPath, err)
 	}
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 	s := &Server{
 		store:          store,
-		crontabFile:    cfg.CrontabFile,
 		jobs:           make(map[string]persistence.JobInfo),
 		parser:         parser,
+		jobsProvider:   cfg.JobsProvider,
 		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
 		version:        cfg.Version,
@@ -121,9 +134,9 @@ func New(cfg Config) (*Server, error) {
 	templates, err := s.parseTemplates()
 	if err != nil {
 		if closeErr := store.Close(); closeErr != nil {
-			return nil, fmt.Errorf("failed to parse templates: %w (also failed to close: %v)", err, closeErr)
+			return nil, fmt.Errorf("web server initialization failed: failed to parse HTML templates: %w (also failed to close store: %v)", err, closeErr)
 		}
-		return nil, fmt.Errorf("failed to parse templates: %w", err)
+		return nil, fmt.Errorf("web server initialization failed: failed to parse HTML templates: %w", err)
 	}
 	s.templates = templates
 
@@ -250,7 +263,9 @@ func (s *Server) OnJobComplete(command, schedule string, startTime, endTime time
 // syncJobs syncs jobs from crontab file
 func (s *Server) syncJobs(ctx context.Context) {
 	// initial sync
-	s.loadJobsFromCrontab()
+	if err := s.loadJobsFromCrontab(); err != nil {
+		log.Printf("[WARN] failed to load jobs from crontab: %v", err)
+	}
 
 	// if update interval is 0, don't start ticker
 	if s.updateInterval <= 0 {
@@ -266,7 +281,9 @@ func (s *Server) syncJobs(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.loadJobsFromCrontab()
+			if err := s.loadJobsFromCrontab(); err != nil {
+				log.Printf("[WARN] failed to load jobs from crontab: %v", err)
+			}
 		}
 	}
 }
@@ -294,12 +311,14 @@ func (s *Server) loadJobsFromDB() {
 }
 
 // loadJobsFromCrontab loads jobs from crontab file
-func (s *Server) loadJobsFromCrontab() {
-	parser := crontab.New(s.crontabFile, 0, nil)
-	specs, err := parser.List()
+func (s *Server) loadJobsFromCrontab() error {
+	if s.jobsProvider == nil {
+		return fmt.Errorf("cannot load jobs: JobsProvider not configured")
+	}
+
+	specs, err := s.jobsProvider.List()
 	if err != nil {
-		log.Printf("[WARN] failed to parse crontab: %v", err)
-		return
+		return fmt.Errorf("failed to load job specifications from provider: %w", err)
 	}
 
 	s.jobsMu.Lock()
@@ -315,7 +334,7 @@ func (s *Server) loadJobsFromCrontab() {
 		// parse schedule for next run calculation
 		schedule, err := s.parser.Parse(spec.Spec)
 		if err != nil {
-			log.Printf("[WARN] failed to parse schedule %q: %v", spec.Spec, err)
+			log.Printf("[WARN] failed to parse schedule %q for command %q: %v", spec.Spec, spec.Command, err)
 			continue
 		}
 
@@ -350,6 +369,7 @@ func (s *Server) loadJobsFromCrontab() {
 
 	// persist to database (after releasing the lock)
 	s.persistJobs()
+	return nil
 }
 
 // persistJobs saves jobs to database
@@ -714,7 +734,7 @@ func (s *Server) renderSortedJobs(w http.ResponseWriter, data TemplateData) erro
 	w.Header().Set("Content-Type", "text/html")
 	_, _ = w.Write(jobsHTML.Bytes())
 	_, _ = w.Write(sortButtonHTML.Bytes())
-	
+
 	return nil
 }
 
@@ -822,7 +842,7 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
 	_, _ = w.Write(jobsHTML.Bytes())
 	_, _ = w.Write(filterButtonHTML.Bytes())
 	_, _ = w.Write(statsHTML.Bytes())
-	
+
 	return nil
 }
 

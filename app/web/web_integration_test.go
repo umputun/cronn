@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
@@ -33,11 +34,14 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	err := os.WriteFile(crontabFile, []byte(crontabContent), 0o600)
 	require.NoError(t, err)
 
+	// create crontab parser as jobs provider
+	parser := crontab.New(crontabFile, 0, nil)
+
 	cfg := Config{
-		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -154,11 +158,16 @@ func TestServer_ProcessEvents(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	// create a dummy provider for testing
+	crontabFile := filepath.Join(tmpDir, "dummy-crontab")
+	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
+	parser := crontab.New(crontabFile, 0, nil)
+
 	cfg := Config{
-		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -220,11 +229,16 @@ func TestServer_PersistJobs(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	// create a dummy provider for testing
+	crontabFile := filepath.Join(tmpDir, "dummy-crontab")
+	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
+	parser := crontab.New(crontabFile, 0, nil)
+
 	cfg := Config{
-		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -323,10 +337,13 @@ func TestServer_SyncJobs(t *testing.T) {
 	err := os.WriteFile(crontabFile, []byte(crontabContent), 0o600)
 	require.NoError(t, err)
 
+	// create crontab parser as jobs provider
+	parser := crontab.New(crontabFile, 100*time.Millisecond, nil)
+
 	cfg := Config{
-		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: 100 * time.Millisecond,
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -373,11 +390,12 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	err := os.WriteFile(crontabFile, []byte(crontabContent), 0o600)
 	require.NoError(t, err)
 
+	parser := crontab.New(crontabFile, 0, nil)
 	cfg := Config{
-		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	// create first server instance
@@ -386,7 +404,8 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	defer server1.store.Close()
 
 	// load jobs from crontab first so events can update them
-	server1.loadJobsFromCrontab()
+	err = server1.loadJobsFromCrontab()
+	require.NoError(t, err)
 
 	// start event processor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -427,13 +446,21 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	require.NoError(t, server1.store.Close())
 
 	// create second server instance (simulating restart)
-	server2, err := New(cfg)
+	parser2 := crontab.New(crontabFile, 0, nil)
+	cfg2 := Config{
+		DBPath:         dbPath, // same database
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   parser2,
+	}
+	server2, err := New(cfg2)
 	require.NoError(t, err)
 	defer server2.store.Close()
 
 	// load from database (this happens in Run(), but we call directly for testing)
 	server2.loadJobsFromDB()
-	server2.loadJobsFromCrontab() // sync with crontab
+	err = server2.loadJobsFromCrontab() // sync with crontab
+	require.NoError(t, err)
 
 	// verify persistence worked
 	server2.jobsMu.RLock()
@@ -462,11 +489,16 @@ func TestServer_LoadJobsFromDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	// create a dummy provider for testing
+	crontabFile := filepath.Join(tmpDir, "dummy-crontab")
+	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
+	parser := crontab.New(crontabFile, 0, nil)
+
 	cfg := Config{
-		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -555,11 +587,16 @@ func TestServer_HandleJobEvent(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	// create a dummy provider for testing
+	crontabFile := filepath.Join(tmpDir, "dummy-crontab")
+	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
+	parser := crontab.New(crontabFile, 0, nil)
+
 	cfg := Config{
-		CrontabFile:    "crontab",
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -632,21 +669,24 @@ func TestServer_ConcurrentJobEvents(t *testing.T) {
 	crontabFile := filepath.Join(tmpDir, "crontab")
 
 	// create crontab with multiple jobs
-	crontab := []string{
+	crontabContent := []string{
 		"* * * * * echo job1",
 		"* * * * * echo job2",
 		"* * * * * echo job3",
 		"* * * * * echo job4",
 		"* * * * * echo job5",
 	}
-	err := os.WriteFile(crontabFile, []byte(strings.Join(crontab, "\n")), 0o600)
+	err := os.WriteFile(crontabFile, []byte(strings.Join(crontabContent, "\n")), 0o600)
 	require.NoError(t, err)
 
+	// create crontab parser as jobs provider
+	parser := crontab.New(crontabFile, 0, nil)
+
 	cfg := Config{
-		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -747,19 +787,22 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 	crontabFile := filepath.Join(tmpDir, "crontab")
 
 	// create test crontab
-	crontab := []string{
+	crontabContent := []string{
 		"* * * * * echo test1",
 		"*/2 * * * * echo test2",
 		"0 * * * * echo test3",
 	}
-	err := os.WriteFile(crontabFile, []byte(strings.Join(crontab, "\n")), 0o600)
+	err := os.WriteFile(crontabFile, []byte(strings.Join(crontabContent, "\n")), 0o600)
 	require.NoError(t, err)
 
+	// create crontab parser as jobs provider
+	parser := crontab.New(crontabFile, 0, nil)
+
 	cfg := Config{
-		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -767,7 +810,8 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 	defer server.store.Close()
 
 	// load jobs from crontab to initialize server state
-	server.loadJobsFromCrontab()
+	err = server.loadJobsFromCrontab()
+	require.NoError(t, err)
 
 	// create test server
 	router := server.routes()
@@ -862,11 +906,12 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 	err := os.WriteFile(crontabFile, []byte("* * * * * echo initial"), 0o600)
 	require.NoError(t, err)
 
+	parser := crontab.New(crontabFile, 0, nil)
 	cfg := Config{
-		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)
@@ -894,7 +939,9 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 			}
 
 			// reload
-			server.loadJobsFromCrontab()
+			if loadErr := server.loadJobsFromCrontab(); loadErr != nil {
+				t.Errorf("loadJobsFromCrontab failed: %v", loadErr)
+			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
@@ -981,11 +1028,12 @@ func TestServer_EventChannelStress(t *testing.T) {
 	err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
 	require.NoError(t, err)
 
+	parser := crontab.New(crontabFile, 0, nil)
 	cfg := Config{
-		CrontabFile:    crontabFile,
 		DBPath:         dbPath,
 		UpdateInterval: time.Minute,
 		Version:        "test",
+		JobsProvider:   parser,
 	}
 
 	server, err := New(cfg)

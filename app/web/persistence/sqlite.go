@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -29,6 +30,7 @@ type JobInfo struct {
 // SQLiteStore implements persistence using SQLite
 type SQLiteStore struct {
 	db *sqlx.DB
+	mu sync.RWMutex // protects concurrent database access
 }
 
 // NewSQLiteStore creates a new SQLite store and initializes the database
@@ -44,6 +46,14 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 			return nil, fmt.Errorf("failed to set WAL mode: %w (also failed to close db: %v)", err, closeErr)
 		}
 		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
+	}
+
+	// set busy timeout to wait when database is locked
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			return nil, fmt.Errorf("failed to set busy timeout: %w (also failed to close db: %v)", err, closeErr)
+		}
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
 	}
 
 	store := &SQLiteStore{db: db}
@@ -96,6 +106,9 @@ func (s *SQLiteStore) initialize() error {
 
 // LoadJobs retrieves all jobs from the database
 func (s *SQLiteStore) LoadJobs() ([]JobInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	var jobs []JobInfo
 	err := s.db.Select(&jobs, `
 		SELECT id, command, schedule, next_run, last_run, last_status, enabled, 
@@ -116,6 +129,9 @@ func (s *SQLiteStore) LoadJobs() ([]JobInfo, error) {
 
 // SaveJobs persists multiple jobs in a transaction
 func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	tx, err := s.db.Beginx()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -145,6 +161,9 @@ func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
 
 // RecordExecution logs a job execution event
 func (s *SQLiteStore) RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -162,5 +181,8 @@ func (s *SQLiteStore) RecordExecution(jobID string, started, finished time.Time,
 
 // Close closes the database connection
 func (s *SQLiteStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	return s.db.Close()
 }

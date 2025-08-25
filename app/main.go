@@ -148,11 +148,11 @@ func main() {
 	var eventHandler service.JobEventHandler
 	if opts.Web.Enabled {
 		cfg := web.Config{
-			CrontabFile:    opts.CrontabFile,
 			DBPath:         opts.Web.DBPath,
 			UpdateInterval: opts.Web.UpdateInterval,
 			Version:        revision,
 			ManualTrigger:  manualTrigger,
+			JobsProvider:   crontabParser,
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {

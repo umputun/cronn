@@ -79,27 +79,29 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	// clear both possible cookie names to ensure logout works
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	if secure {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "__Host-cronn-auth",
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1, // delete cookie
-			HttpOnly: true,
-			SameSite: http.SameSiteStrictMode,
-			Secure:   true,
-		})
-	} else {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "cronn-auth",
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1, // delete cookie
-			HttpOnly: true,
-			SameSite: http.SameSiteStrictMode,
-			Secure:   secure,
-		})
-	}
+	
+	// always clear the non-secure cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "cronn-auth",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1, // delete cookie
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   secure,
+	})
+	
+	// always attempt to clear the secure __Host- cookie
+	// browser will only honor this on HTTPS connection
+	http.SetCookie(w, &http.Cookie{
+		Name:     "__Host-cronn-auth",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1, // delete cookie
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   true,
+	})
 
 	// tell HTMX to perform a full page refresh instead of swapping content
 	w.Header().Set("HX-Refresh", "true")
@@ -152,13 +154,11 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		// check auth cookie (try both names for compatibility)
-		if cookie, err := r.Cookie("__Host-cronn-auth"); err == nil && s.validateSession(cookie.Value) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if cookie, err := r.Cookie("cronn-auth"); err == nil && s.validateSession(cookie.Value) {
-			next.ServeHTTP(w, r)
-			return
+		for _, cookieName := range []string{"__Host-cronn-auth", "cronn-auth"} {
+			if cookie, err := r.Cookie(cookieName); err == nil && s.validateSession(cookie.Value) {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 
 		// fallback to basic auth for API clients

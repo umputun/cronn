@@ -248,15 +248,10 @@ The web dashboard supports optional password authentication. When enabled, users
    # Enter password when prompted, copy the hash after "cronn:"
    ```
 
-   Using `openssl` (requires manual bcrypt generation):
+   Using Python (if available):
    ```bash
-   # Note: openssl doesn't directly support bcrypt, use htpasswd or online tools
+   python3 -c "import bcrypt; print(bcrypt.hashpw(b'your-password', bcrypt.gensalt()).decode())"
    ```
-
-   Using online bcrypt generator:
-   - Visit a bcrypt generator like https://bcrypt-generator.com/
-   - Enter your password and generate hash
-   - Use cost factor 10 (default)
 
 2. Set the password hash via command line or environment variable:
    ```bash
@@ -269,7 +264,7 @@ The web dashboard supports optional password authentication. When enabled, users
 #### Authentication Features
 
 - Custom styled login form matching the dashboard theme
-- Cookie-based authentication (7-day expiration)
+- Cookie-based authentication (24-hour expiration)
 - Fallback to HTTP Basic Auth for API clients
 - Username is fixed as "cronn"
 - No authentication required for static resources

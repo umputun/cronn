@@ -1010,7 +1010,7 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 
 	// after all the crontab reloads, we should have jobs from the final crontab
 	// plus any jobs from events that haven't been cleaned up
-	// The important thing is the database has some data and didn't corrupt
+	// the important thing is the database has some data and didn't corrupt
 	assert.Greater(t, len(loadedJobs), 0, "database should have jobs")
 
 	// verify loaded jobs are valid

@@ -86,6 +86,7 @@ var opts struct {
 		Address        string        `long:"address" env:"ADDRESS" default:":8080" description:"web UI address"`
 		DBPath         string        `long:"db-path" env:"DB_PATH" default:"cronn.db" description:"path to SQLite database"`
 		UpdateInterval time.Duration `long:"update-interval" env:"UPDATE_INTERVAL" default:"30s" description:"interval to sync crontab file"`
+		PasswordHash   string        `long:"password-hash" env:"PASSWORD_HASH" description:"bcrypt hash for basic auth (username: cronn)"`
 	} `group:"web" namespace:"web" env-namespace:"CRONN_WEB"`
 }
 
@@ -153,6 +154,7 @@ func main() {
 			Version:        revision,
 			ManualTrigger:  manualTrigger,
 			JobsProvider:   crontabParser,
+			PasswordHash:   opts.Web.PasswordHash,
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {

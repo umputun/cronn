@@ -43,7 +43,9 @@ type Server struct {
 	eventChan      chan JobEvent
 	updateInterval time.Duration
 	version        string
+	passwordHash   string                          // bcrypt hash for basic auth
 	manualTrigger  chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
+	csrfProtection *http.CrossOriginProtection     // csrf protection for POST endpoints
 }
 
 // JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).
@@ -85,6 +87,7 @@ type TemplateData struct {
 	NextRunTime  string // formatted next run time for stats
 	TotalCount   int    // total jobs before filtering
 	IsOOB        bool   // for OOB template rendering
+	AuthEnabled  bool   // whether authentication is enabled
 }
 
 // jobsStats holds statistics about jobs
@@ -102,6 +105,7 @@ type Config struct {
 	Version        string
 	ManualTrigger  chan<- service.ManualJobRequest // channel for sending manual trigger requests
 	JobsProvider   JobsProvider                    // interface for loading job specifications
+	PasswordHash   string                          // bcrypt hash for basic auth (empty to disable)
 }
 
 // New creates a new web server
@@ -119,6 +123,9 @@ func New(cfg Config) (*Server, error) {
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
+	// create CSRF protection
+	csrfProtection := http.NewCrossOriginProtection()
+
 	s := &Server{
 		store:          store,
 		jobs:           make(map[string]persistence.JobInfo),
@@ -127,7 +134,9 @@ func New(cfg Config) (*Server, error) {
 		eventChan:      make(chan JobEvent, 1000),
 		updateInterval: cfg.UpdateInterval,
 		version:        cfg.Version,
+		passwordHash:   cfg.PasswordHash,
 		manualTrigger:  cfg.ManualTrigger,
+		csrfProtection: csrfProtection,
 	}
 
 	// parse templates
@@ -191,13 +200,29 @@ func (s *Server) routes() http.Handler {
 		logger.New(logger.Log(log.Default()), logger.Prefix("[DEBUG]")).Handler,
 	)
 
+	// add auth middleware if password hash is configured
+	// must be done before any routes are defined
+	if s.passwordHash != "" {
+		log.Printf("[INFO] authentication enabled for web UI")
+		// custom auth middleware that checks cookie or basic auth
+		router.Use(s.authMiddleware)
+	}
+
+	// login routes - not protected by auth (Maybe middleware condition returns false for /login)
+	if s.passwordHash != "" {
+		router.HandleFunc("GET /login", s.handleLoginForm)
+		router.With(s.csrfProtection.Handler).HandleFunc("POST /login", s.handleLogin)
+		router.HandleFunc("GET /logout", s.handleLogout)
+	}
+
 	// dashboard route
 	router.HandleFunc("GET /", s.handleDashboard)
 
 	// api routes with grouping
 	router.Mount("/api").Route(func(api *routegroup.Bundle) {
 		// api-specific middleware
-		api.Use(rest.NoCache) // prevent caching of API responses
+		api.Use(rest.NoCache)             // prevent caching of API responses
+		api.Use(s.csrfProtection.Handler) // CSRF protection for POST endpoints
 
 		// HTMX endpoints
 		api.HandleFunc("GET /jobs", s.handleJobsPartial)
@@ -476,6 +501,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		RunningCount: stats.runningCount,
 		NextRunTime:  stats.nextRunTime,
 		TotalCount:   stats.totalCount,
+		AuthEnabled:  s.passwordHash != "",
 	}
 
 	s.render(w, "base.html", "base", data)
@@ -1002,6 +1028,13 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 		return nil, fmt.Errorf("failed to parse partials: %w", err)
 	}
 	templates["partials/jobs.html"] = partials
+
+	// parse login template (standalone, doesn't use base)
+	login, err := template.New("login.html").ParseFS(templatesFS, "templates/login.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse login template: %w", err)
+	}
+	templates["login"] = login
 
 	return templates, nil
 }

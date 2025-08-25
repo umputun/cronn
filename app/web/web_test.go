@@ -908,7 +908,7 @@ func TestServer_handleSortToggle(t *testing.T) {
 			assert.True(t, cookies[0].HttpOnly)
 
 			// check response contains job data and OOB update
-			// Note: After refactoring to use templates, the sort button is now replaced entirely
+			// note: After refactoring to use templates, the sort button is now replaced entirely
 			// via outerHTML instead of just updating innerHTML, which is cleaner and more maintainable
 			body := rec.Body.String()
 			assert.Contains(t, body, "echo test1")

@@ -187,7 +187,33 @@ cronn -f crontab --web.enabled --web.address=0.0.0.0:8080
 
 # Custom update interval (default: 30s)
 cronn -f crontab --web.enabled --web.update-interval=10s
+
+# With basic authentication (optional)
+export CRONN_WEB_PASSWORD_HASH='$2y$10$...' # bcrypt hash
+cronn -f crontab --web.enabled
 ```
+
+### Basic Authentication (Optional)
+
+To protect the web dashboard with a password:
+
+1. Generate a bcrypt hash of your password:
+   ```bash
+   # Using htpasswd (commonly available)
+   htpasswd -bnBC 10 "" yourpassword | tr -d ':\n'
+   ```
+
+2. Set the password hash:
+   ```bash
+   # Via environment variable
+   export CRONN_WEB_PASSWORD_HASH='$2y$10$...'
+   cronn -f crontab --web.enabled
+   
+   # Or via command line flag
+   cronn -f crontab --web.enabled --web.password-hash='$2y$10$...'
+   ```
+
+3. Access the dashboard with username `cronn` and your password
 
 The dashboard is accessible via web browser at the configured address. Job data updates automatically using HTMX for smooth, JavaScript-free interactions.
 
@@ -207,6 +233,46 @@ The dashboard is accessible via web browser at the configured address. Job data 
 ![Dashboard Dark List](docs/screenshots/dashboard-dark-list.png)
 
 </details>
+
+### Authentication
+
+The web dashboard supports optional password authentication. When enabled, users will see a custom login form instead of the browser's basic auth dialog.
+
+#### Enabling Authentication
+
+1. Generate a bcrypt password hash using one of these methods:
+
+   Using `htpasswd` (Apache utilities):
+   ```bash
+   htpasswd -nB cronn
+   # Enter password when prompted, copy the hash after "cronn:"
+   ```
+
+   Using `openssl` (requires manual bcrypt generation):
+   ```bash
+   # Note: openssl doesn't directly support bcrypt, use htpasswd or online tools
+   ```
+
+   Using online bcrypt generator:
+   - Visit a bcrypt generator like https://bcrypt-generator.com/
+   - Enter your password and generate hash
+   - Use cost factor 10 (default)
+
+2. Set the password hash via command line or environment variable:
+   ```bash
+   cronn --web.enabled --web.password-hash='$2y$10$...your-hash-here...'
+   # or
+   export CRONN_WEB_PASSWORD_HASH='$2y$10$...your-hash-here...'
+   cronn --web.enabled
+   ```
+
+#### Authentication Features
+
+- Custom styled login form matching the dashboard theme
+- Cookie-based authentication (7-day expiration)
+- Fallback to HTTP Basic Auth for API clients
+- Username is fixed as "cronn"
+- No authentication required for static resources
 
 ## Optional modes
 
@@ -378,6 +444,7 @@ web:
       --web.address=              web server address (default: :8080) [$CRONN_WEB_ADDRESS]
       --web.update-interval=      dashboard update interval (default: 30s) [$CRONN_WEB_UPDATE_INTERVAL]
       --web.db-path=              SQLite database path (default: cronn.db) [$CRONN_WEB_DB_PATH]
+      --web.password-hash=        bcrypt hash for basic auth (username: cronn) [$CRONN_WEB_PASSWORD_HASH]
 
 repeater:
       --repeater.attempts=        how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]

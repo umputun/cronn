@@ -165,13 +165,18 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 ### Features
 - **Real-time job monitoring** with live updates every 30 seconds
 - **Persistent job history** stored in SQLite database that survives restarts
-- **Multiple view modes**: Card view and compact list view
-- **Light and dark themes** with automatic system preference detection
-- **Job statistics** showing total jobs, running jobs, and next execution time
-- **Detailed job information** including schedules, commands, execution history
+- **Manual job execution** - run any job on-demand directly from the UI with a single click
+- **Multiple view modes**: Card view and compact list view with toggle button
+- **Sorting options**: Sort jobs by original order, last run time, or next run time
+- **Status filtering**: Filter jobs by status (all, running, success, failed)
+- **Light, dark, and auto themes** with automatic system preference detection
+- **Job statistics bar** showing total jobs, currently running jobs, and next execution time
+- **Detailed job information** including schedules, commands, and execution history
 - **Status indicators** with color-coded job states (idle, running, success, failed)
-- **Responsive design** that works on desktop and mobile devices
-- **Modern UI** with Inter font, consistent spacing, and smooth animations
+- **Cookie-based preferences** for persistent theme, view mode, sort order, and filter settings
+- **Responsive design** that works seamlessly on desktop and mobile devices
+- **Modern UI** with Inter font, consistent spacing, and smooth HTMX-powered animations
+- **No JavaScript required** - all interactivity powered by HTMX v2
 
 ### Usage
 To enable the web dashboard:
@@ -267,6 +272,7 @@ The web dashboard supports optional password authentication. When enabled, users
 - Cookie-based authentication with configurable session TTL (default: 24 hours)
   - Configure with `--web.login-ttl` flag (e.g., `--web.login-ttl=12h` for 12 hours)
   - Or via environment variable: `CRONN_WEB_LOGIN_TTL=48h`
+- Logout link available in the dashboard footer when authentication is enabled
 - Fallback to HTTP Basic Auth for API clients
 - Username is fixed as "cronn"
 - No authentication required for static resources

@@ -233,3 +233,146 @@ func TestServer_CSRFProtection(t *testing.T) {
 		assert.Equal(t, "/", rec.Header().Get("Location"))
 	})
 }
+
+func TestServer_handleLogout(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	passwordHash := "$2y$10$qOIpGITktzktHpcnWXiow.penxJmMcapV3G2ZRQaK0QRW7BSmAuJG" //nolint:gosec // test password hash
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+		PasswordHash:   passwordHash,
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	handler := server.routes()
+
+	t.Run("logout clears auth cookie and redirects", func(t *testing.T) {
+		// first login to get a valid session
+		loginReq := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		loginRec := httptest.NewRecorder()
+		handler.ServeHTTP(loginRec, loginReq)
+		
+		// get the session cookie
+		cookies := loginRec.Result().Cookies()
+		require.Len(t, cookies, 1)
+		sessionCookie := cookies[0]
+
+		// now test logout
+		logoutReq := httptest.NewRequest("GET", "/logout", http.NoBody)
+		logoutReq.AddCookie(sessionCookie)
+		logoutRec := httptest.NewRecorder()
+		handler.ServeHTTP(logoutRec, logoutReq)
+
+		// should redirect to login
+		assert.Equal(t, http.StatusSeeOther, logoutRec.Code)
+		assert.Equal(t, "/login", logoutRec.Header().Get("Location"))
+		assert.Equal(t, "true", logoutRec.Header().Get("HX-Refresh"))
+
+		// should clear both possible cookie names
+		responseCookies := logoutRec.Result().Cookies()
+		assert.Len(t, responseCookies, 2)
+		
+		// verify both cookies are being cleared (MaxAge = -1)
+		cookieNames := []string{responseCookies[0].Name, responseCookies[1].Name}
+		assert.Contains(t, cookieNames, "cronn-auth")
+		assert.Contains(t, cookieNames, "__Host-cronn-auth")
+		
+		for _, cookie := range responseCookies {
+			assert.Equal(t, -1, cookie.MaxAge)
+			assert.Equal(t, "", cookie.Value)
+		}
+	})
+
+	t.Run("logout with HTTPS cookie", func(t *testing.T) {
+		// login with HTTPS to get __Host- cookie
+		loginReq := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		loginReq.Header.Set("X-Forwarded-Proto", "https")
+		loginRec := httptest.NewRecorder()
+		handler.ServeHTTP(loginRec, loginReq)
+		
+		cookies := loginRec.Result().Cookies()
+		require.Len(t, cookies, 1)
+		assert.Equal(t, "__Host-cronn-auth", cookies[0].Name)
+
+		// logout with HTTPS
+		logoutReq := httptest.NewRequest("GET", "/logout", http.NoBody)
+		logoutReq.Header.Set("X-Forwarded-Proto", "https")
+		logoutReq.AddCookie(cookies[0])
+		logoutRec := httptest.NewRecorder()
+		handler.ServeHTTP(logoutRec, logoutReq)
+
+		assert.Equal(t, http.StatusSeeOther, logoutRec.Code)
+		assert.Equal(t, "/login", logoutRec.Header().Get("Location"))
+	})
+
+	t.Run("logout without session cookie still works", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/logout", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/login", rec.Header().Get("Location"))
+	})
+}
+
+func TestServer_validateSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+		PasswordHash:   "test",
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	t.Run("validates valid session", func(t *testing.T) {
+		// create a session
+		token, err := server.createSession()
+		require.NoError(t, err)
+		
+		// validate it
+		assert.True(t, server.validateSession(token))
+	})
+
+	t.Run("rejects invalid session", func(t *testing.T) {
+		assert.False(t, server.validateSession("invalid-token"))
+	})
+
+	t.Run("rejects expired session", func(t *testing.T) {
+		// create a session
+		token, err := server.createSession()
+		require.NoError(t, err)
+		
+		// manually expire it
+		server.sessionsMu.Lock()
+		sess := server.sessions[token]
+		sess.createdAt = time.Now().Add(-25 * time.Hour) // 25 hours ago
+		server.sessions[token] = sess
+		server.sessionsMu.Unlock()
+		
+		// should be invalid now
+		assert.False(t, server.validateSession(token))
+		
+		// and should be removed from sessions map
+		server.sessionsMu.Lock()
+		_, exists := server.sessions[token]
+		server.sessionsMu.Unlock()
+		assert.False(t, exists)
+	})
+}

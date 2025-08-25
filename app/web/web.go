@@ -32,6 +32,12 @@ var templatesFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
+// session represents an active user session
+type session struct {
+	token     string
+	createdAt time.Time
+}
+
 // Server represents the web server
 type Server struct {
 	store          Persistence
@@ -46,6 +52,8 @@ type Server struct {
 	passwordHash   string                          // bcrypt hash for basic auth
 	manualTrigger  chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
 	csrfProtection *http.CrossOriginProtection     // csrf protection for POST endpoints
+	sessions       map[string]session              // active user sessions
+	sessionsMu     sync.Mutex                      // protects sessions map
 }
 
 // JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).

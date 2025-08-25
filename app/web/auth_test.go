@@ -97,15 +97,33 @@ func TestServer_Authentication(t *testing.T) {
 			JobsProvider:   createTestProvider(t, tmpDir),
 			PasswordHash:   "", // no auth
 		}
-		server, err := New(cfg)
+		noAuthServer, err := New(cfg)
 		require.NoError(t, err)
-		defer server.store.Close()
+		defer noAuthServer.store.Close()
 
-		handler := server.routes()
+		noAuthHandler := noAuthServer.routes()
 		req := httptest.NewRequest("GET", "/", http.NoBody)
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
+		noAuthHandler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("HTTPS login sets __Host- prefixed cookie", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Forwarded-Proto", "https") // simulate HTTPS
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"))
+
+		// check __Host- prefixed cookie was set for HTTPS
+		cookies := rec.Result().Cookies()
+		require.Len(t, cookies, 1)
+		assert.Equal(t, "__Host-cronn-auth", cookies[0].Name)
+		assert.True(t, cookies[0].Secure)
+		assert.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
 	})
 }
 

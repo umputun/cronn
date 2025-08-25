@@ -1133,9 +1133,7 @@ code {
 }
 
 .htmx-indicator { display: none; }
-/* Same scoping as above to avoid global reveal during auto-refresh */
 .htmx-indicator.htmx-request { display: inline-block; }
-.btn-compact.htmx-request + .htmx-indicator { display: inline-block; }
 
 .htmx-request.btn-run-now {
     opacity: 0.6;

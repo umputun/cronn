@@ -7,12 +7,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/didip/tollbooth/v8"
+	"github.com/didip/tollbooth/v8/limiter"
 	"golang.org/x/crypto/bcrypt"
 
 	log "github.com/go-pkgz/lgr"
 
 	"github.com/umputun/cronn/app/web/enums"
 )
+
+var loginLimiter = func() *limiter.Limiter {
+	// allow 5 login attempts per minute (much more reasonable than per second)
+	lmt := tollbooth.NewLimiter(5.0/60.0, &limiter.ExpirableOptions{ // 5 per 60 seconds = 0.083 per second
+		DefaultExpirationTTL: time.Hour,
+	})
+	lmt.SetBurst(5) // allow up to 5 attempts in a burst
+	lmt.SetMessage("Too many login attempts. Please try again later.")
+	return lmt
+}()
 
 // handleLoginForm displays the login form
 func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {

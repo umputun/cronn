@@ -297,6 +297,8 @@ func TestServer_handleLogout(t *testing.T) {
 		loginReq := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
 		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		loginReq.Header.Set("X-Forwarded-Proto", "https")
+		loginReq.Header.Set("Sec-Fetch-Site", "same-origin") // CSRF protection
+		loginReq.RemoteAddr = "192.168.100.100:8080" // unique IP for rate limiting
 		loginRec := httptest.NewRecorder()
 		handler.ServeHTTP(loginRec, loginReq)
 		
@@ -374,5 +376,92 @@ func TestServer_validateSession(t *testing.T) {
 		_, exists := server.sessions[token]
 		server.sessionsMu.Unlock()
 		assert.False(t, exists)
+	})
+}
+
+func TestServer_LoginRateLimiting(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	passwordHash := "$2y$10$qOIpGITktzktHpcnWXiow.penxJmMcapV3G2ZRQaK0QRW7BSmAuJG" //nolint:gosec // test password hash
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+		PasswordHash:   passwordHash,
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	handler := server.routes()
+
+	t.Run("login rate limiting blocks after 5 attempts", func(t *testing.T) {
+		// use unique IP for this test
+		testIP := "10.0.0.1:12345"
+		
+		// make attempts until rate limited (should happen within 6 attempts)
+		var attempts int
+		for attempts < 10 { // safety limit
+			req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			req.RemoteAddr = testIP
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			
+			attempts++
+			if rec.Code == http.StatusTooManyRequests {
+				// rate limiting is working
+				assert.Contains(t, rec.Body.String(), "Too many login attempts")
+				break
+			}
+			// should get 401 for wrong password before rate limit
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Contains(t, rec.Body.String(), "Invalid password")
+		}
+		
+		// verify we actually hit rate limit
+		assert.True(t, attempts <= 6, "Rate limiting should kick in within 6 attempts")
+		
+		// make one more request to confirm it's still rate limited
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.RemoteAddr = testIP
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		
+		// should still be rate limited (429 Too Many Requests)
+		assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Too many login attempts")
+	})
+
+	t.Run("successful login still works within rate limit", func(t *testing.T) {
+		// use a different remote addr to simulate different IP for rate limiting
+		// make a few failed attempts (within limit)
+		for i := 0; i < 3; i++ {
+			req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			req.RemoteAddr = "192.168.1.100:12345" // different IP than default
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		}
+
+		// successful login should work
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.RemoteAddr = "192.168.1.100:12345" // same different IP
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"))
 	})
 }

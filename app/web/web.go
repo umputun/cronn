@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/didip/tollbooth/v8"
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/rest"
 	"github.com/go-pkgz/rest/logger"
@@ -219,7 +220,7 @@ func (s *Server) routes() http.Handler {
 	// login routes - not protected by auth (Maybe middleware condition returns false for /login)
 	if s.passwordHash != "" {
 		router.HandleFunc("GET /login", s.handleLoginForm)
-		router.With(s.csrfProtection.Handler).HandleFunc("POST /login", s.handleLogin)
+		router.With(s.csrfProtection.Handler, tollbooth.HTTPMiddleware(loginLimiter)).HandleFunc("POST /login", s.handleLogin)
 		router.HandleFunc("GET /logout", s.handleLogout)
 	}
 

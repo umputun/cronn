@@ -268,6 +268,8 @@ The web dashboard supports optional password authentication. When enabled, users
 - Fallback to HTTP Basic Auth for API clients
 - Username is fixed as "cronn"
 - No authentication required for static resources
+- **Brute-force protection**: Login attempts are rate-limited to 5 attempts per minute per IP address
+- CSRF protection using Go 1.25's built-in cross-origin protection
 
 ## Optional modes
 

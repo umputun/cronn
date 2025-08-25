@@ -644,7 +644,8 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// respond with empty body - the base template handles refresh via custom event
+	// trigger full page refresh to update the toggle button icon
+	w.Header().Set("HX-Refresh", "true")
 	w.WriteHeader(http.StatusOK)
 }
 

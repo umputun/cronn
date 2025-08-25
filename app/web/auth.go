@@ -91,7 +91,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	// clear both possible cookie names to ensure logout works
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	
+
 	// always clear the non-secure cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "cronn-auth",
@@ -102,7 +102,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 		Secure:   secure,
 	})
-	
+
 	// always attempt to clear the secure __Host- cookie
 	// browser will only honor this on HTTPS connection
 	http.SetCookie(w, &http.Cookie{

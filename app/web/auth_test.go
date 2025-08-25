@@ -114,7 +114,7 @@ func TestServer_Authentication(t *testing.T) {
 		req.Header.Set("X-Forwarded-Proto", "https") // simulate HTTPS
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		
+
 		assert.Equal(t, http.StatusSeeOther, rec.Code)
 		assert.Equal(t, "/", rec.Header().Get("Location"))
 
@@ -260,7 +260,7 @@ func TestServer_handleLogout(t *testing.T) {
 		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		loginRec := httptest.NewRecorder()
 		handler.ServeHTTP(loginRec, loginReq)
-		
+
 		// get the session cookie
 		cookies := loginRec.Result().Cookies()
 		require.Len(t, cookies, 1)
@@ -280,12 +280,12 @@ func TestServer_handleLogout(t *testing.T) {
 		// should clear both possible cookie names
 		responseCookies := logoutRec.Result().Cookies()
 		assert.Len(t, responseCookies, 2)
-		
+
 		// verify both cookies are being cleared (MaxAge = -1)
 		cookieNames := []string{responseCookies[0].Name, responseCookies[1].Name}
 		assert.Contains(t, cookieNames, "cronn-auth")
 		assert.Contains(t, cookieNames, "__Host-cronn-auth")
-		
+
 		for _, cookie := range responseCookies {
 			assert.Equal(t, -1, cookie.MaxAge)
 			assert.Equal(t, "", cookie.Value)
@@ -298,10 +298,10 @@ func TestServer_handleLogout(t *testing.T) {
 		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		loginReq.Header.Set("X-Forwarded-Proto", "https")
 		loginReq.Header.Set("Sec-Fetch-Site", "same-origin") // CSRF protection
-		loginReq.RemoteAddr = "192.168.100.100:8080" // unique IP for rate limiting
+		loginReq.RemoteAddr = "192.168.100.100:8080"         // unique IP for rate limiting
 		loginRec := httptest.NewRecorder()
 		handler.ServeHTTP(loginRec, loginReq)
-		
+
 		cookies := loginRec.Result().Cookies()
 		require.Len(t, cookies, 1)
 		assert.Equal(t, "__Host-cronn-auth", cookies[0].Name)
@@ -347,7 +347,7 @@ func TestServer_validateSession(t *testing.T) {
 		// create a session
 		token, err := server.createSession()
 		require.NoError(t, err)
-		
+
 		// validate it
 		assert.True(t, server.validateSession(token))
 	})
@@ -360,17 +360,17 @@ func TestServer_validateSession(t *testing.T) {
 		// create a session
 		token, err := server.createSession()
 		require.NoError(t, err)
-		
+
 		// manually expire it
 		server.sessionsMu.Lock()
 		sess := server.sessions[token]
 		sess.createdAt = time.Now().Add(-25 * time.Hour) // 25 hours ago
 		server.sessions[token] = sess
 		server.sessionsMu.Unlock()
-		
+
 		// should be invalid now
 		assert.False(t, server.validateSession(token))
-		
+
 		// and should be removed from sessions map
 		server.sessionsMu.Lock()
 		_, exists := server.sessions[token]
@@ -402,7 +402,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 	t.Run("login rate limiting blocks after 5 attempts", func(t *testing.T) {
 		// use unique IP for this test
 		testIP := "10.0.0.1:12345"
-		
+
 		// make attempts until rate limited (should happen within 6 attempts)
 		var attempts int
 		for attempts < 10 { // safety limit
@@ -412,7 +412,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 			req.RemoteAddr = testIP
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
-			
+
 			attempts++
 			if rec.Code == http.StatusTooManyRequests {
 				// rate limiting is working
@@ -423,10 +423,10 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, rec.Code)
 			assert.Contains(t, rec.Body.String(), "Invalid password")
 		}
-		
+
 		// verify we actually hit rate limit
 		assert.True(t, attempts <= 6, "Rate limiting should kick in within 6 attempts")
-		
+
 		// make one more request to confirm it's still rate limited
 		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -434,7 +434,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 		req.RemoteAddr = testIP
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		
+
 		// should still be rate limited (429 Too Many Requests)
 		assert.Equal(t, http.StatusTooManyRequests, rec.Code)
 		assert.Contains(t, rec.Body.String(), "Too many login attempts")
@@ -460,7 +460,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 		req.RemoteAddr = "192.168.1.100:12345" // same different IP
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		
+
 		assert.Equal(t, http.StatusSeeOther, rec.Code)
 		assert.Equal(t, "/", rec.Header().Get("Location"))
 	})

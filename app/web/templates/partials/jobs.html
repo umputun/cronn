@@ -167,3 +167,46 @@
     </tbody>
 </table>
 {{end}}
+
+{{define "filter-button"}}
+<button {{if .IsOOB}}hx-swap-oob="outerHTML:.filter-button"{{end}}
+        hx-post="/api/filter-toggle" 
+        hx-target="#jobs-container"
+        hx-swap="innerHTML"
+        class="filter-button"
+        title="Filter by status">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="filter-icon">
+        <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="filter-label" id="filter-label">
+        {{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else}}Failed{{end}}
+    </span>
+    {{if ne .FilterMode.String "all"}}
+    <span class="filter-indicator {{.FilterMode.String}}"></span>
+    {{end}}
+</button>
+{{end}}
+
+{{define "sort-button"}}
+<button {{if .IsOOB}}hx-swap-oob="outerHTML:.sort-button"{{end}}
+        hx-post="/api/sort-toggle" 
+        hx-target="#jobs-container"
+        hx-swap="innerHTML"
+        class="sort-button"
+        title="Change sort order">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="sort-icon">
+        <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <span class="sort-label" id="sort-label">
+        {{if eq .SortMode.String "default"}}Original Order{{else if eq .SortMode.String "lastrun"}}Last Run{{else}}Next Run{{end}}
+    </span>
+</button>
+{{end}}
+
+{{define "stats-updates"}}
+{{if .IsOOB}}
+<span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span>
+<span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span>
+<span id="total-count" hx-swap-oob="innerHTML">{{.TotalCount}}</span>
+{{end}}
+{{end}}

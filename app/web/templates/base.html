@@ -24,18 +24,10 @@
                 
                 <div class="header-controls">
                     <!-- Sort control -->
-                    <button hx-post="/api/sort-toggle" 
-                            hx-target="#jobs-container"
-                            hx-swap="innerHTML"
-                            class="sort-button"
-                            title="Change sort order">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="sort-icon">
-                            <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
-                        <span class="sort-label" id="sort-label">
-                            {{if eq .SortMode.String "default"}}Original Order{{else if eq .SortMode.String "lastrun"}}Last Run{{else}}Next Run{{end}}
-                        </span>
-                    </button>
+                    {{template "sort-button" .}}
+
+                    <!-- Filter control -->
+                    {{template "filter-button" .}}
 
                     <!-- View mode toggle -->
                     <button hx-post="/api/view-mode" 

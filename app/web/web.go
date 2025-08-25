@@ -72,8 +72,19 @@ type TemplateData struct {
 	ViewMode     enums.ViewMode
 	Theme        enums.Theme
 	SortMode     enums.SortMode
+	FilterMode   enums.FilterMode
 	RunningCount int    // for stats display
 	NextRunTime  string // formatted next run time for stats
+	TotalCount   int    // total jobs before filtering
+	IsOOB        bool   // for OOB template rendering
+}
+
+// jobsStats holds statistics about jobs
+type jobsStats struct {
+	jobs         []persistence.JobInfo
+	runningCount int
+	nextRunTime  string
+	totalCount   int
 }
 
 // Config holds server configuration
@@ -181,6 +192,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /theme", s.handleThemeToggle)
 		api.HandleFunc("POST /sort-mode", s.handleSortModeChange)
 		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
+		api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 	})
 
@@ -430,40 +442,44 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	viewMode := s.getViewMode(r)
 	theme := s.getTheme(r)
 	sortMode := s.getSortMode(r)
+	filterMode := s.getFilterMode(r)
 
-	jobs, runningCount, nextRunTime := s.getJobsWithStats(sortMode)
+	stats := s.getJobsWithStats(sortMode, filterMode)
 
 	data := TemplateData{
-		Jobs:         jobs,
+		Jobs:         stats.jobs,
 		CurrentYear:  time.Now().Year(),
 		ViewMode:     viewMode,
 		Theme:        theme,
 		SortMode:     sortMode,
-		RunningCount: runningCount,
-		NextRunTime:  nextRunTime,
+		FilterMode:   filterMode,
+		RunningCount: stats.runningCount,
+		NextRunTime:  stats.nextRunTime,
+		TotalCount:   stats.totalCount,
 	}
 
 	s.render(w, "base.html", "base", data)
 }
 
-// getJobsWithStats retrieves jobs with calculated stats
-func (s *Server) getJobsWithStats(sortMode enums.SortMode) ([]persistence.JobInfo, int, string) {
+// getJobsWithStats retrieves jobs with calculated stats and applies filtering
+func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.FilterMode) jobsStats {
 	s.jobsMu.RLock()
-	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
+	allJobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	runningCount := 0
 	var nearestNextRun *time.Time
-	
+
+	// first collect all jobs and calculate stats
 	for _, job := range s.jobs {
 		// work with a copy, recalculate next run times
 		jobCopy := job
 		s.updateNextRun(&jobCopy)
-		jobs = append(jobs, jobCopy)
-		
+		allJobs = append(allJobs, jobCopy)
+
 		// count running jobs
 		if jobCopy.IsRunning {
 			runningCount++
 		}
-		
+
 		// find nearest next run
 		if !jobCopy.NextRun.IsZero() {
 			if nearestNextRun == nil || jobCopy.NextRun.Before(*nearestNextRun) {
@@ -472,6 +488,12 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode) ([]persistence.JobInf
 		}
 	}
 	s.jobsMu.RUnlock()
+
+	// store total count before filtering
+	totalCount := len(allJobs)
+
+	// apply filtering
+	jobs := s.filterJobs(allJobs, filterMode)
 
 	// sort jobs based on selected mode
 	s.sortJobs(jobs, sortMode)
@@ -482,53 +504,72 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode) ([]persistence.JobInf
 		nextRunTime = s.humanTime(*nearestNextRun)
 	}
 
-	return jobs, runningCount, nextRunTime
+	return jobsStats{
+		jobs:         jobs,
+		runningCount: runningCount,
+		nextRunTime:  nextRunTime,
+		totalCount:   totalCount,
+	}
 }
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	viewMode := s.getViewMode(r)
 	sortMode := s.getSortMode(r)
-
-	jobs, runningCount, nextRunTime := s.getJobsWithStats(sortMode)
+	filterMode := s.getFilterMode(r)
+	stats := s.getJobsWithStats(sortMode, filterMode)
 
 	data := TemplateData{
-		Jobs:         jobs,
+		Jobs:         stats.jobs,
 		ViewMode:     viewMode,
 		SortMode:     sortMode,
-		RunningCount: runningCount,
-		NextRunTime:  nextRunTime,
+		FilterMode:   filterMode,
+		RunningCount: stats.runningCount,
+		NextRunTime:  stats.nextRunTime,
+		TotalCount:   stats.totalCount,
+		IsOOB:        true, // enable OOB for stats updates
 	}
 
-	// render jobs partial
+	// render jobs partial with stats updates
+	if err := s.renderJobsWithStats(w, data); err != nil {
+		log.Printf("[ERROR] failed to render jobs partial: %v", err)
+		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
+	}
+}
+
+// renderJobsWithStats renders the jobs template with OOB stats updates
+func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) error {
+	// determine template name based on view mode
 	tmplName := "jobs-cards"
-	if viewMode == enums.ViewModeList {
+	if data.ViewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 
-	// render template to buffer first to add OOB swaps
+	// get the template
 	tmpl, ok := s.templates["partials/jobs.html"]
 	if !ok {
-		http.Error(w, "Template not found", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("partials template not found")
 	}
 
-	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, tmplName, data); err != nil {
-		http.Error(w, "Template error", http.StatusInternalServerError)
-		return
+	// render the jobs template
+	var jobsHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&jobsHTML, tmplName, data); err != nil {
+		return fmt.Errorf("failed to render jobs template: %w", err)
 	}
 
-	// write response with OOB swaps for stats
+	// render stats updates template
+	var statsHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&statsHTML, "stats-updates", data); err != nil {
+		return fmt.Errorf("failed to render stats updates: %w", err)
+	}
+
+	// write response
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	
-	// write the jobs content
-	_, _ = buf.WriteTo(w)
-	
-	// add OOB swaps for stats updates
-	fmt.Fprintf(w, `<span id="running-count" hx-swap-oob="innerHTML">%d</span>`, runningCount)
-	fmt.Fprintf(w, `<span id="next-run" hx-swap-oob="innerHTML">%s</span>`, nextRunTime)
+	_, _ = w.Write(jobsHTML.Bytes())
+	_, _ = w.Write(statsHTML.Bytes())
+
+	return nil
 }
 
 // handleViewModeToggle toggles between card and list view
@@ -587,73 +628,202 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 // handleSortToggle toggles between sort modes
 func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	currentMode := s.getSortMode(r)
+	nextMode := s.cycleSortMode(currentMode)
+	s.setSortCookie(w, nextMode)
 
-	// cycle: default -> lastrun -> nextrun -> default
-	var nextMode enums.SortMode
-	switch currentMode {
-	case enums.SortModeDefault:
-		nextMode = enums.SortModeLastrun
-	case enums.SortModeLastrun:
-		nextMode = enums.SortModeNextrun
-	case enums.SortModeNextrun:
-		nextMode = enums.SortModeDefault
-	default:
-		// if somehow we get an unexpected value, default to default sort
-		nextMode = enums.SortModeDefault
+	// get sorted jobs for the new mode
+	viewMode := s.getViewMode(r)
+	filterMode := s.getFilterMode(r)
+	stats := s.getJobsWithStats(nextMode, filterMode)
+
+	// prepare template data
+	data := TemplateData{
+		Jobs:         stats.jobs,
+		ViewMode:     viewMode,
+		SortMode:     nextMode,
+		FilterMode:   filterMode,
+		RunningCount: stats.runningCount,
+		NextRunTime:  stats.nextRunTime,
+		TotalCount:   stats.totalCount,
 	}
 
+	// render jobs and send response with OOB updates
+	if err := s.renderSortedJobs(w, data); err != nil {
+		log.Printf("[ERROR] failed to render sorted jobs: %v", err)
+		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
+	}
+}
+
+// cycleSortMode cycles through sort modes: default -> lastrun -> nextrun -> default
+func (s *Server) cycleSortMode(current enums.SortMode) enums.SortMode {
+	switch current {
+	case enums.SortModeDefault:
+		return enums.SortModeLastrun
+	case enums.SortModeLastrun:
+		return enums.SortModeNextrun
+	case enums.SortModeNextrun:
+		return enums.SortModeDefault
+	default:
+		return enums.SortModeDefault
+	}
+}
+
+// setSortCookie sets the sort mode cookie
+func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sort-mode",
-		Value:    nextMode.String(),
+		Value:    mode.String(),
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
 
-	// get sorted jobs for the new mode
-	viewMode := s.getViewMode(r)
-	jobs, _, _ := s.getJobsWithStats(nextMode)
-
-	// prepare template data
-	data := TemplateData{
-		Jobs:     jobs,
-		ViewMode: viewMode,
-		SortMode: nextMode,
-	}
-
-	// determine template name
+// renderSortedJobs renders the jobs template with OOB updates for sort button
+func (s *Server) renderSortedJobs(w http.ResponseWriter, data TemplateData) error {
+	// determine template name based on view mode
 	tmplName := "jobs-cards"
-	if viewMode == enums.ViewModeList {
+	if data.ViewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 
-	// get the template and render jobs HTML
+	// get the template
 	tmpl, ok := s.templates["partials/jobs.html"]
 	if !ok {
-		http.Error(w, "Template not found", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("partials template not found")
 	}
 
+	// render the jobs template
 	var jobsHTML bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&jobsHTML, tmplName, data); err != nil {
-		http.Error(w, "Template error", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("failed to render jobs template: %w", err)
 	}
 
-	// get sort button label
-	sortLabel := "Original Order"
-	switch nextMode {
-	case enums.SortModeLastrun:
-		sortLabel = "Last Run"
-	case enums.SortModeNextrun:
-		sortLabel = "Next Run"
+	// prepare data for sort button with OOB flag
+	buttonData := data
+	buttonData.IsOOB = true
+
+	// render sort button with OOB
+	var sortButtonHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&sortButtonHTML, "sort-button", buttonData); err != nil {
+		return fmt.Errorf("failed to render sort button template: %w", err)
 	}
 
-	// return jobs with OOB update for sort button
-	fmt.Fprintf(w, `%s
-<span class="sort-label" hx-swap-oob="innerHTML" id="sort-label">%s</span>`,
-		jobsHTML.String(), sortLabel)
+	// write response with all OOB updates
+	w.Header().Set("Content-Type", "text/html")
+	_, _ = w.Write(jobsHTML.Bytes())
+	_, _ = w.Write(sortButtonHTML.Bytes())
+	
+	return nil
+}
+
+// handleFilterToggle cycles through filter modes
+func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
+	currentMode := s.getFilterMode(r)
+	nextMode := s.cycleFilterMode(currentMode)
+	s.setFilterCookie(w, nextMode)
+
+	// get filtered jobs for the new mode
+	viewMode := s.getViewMode(r)
+	sortMode := s.getSortMode(r)
+	stats := s.getJobsWithStats(sortMode, nextMode)
+
+	// prepare template data
+	data := TemplateData{
+		Jobs:         stats.jobs,
+		ViewMode:     viewMode,
+		SortMode:     sortMode,
+		FilterMode:   nextMode,
+		RunningCount: stats.runningCount,
+		NextRunTime:  stats.nextRunTime,
+		TotalCount:   stats.totalCount,
+	}
+
+	// render jobs and send response with OOB updates
+	if err := s.renderFilteredJobs(w, data); err != nil {
+		log.Printf("[ERROR] failed to render filtered jobs: %v", err)
+		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
+	}
+}
+
+// cycleFilterMode cycles through filter modes: all -> running -> success -> failed -> all
+func (s *Server) cycleFilterMode(current enums.FilterMode) enums.FilterMode {
+	switch current {
+	case enums.FilterModeAll:
+		return enums.FilterModeRunning
+	case enums.FilterModeRunning:
+		return enums.FilterModeSuccess
+	case enums.FilterModeSuccess:
+		return enums.FilterModeFailed
+	case enums.FilterModeFailed:
+		return enums.FilterModeAll
+	default:
+		return enums.FilterModeAll
+	}
+}
+
+// setFilterCookie sets the filter mode cookie
+func (s *Server) setFilterCookie(w http.ResponseWriter, mode enums.FilterMode) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "filter-mode",
+		Value:    mode.String(),
+		Path:     "/",
+		MaxAge:   365 * 24 * 60 * 60, // 1 year
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// renderFilteredJobs renders the jobs template with OOB updates
+func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) error {
+	// determine template name based on view mode
+	tmplName := "jobs-cards"
+	if data.ViewMode == enums.ViewModeList {
+		tmplName = "jobs-list"
+	}
+
+	// get the template
+	tmpl, ok := s.templates["partials/jobs.html"]
+	if !ok {
+		return fmt.Errorf("partials template not found")
+	}
+
+	// render the jobs template
+	var jobsHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&jobsHTML, tmplName, data); err != nil {
+		return fmt.Errorf("failed to render jobs template: %w", err)
+	}
+
+	// prepare data for filter button with OOB flag
+	buttonData := data
+	buttonData.IsOOB = true
+
+	// render filter button with OOB
+	var filterButtonHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&filterButtonHTML, "filter-button", buttonData); err != nil {
+		return fmt.Errorf("failed to render filter button template: %w", err)
+	}
+
+	// render stats updates with OOB
+	statsData := TemplateData{
+		RunningCount: data.RunningCount,
+		NextRunTime:  data.NextRunTime,
+		TotalCount:   data.TotalCount,
+		IsOOB:        true,
+	}
+	var statsHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&statsHTML, "stats-updates", statsData); err != nil {
+		return fmt.Errorf("failed to render stats updates template: %w", err)
+	}
+
+	// write response with all OOB updates
+	w.Header().Set("Content-Type", "text/html")
+	_, _ = w.Write(jobsHTML.Bytes())
+	_, _ = w.Write(filterButtonHTML.Bytes())
+	_, _ = w.Write(statsHTML.Bytes())
+	
+	return nil
 }
 
 // handleSortModeChange changes the sort mode
@@ -717,36 +887,36 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job ID required", http.StatusBadRequest)
 		return
 	}
-	
+
 	s.jobsMu.RLock()
 	job, exists := s.jobs[jobID]
 	s.jobsMu.RUnlock()
-	
+
 	if !exists {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
-	
+
 	if !job.Enabled {
 		http.Error(w, "Job is disabled", http.StatusBadRequest)
 		return
 	}
-	
+
 	if job.IsRunning {
 		http.Error(w, "Job already running", http.StatusConflict)
 		return
 	}
-	
+
 	// check if manual trigger channel is available
 	if s.manualTrigger == nil {
 		http.Error(w, "Manual trigger not configured", http.StatusServiceUnavailable)
 		return
 	}
-	
+
 	// use request context with timeout for sending
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	
+
 	select {
 	case <-ctx.Done():
 		http.Error(w, "Request canceled", http.StatusRequestTimeout)
@@ -857,6 +1027,20 @@ func (s *Server) getSortMode(r *http.Request) enums.SortMode {
 	return mode
 }
 
+// getFilterMode gets the filter mode from cookie or defaults to "all"
+func (s *Server) getFilterMode(r *http.Request) enums.FilterMode {
+	cookie, err := r.Cookie("filter-mode")
+	if err != nil {
+		return enums.FilterModeAll // default to all
+	}
+	mode, err := enums.ParseFilterMode(cookie.Value)
+	if err != nil {
+		log.Printf("[WARN] invalid filter mode %q: %v", cookie.Value, err)
+		return enums.FilterModeAll
+	}
+	return mode
+}
+
 // updateNextRun updates the next run time for a job based on its schedule
 func (s *Server) updateNextRun(job *persistence.JobInfo) {
 	if job.Schedule == "" {
@@ -914,6 +1098,32 @@ func (s *Server) sortJobs(jobs []persistence.JobInfo, sortMode enums.SortMode) {
 			return jobs[i].SortIndex < jobs[j].SortIndex
 		})
 	}
+}
+
+// filterJobs filters jobs based on the selected filter mode
+func (s *Server) filterJobs(jobs []persistence.JobInfo, filterMode enums.FilterMode) []persistence.JobInfo {
+	if filterMode == enums.FilterModeAll {
+		return jobs
+	}
+
+	filtered := make([]persistence.JobInfo, 0, len(jobs))
+	for _, job := range jobs {
+		switch filterMode {
+		case enums.FilterModeRunning:
+			if job.IsRunning {
+				filtered = append(filtered, job)
+			}
+		case enums.FilterModeSuccess:
+			if job.LastStatus == enums.JobStatusSuccess {
+				filtered = append(filtered, job)
+			}
+		case enums.FilterModeFailed:
+			if job.LastStatus == enums.JobStatusFailed {
+				filtered = append(filtered, job)
+			}
+		}
+	}
+	return filtered
 }
 
 // template helper functions

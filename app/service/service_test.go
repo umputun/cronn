@@ -827,7 +827,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 
 		// start the scheduler in background
 		go s.Do(ctx)
-		
+
 		// wait for scheduler to initialize
 		time.Sleep(100 * time.Millisecond)
 
@@ -845,7 +845,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		assert.Equal(t, "echo test", capturedCommand)
 		assert.True(t, capturedStartTime.After(startBefore))
 		assert.True(t, capturedStartTime.Before(time.Now()))
-		
+
 		// verify onJobStart was called
 		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
 	})
@@ -948,7 +948,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		default:
 			// channel might be blocked, that's ok too
 		}
-		
+
 		// scheduler should have stopped cleanly
 		assert.Equal(t, 1, len(mockCron.StopCalls()))
 	})

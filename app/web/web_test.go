@@ -798,10 +798,12 @@ func TestServer_handleSortToggle(t *testing.T) {
 			assert.True(t, cookies[0].HttpOnly)
 
 			// check response contains job data and OOB update
+			// Note: After refactoring to use templates, the sort button is now replaced entirely
+			// via outerHTML instead of just updating innerHTML, which is cleaner and more maintainable
 			body := rec.Body.String()
 			assert.Contains(t, body, "echo test1")
 			assert.Contains(t, body, "echo test2")
-			assert.Contains(t, body, `hx-swap-oob="innerHTML" id="sort-label"`)
+			assert.Contains(t, body, `hx-swap-oob="outerHTML:.sort-button"`)
 			assert.Contains(t, body, tt.expectedLabel)
 		})
 	}
@@ -1057,6 +1059,256 @@ func TestServer_getSortMode_CookieErrors(t *testing.T) {
 
 		mode := server.getSortMode(req)
 		assert.Equal(t, enums.SortModeDefault, mode) // should return default
+	})
+}
+
+func TestServer_getFilterMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	server, err := New(Config{
+		CrontabFile:    "test-crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+	})
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	t.Run("no cookie returns all", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		mode := server.getFilterMode(req)
+		assert.Equal(t, enums.FilterModeAll, mode)
+	})
+
+	t.Run("valid cookie", func(t *testing.T) {
+		tests := []struct {
+			cookieValue string
+			expected    enums.FilterMode
+		}{
+			{"all", enums.FilterModeAll},
+			{"running", enums.FilterModeRunning},
+			{"success", enums.FilterModeSuccess},
+			{"failed", enums.FilterModeFailed},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.cookieValue, func(t *testing.T) {
+				req := httptest.NewRequest("GET", "/", http.NoBody)
+				req.AddCookie(&http.Cookie{
+					Name:  "filter-mode",
+					Value: tc.cookieValue,
+				})
+				mode := server.getFilterMode(req)
+				assert.Equal(t, tc.expected, mode)
+			})
+		}
+	})
+
+	t.Run("invalid cookie returns all", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.AddCookie(&http.Cookie{
+			Name:  "filter-mode",
+			Value: "invalid",
+		})
+		mode := server.getFilterMode(req)
+		assert.Equal(t, enums.FilterModeAll, mode)
+	})
+}
+
+func TestServer_filterJobs(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	server, err := New(Config{
+		CrontabFile:    "test-crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+	})
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// create test jobs
+	jobs := []persistence.JobInfo{
+		{ID: "1", Command: "cmd1", IsRunning: true, LastStatus: enums.JobStatusRunning},
+		{ID: "2", Command: "cmd2", IsRunning: false, LastStatus: enums.JobStatusSuccess},
+		{ID: "3", Command: "cmd3", IsRunning: false, LastStatus: enums.JobStatusFailed},
+		{ID: "4", Command: "cmd4", IsRunning: false, LastStatus: enums.JobStatusSuccess},
+		{ID: "5", Command: "cmd5", IsRunning: true, LastStatus: enums.JobStatusRunning},
+	}
+
+	t.Run("filter all returns everything", func(t *testing.T) {
+		filtered := server.filterJobs(jobs, enums.FilterModeAll)
+		assert.Len(t, filtered, 5)
+	})
+
+	t.Run("filter running", func(t *testing.T) {
+		filtered := server.filterJobs(jobs, enums.FilterModeRunning)
+		assert.Len(t, filtered, 2)
+		for _, job := range filtered {
+			assert.True(t, job.IsRunning)
+		}
+	})
+
+	t.Run("filter success", func(t *testing.T) {
+		filtered := server.filterJobs(jobs, enums.FilterModeSuccess)
+		assert.Len(t, filtered, 2)
+		for _, job := range filtered {
+			assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
+		}
+	})
+
+	t.Run("filter failed", func(t *testing.T) {
+		filtered := server.filterJobs(jobs, enums.FilterModeFailed)
+		assert.Len(t, filtered, 1)
+		assert.Equal(t, enums.JobStatusFailed, filtered[0].LastStatus)
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		filtered := server.filterJobs([]persistence.JobInfo{}, enums.FilterModeRunning)
+		assert.Empty(t, filtered)
+	})
+
+	t.Run("nil input", func(t *testing.T) {
+		filtered := server.filterJobs(nil, enums.FilterModeRunning)
+		assert.Empty(t, filtered)
+	})
+}
+
+func TestServer_handleFilterToggle(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	server, err := New(Config{
+		CrontabFile:    "test-crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+	})
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// add test jobs
+	server.jobs["1"] = persistence.JobInfo{ID: "1", Command: "cmd1", IsRunning: true, LastStatus: enums.JobStatusRunning}
+	server.jobs["2"] = persistence.JobInfo{ID: "2", Command: "cmd2", IsRunning: false, LastStatus: enums.JobStatusSuccess}
+	server.jobs["3"] = persistence.JobInfo{ID: "3", Command: "cmd3", IsRunning: false, LastStatus: enums.JobStatusFailed}
+
+	// add minimal templates for testing
+	tmpl := template.New("partials")
+	tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
+	tmpl = template.Must(tmpl.New("jobs-list").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
+	tmpl = template.Must(tmpl.New("filter-button").Parse(`<button><span id="filter-label">{{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else}}Failed{{end}}</span></button>`))
+	server.templates = map[string]*template.Template{
+		"partials/jobs.html": tmpl,
+	}
+
+	tests := []struct {
+		currentMode   string
+		expectedNext  string
+		expectedLabel string
+	}{
+		{"all", "running", "Running"},
+		{"running", "success", "Success"},
+		{"success", "failed", "Failed"},
+		{"failed", "all", "All Jobs"},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%s_to_%s", tc.currentMode, tc.expectedNext), func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/filter-toggle", http.NoBody)
+			if tc.currentMode != "all" {
+				req.AddCookie(&http.Cookie{
+					Name:  "filter-mode",
+					Value: tc.currentMode,
+				})
+			}
+
+			w := httptest.NewRecorder()
+			server.handleFilterToggle(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+
+			// check cookie was set
+			cookies := resp.Cookies()
+			require.Len(t, cookies, 1)
+			assert.Equal(t, "filter-mode", cookies[0].Name)
+			assert.Equal(t, tc.expectedNext, cookies[0].Value)
+
+			// check response contains the filter label
+			body := w.Body.String()
+			assert.Contains(t, body, tc.expectedLabel)
+			assert.Contains(t, body, `id="filter-label"`)
+		})
+	}
+}
+
+func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	server, err := New(Config{
+		CrontabFile:    "test-crontab",
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+	})
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// add test jobs with different statuses
+	now := time.Now()
+	server.jobs = map[string]persistence.JobInfo{
+		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour)},
+		"2": {ID: "2", Command: "success1", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour)},
+		"3": {ID: "3", Command: "failed1", IsRunning: false, LastStatus: enums.JobStatusFailed, NextRun: now.Add(3 * time.Hour)},
+		"4": {ID: "4", Command: "success2", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(4 * time.Hour)},
+		"5": {ID: "5", Command: "running2", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(30 * time.Minute)},
+	}
+
+	t.Run("filter all", func(t *testing.T) {
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeAll)
+		assert.Len(t, stats.jobs, 5)
+		assert.Equal(t, 2, stats.runningCount)
+		assert.Equal(t, 5, stats.totalCount)
+		assert.NotEqual(t, "-", stats.nextRunTime)
+	})
+
+	t.Run("filter running", func(t *testing.T) {
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeRunning)
+		assert.Len(t, stats.jobs, 2)
+		assert.Equal(t, 2, stats.runningCount)
+		assert.Equal(t, 5, stats.totalCount)
+		for _, job := range stats.jobs {
+			assert.True(t, job.IsRunning)
+		}
+	})
+
+	t.Run("filter success", func(t *testing.T) {
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeSuccess)
+		assert.Len(t, stats.jobs, 2)
+		assert.Equal(t, 2, stats.runningCount)
+		assert.Equal(t, 5, stats.totalCount)
+		for _, job := range stats.jobs {
+			assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
+		}
+	})
+
+	t.Run("filter failed", func(t *testing.T) {
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeFailed)
+		assert.Len(t, stats.jobs, 1)
+		assert.Equal(t, 2, stats.runningCount)
+		assert.Equal(t, 5, stats.totalCount)
+		assert.Equal(t, enums.JobStatusFailed, stats.jobs[0].LastStatus)
+	})
+
+	t.Run("sorting works with filtering", func(t *testing.T) {
+		stats := server.getJobsWithStats(enums.SortModeNextrun, enums.FilterModeAll)
+		assert.Len(t, stats.jobs, 5)
+		// verify sorted by next run time
+		for i := 1; i < len(stats.jobs); i++ {
+			if !stats.jobs[i-1].NextRun.IsZero() && !stats.jobs[i].NextRun.IsZero() {
+				assert.True(t, stats.jobs[i-1].NextRun.Before(stats.jobs[i].NextRun) ||
+					stats.jobs[i-1].NextRun.Equal(stats.jobs[i].NextRun))
+			}
+		}
 	})
 }
 

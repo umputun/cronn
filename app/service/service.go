@@ -56,7 +56,7 @@ type Scheduler struct {
 	}
 	Stdout          io.Writer
 	NotifyTimeout   time.Duration
-	JobEventHandler JobEventHandler           // handler for job execution events
+	JobEventHandler JobEventHandler       // handler for job execution events
 	ManualTrigger   chan ManualJobRequest // channel for manual job triggers
 }
 
@@ -140,12 +140,12 @@ func (s *Scheduler) Do(ctx context.Context) {
 		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
 		go s.reload(ctx) // start background updater
 	}
-	
+
 	// start manual trigger listener if channel is provided
 	if s.ManualTrigger != nil {
 		go s.listenForManualTriggers(ctx)
 	}
-	
+
 	if err := s.loadFromFileParser(ctx); err != nil {
 		log.Printf("[WARN] can't load crontab file, %v", err)
 		return
@@ -359,22 +359,22 @@ func (s *Scheduler) listenForManualTriggers(ctx context.Context) {
 				log.Printf("[INFO] manual trigger channel closed")
 				return
 			}
-			
+
 			log.Printf("[INFO] manual trigger requested for command: %s", req.Command)
-			
+
 			// create a JobSpec from the request
 			jobSpec := crontab.JobSpec{
 				Spec:    req.Schedule,
 				Command: req.Command,
 			}
-			
+
 			// parse the schedule
 			sched, err := cron.ParseStandard(req.Schedule)
 			if err != nil {
 				log.Printf("[WARN] manual trigger failed: invalid schedule %s: %v", req.Schedule, err)
 				continue
 			}
-			
+
 			// execute job in a new goroutine with context check
 			go func(js crontab.JobSpec, schedule Schedule) {
 				// check if context is still valid before executing

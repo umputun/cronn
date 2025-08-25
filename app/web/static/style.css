@@ -24,6 +24,7 @@
     --color-error: #dc2626;
     --color-warning: #d97706;
     --color-info: #2563eb;
+    --color-running: #2563eb;
     
     /* Spacing - 4/8/12/16/24/32 scale */
     --spacing-1: 4px;
@@ -83,6 +84,7 @@
     --color-error: #f87171;
     --color-warning: #fbbf24;
     --color-info: #60a5fa;
+    --color-running: #60a5fa;
 }
 
 /* Auto theme - follows system */
@@ -101,6 +103,7 @@
         --color-error: #f87171;
         --color-warning: #fbbf24;
         --color-info: #60a5fa;
+        --color-running: #60a5fa;
     }
 }
 
@@ -236,6 +239,66 @@ code {
 .sort-label {
     white-space: nowrap;
     letter-spacing: 0.01em;
+}
+
+/* Filter button */
+.filter-button {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: 6px 14px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-text);
+    margin-right: var(--spacing-sm);
+    position: relative;
+}
+
+.filter-button:hover {
+    background: var(--color-hover);
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.filter-button:active {
+    transform: translateY(0);
+}
+
+.filter-icon {
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+.filter-label {
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+}
+
+/* Filter status indicator */
+.filter-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-left: 4px;
+    display: inline-block;
+}
+
+.filter-indicator.running {
+    background: var(--color-running);
+}
+
+.filter-indicator.success {
+    background: var(--color-success);
+}
+
+.filter-indicator.failed {
+    background: var(--color-error);
 }
 
 /* Main content */
@@ -812,6 +875,14 @@ code {
     }
     
     .sort-button {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+        padding-top: 12px;
+        padding-bottom: 12px;
+    }
+    
+    .filter-button {
         flex: 1;
         min-width: 120px;
         justify-content: center;

@@ -47,6 +47,7 @@ package enums
 //go:generate go run github.com/go-pkgz/enum@latest -type viewMode -lower
 //go:generate go run github.com/go-pkgz/enum@latest -type theme -lower
 //go:generate go run github.com/go-pkgz/enum@latest -type sortMode -lower
+//go:generate go run github.com/go-pkgz/enum@latest -type filterMode -lower
 
 // jobStatus represents the status of a job.
 // This is an unexported type used only as input for the code generator.
@@ -101,4 +102,16 @@ const (
 	sortModeDefault sortMode = iota
 	sortModeLastrun
 	sortModeNextrun
+)
+
+// filterMode represents job filtering modes by status.
+// This is an unexported type used only as input for the code generator.
+// Use the exported FilterMode type and its constants in actual code.
+type filterMode int
+
+const (
+	filterModeAll filterMode = iota
+	filterModeRunning
+	filterModeSuccess
+	filterModeFailed
 )

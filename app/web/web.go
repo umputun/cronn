@@ -609,8 +609,7 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// trigger full page refresh to update the toggle button icon
-	w.Header().Set("HX-Refresh", "true")
+	// respond with empty body - the base template handles refresh via custom event
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -636,7 +635,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 		Value:    nextTheme.String(),
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
-		HttpOnly: false,              // allow JS to read for immediate update
+		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -731,7 +730,7 @@ func (s *Server) renderSortedJobs(w http.ResponseWriter, data TemplateData) erro
 	}
 
 	// write response with all OOB updates
-	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(jobsHTML.Bytes())
 	_, _ = w.Write(sortButtonHTML.Bytes())
 
@@ -838,7 +837,7 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
 	}
 
 	// write response with all OOB updates
-	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(jobsHTML.Bytes())
 	_, _ = w.Write(filterButtonHTML.Bytes())
 	_, _ = w.Write(statsHTML.Bytes())

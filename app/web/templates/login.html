@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" {{if ne .Theme.String "auto"}}data-theme="{{.Theme.String}}"{{end}}>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Cronn - Login</title>
+    <meta name="description" content="Login to Cronn Dashboard">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <style>
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            background: var(--color-bg);
+        }
+        .login-card {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            box-shadow: var(--shadow-lg);
+            padding: 2rem;
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-logo {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1rem;
+            color: var(--color-primary);
+        }
+        .login-title {
+            font-size: 1.5rem;
+            font-weight: var(--font-semibold);
+            color: var(--color-text);
+            margin: 0;
+        }
+        .login-subtitle {
+            font-size: 0.875rem;
+            color: var(--color-text-secondary);
+            margin-top: 0.5rem;
+        }
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .form-label {
+            font-size: 0.875rem;
+            font-weight: var(--font-medium);
+            color: var(--color-text-secondary);
+        }
+        .form-input {
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: var(--color-bg);
+            color: var(--color-text);
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+        .form-input:focus {
+            outline: none;
+            border-color: var(--color-primary);
+            background: var(--color-surface);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+        }
+        .form-input::placeholder {
+            color: var(--color-text-muted);
+        }
+        .login-button {
+            padding: 0.75rem 1.5rem;
+            background: var(--color-primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: var(--font-medium);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .login-button:hover:not(:disabled) {
+            background: var(--color-primary-hover);
+            transform: translateY(-1px);
+        }
+        .login-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .error-message {
+            background: rgba(220, 38, 38, 0.1);
+            color: var(--color-error);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            border: 1px solid rgba(220, 38, 38, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <svg class="login-logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                    <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <h1 class="login-title">Cronn Dashboard</h1>
+                <p class="login-subtitle">Enter password to access dashboard</p>
+            </div>
+            
+            <form class="login-form" method="POST" action="/login">
+                {{if .Error}}
+                <div class="error-message">{{.Error}}</div>
+                {{end}}
+                
+                <div class="form-group">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" 
+                           id="password" 
+                           name="password" 
+                           class="form-input"
+                           placeholder="Enter password"
+                           required
+                           autofocus>
+                </div>
+                
+                <button type="submit" class="login-button">
+                    Sign In
+                </button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

@@ -55,7 +55,9 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/umputun/cronn/app/web/web.go (89.5%)</option>
+				<option value="file0">github.com/umputun/cronn/app/web/auth.go (58.9%)</option>
+				
+				<option value="file1">github.com/umputun/cronn/app/web/web.go (89.9%)</option>
 				
 				</select>
 			</div>
@@ -70,6 +72,255 @@
 		<div id="content">
 		
 		<pre class="file" id="file0" style="display: none">package web
+
+import (
+        "crypto/rand"
+        "encoding/hex"
+        "net/http"
+        "strings"
+        "time"
+
+        "golang.org/x/crypto/bcrypt"
+
+        log "github.com/go-pkgz/lgr"
+
+        "github.com/umputun/cronn/app/web/enums"
+)
+
+// handleLoginForm displays the login form
+func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        s.renderLoginTemplate(w, r, "", http.StatusOK)
+}</span>
+
+// handleLogin processes the login form submission
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        if err := r.ParseForm(); err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "Invalid form data", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">password := r.FormValue("password")
+        if password == "" </span><span class="cov0" title="0">{
+                s.renderLoginError(w, r, "Password is required")
+                return
+        }</span>
+
+        // validate password against bcrypt hash
+        <span class="cov8" title="1">if err := bcrypt.CompareHashAndPassword([]byte(s.passwordHash), []byte(password)); err != nil </span><span class="cov8" title="1">{
+                s.renderLoginError(w, r, "Invalid password")
+                return
+        }</span>
+
+        // password is valid, create secure session
+        <span class="cov8" title="1">token, err := s.createSession()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("[ERROR] failed to create session: %v", err)
+                http.Error(w, "Internal server error", http.StatusInternalServerError)
+                return
+        }</span>
+
+        // use __Host- prefix for enhanced security over HTTPS
+        <span class="cov8" title="1">cookieName := "cronn-auth"
+        secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+        if secure </span><span class="cov8" title="1">{
+                cookieName = "__Host-cronn-auth"
+        }</span>
+
+        <span class="cov8" title="1">http.SetCookie(w, &amp;http.Cookie{
+                Name:     cookieName,
+                Value:    token,
+                Path:     "/",
+                MaxAge:   24 * 60 * 60, // 24 hours
+                HttpOnly: true,
+                SameSite: http.SameSiteStrictMode,
+                Secure:   secure,
+        })
+
+        // redirect to dashboard
+        http.Redirect(w, r, "/", http.StatusSeeOther)</span>
+}
+
+// handleLogout logs the user out by clearing the auth cookie
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        // invalidate session and clear cookie
+        // try both cookie names for compatibility
+        if cookie, err := r.Cookie("__Host-cronn-auth"); err == nil </span><span class="cov0" title="0">{
+                s.invalidateSession(cookie.Value)
+        }</span> else<span class="cov0" title="0"> if cookie, err := r.Cookie("cronn-auth"); err == nil </span><span class="cov0" title="0">{
+                s.invalidateSession(cookie.Value)
+        }</span>
+
+        // clear both possible cookie names to ensure logout works
+        <span class="cov0" title="0">secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+        
+        // always clear the non-secure cookie
+        http.SetCookie(w, &amp;http.Cookie{
+                Name:     "cronn-auth",
+                Value:    "",
+                Path:     "/",
+                MaxAge:   -1, // delete cookie
+                HttpOnly: true,
+                SameSite: http.SameSiteStrictMode,
+                Secure:   secure,
+        })
+        
+        // always attempt to clear the secure __Host- cookie
+        // browser will only honor this on HTTPS connection
+        http.SetCookie(w, &amp;http.Cookie{
+                Name:     "__Host-cronn-auth",
+                Value:    "",
+                Path:     "/",
+                MaxAge:   -1, // delete cookie
+                HttpOnly: true,
+                SameSite: http.SameSiteStrictMode,
+                Secure:   true,
+        })
+
+        // tell HTMX to perform a full page refresh instead of swapping content
+        w.Header().Set("HX-Refresh", "true")
+
+        // redirect to login page
+        http.Redirect(w, r, "/login", http.StatusSeeOther)</span>
+}
+
+// renderLoginError renders the login form with an error message
+func (s *Server) renderLoginError(w http.ResponseWriter, r *http.Request, errorMsg string) <span class="cov8" title="1">{
+        s.renderLoginTemplate(w, r, errorMsg, http.StatusUnauthorized)
+}</span>
+
+// renderLoginTemplate renders the login template with optional error message
+func (s *Server) renderLoginTemplate(w http.ResponseWriter, r *http.Request, errorMsg string, statusCode int) <span class="cov8" title="1">{
+        tmpl := s.templates["login"]
+        if tmpl == nil </span><span class="cov0" title="0">{
+                log.Printf("[ERROR] Login template not found in templates map")
+                http.Error(w, "Login template not found", http.StatusInternalServerError)
+                return
+        }</span>
+        <span class="cov8" title="1">log.Printf("[DEBUG] Using login template: %v", tmpl.Name())
+
+        data := struct {
+                Error string
+                Theme enums.Theme
+        }{
+                Error: errorMsg,
+                Theme: s.getTheme(r),
+        }
+
+        w.Header().Set("Content-Type", "text/html; charset=utf-8")
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        if statusCode != http.StatusOK </span><span class="cov8" title="1">{
+                w.WriteHeader(statusCode)
+        }</span>
+        <span class="cov8" title="1">if err := tmpl.Execute(w, data); err != nil </span><span class="cov0" title="0">{
+                log.Printf("[ERROR] failed to render login template: %v", err)
+                http.Error(w, "Failed to render login page", http.StatusInternalServerError)
+        }</span>
+}
+
+// authMiddleware checks for auth cookie or falls back to basic auth
+func (s *Server) authMiddleware(next http.Handler) http.Handler <span class="cov8" title="1">{
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) </span><span class="cov8" title="1">{
+                // skip auth for login page and static resources
+                if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/static/") </span><span class="cov8" title="1">{
+                        next.ServeHTTP(w, r)
+                        return
+                }</span>
+
+                // check auth cookie (try both names for compatibility)
+                <span class="cov8" title="1">for _, cookieName := range []string{"__Host-cronn-auth", "cronn-auth"} </span><span class="cov8" title="1">{
+                        if cookie, err := r.Cookie(cookieName); err == nil &amp;&amp; s.validateSession(cookie.Value) </span><span class="cov0" title="0">{
+                                next.ServeHTTP(w, r)
+                                return
+                        }</span>
+                }
+
+                // fallback to basic auth for API clients
+                <span class="cov8" title="1">username, password, ok := r.BasicAuth()
+                if ok &amp;&amp; username == "cronn" </span><span class="cov8" title="1">{
+                        if err := bcrypt.CompareHashAndPassword([]byte(s.passwordHash), []byte(password)); err == nil </span><span class="cov8" title="1">{
+                                next.ServeHTTP(w, r)
+                                return
+                        }</span>
+                }
+
+                // no valid auth, redirect to login
+                <span class="cov8" title="1">if r.Header.Get("Accept") == "" || strings.Contains(r.Header.Get("Accept"), "text/html") </span><span class="cov8" title="1">{
+                        // browser request, redirect to login
+                        http.Redirect(w, r, "/login", http.StatusSeeOther)
+                }</span> else<span class="cov8" title="1"> {
+                        // API request, return 401
+                        w.Header().Set("WWW-Authenticate", `Basic realm="Cronn Dashboard"`)
+                        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+                }</span>
+        })
+}
+
+// createSession generates a cryptographically secure session token
+func (s *Server) createSession() (string, error) <span class="cov8" title="1">{
+        // generate 32 random bytes
+        bytes := make([]byte, 32)
+        if _, err := rand.Read(bytes); err != nil </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+        <span class="cov8" title="1">token := hex.EncodeToString(bytes)
+
+        // store session with expiration
+        s.sessionsMu.Lock()
+        defer s.sessionsMu.Unlock()
+
+        if s.sessions == nil </span><span class="cov8" title="1">{
+                s.sessions = make(map[string]session)
+        }</span>
+
+        <span class="cov8" title="1">s.sessions[token] = session{
+                token:     token,
+                createdAt: time.Now(),
+        }
+
+        // cleanup expired sessions
+        s.cleanupExpiredSessions()
+
+        return token, nil</span>
+}
+
+// validateSession checks if a session token is valid and not expired
+func (s *Server) validateSession(token string) bool <span class="cov0" title="0">{
+        s.sessionsMu.Lock()
+        defer s.sessionsMu.Unlock()
+
+        sess, exists := s.sessions[token]
+        if !exists </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        // check if session is expired (24 hours)
+        <span class="cov0" title="0">if time.Since(sess.createdAt) &gt; 24*time.Hour </span><span class="cov0" title="0">{
+                delete(s.sessions, token)
+                return false
+        }</span>
+
+        <span class="cov0" title="0">return true</span>
+}
+
+// invalidateSession removes a session from the store
+func (s *Server) invalidateSession(token string) <span class="cov0" title="0">{
+        s.sessionsMu.Lock()
+        defer s.sessionsMu.Unlock()
+        delete(s.sessions, token)
+}</span>
+
+// cleanupExpiredSessions removes expired sessions (called with lock held)
+func (s *Server) cleanupExpiredSessions() <span class="cov8" title="1">{
+        now := time.Now()
+        for token, sess := range s.sessions </span><span class="cov8" title="1">{
+                if now.Sub(sess.createdAt) &gt; 24*time.Hour </span><span class="cov0" title="0">{
+                        delete(s.sessions, token)
+                }</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package web
 
 import (
         "bytes"
@@ -103,18 +354,36 @@ var templatesFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
+// session represents an active user session
+type session struct {
+        token     string
+        createdAt time.Time
+}
+
 // Server represents the web server
 type Server struct {
         store          Persistence
         templates      map[string]*template.Template
-        crontabFile    string
         jobsMu         sync.RWMutex
         jobs           map[string]persistence.JobInfo // job id -&gt; job info
-        parser         cron.Parser
+        parser         cron.Parser                    // for schedule parsing (NextRun calculations)
+        jobsProvider   JobsProvider                   // for loading job specifications
         eventChan      chan JobEvent
         updateInterval time.Duration
         version        string
+        passwordHash   string                          // bcrypt hash for basic auth
         manualTrigger  chan&lt;- service.ManualJobRequest // channel to send manual trigger requests to scheduler
+        csrfProtection *http.CrossOriginProtection     // csrf protection for POST endpoints
+        sessions       map[string]session              // active user sessions
+        sessionsMu     sync.Mutex                      // protects sessions map
+}
+
+// JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).
+// Implementations should return the complete list of job specifications on each call.
+type JobsProvider interface {
+        // List returns all job specifications from the configured source.
+        // It should return an error if the source cannot be read or parsed.
+        List() ([]crontab.JobSpec, error)
 }
 
 // Persistence defines storage operations for job management
@@ -148,6 +417,7 @@ type TemplateData struct {
         NextRunTime  string // formatted next run time for stats
         TotalCount   int    // total jobs before filtering
         IsOOB        bool   // for OOB template rendering
+        AuthEnabled  bool   // whether authentication is enabled
 }
 
 // jobsStats holds statistics about jobs
@@ -160,41 +430,52 @@ type jobsStats struct {
 
 // Config holds server configuration
 type Config struct {
-        CrontabFile    string
         DBPath         string
         UpdateInterval time.Duration
         Version        string
         ManualTrigger  chan&lt;- service.ManualJobRequest // channel for sending manual trigger requests
+        JobsProvider   JobsProvider                    // interface for loading job specifications
+        PasswordHash   string                          // bcrypt hash for basic auth (empty to disable)
 }
 
 // New creates a new web server
 func New(cfg Config) (*Server, error) <span class="cov8" title="1">{
+        // validate required dependencies
+        if cfg.JobsProvider == nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("web server initialization failed: JobsProvider is required")
+        }</span>
+
         // create persistence store (it initializes itself)
-        store, err := persistence.NewSQLiteStore(cfg.DBPath)
+        <span class="cov8" title="1">store, err := persistence.NewSQLiteStore(cfg.DBPath)
         if err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("failed to create store: %w", err)
+                return nil, fmt.Errorf("web server initialization failed: failed to create SQLite store at %q: %w", cfg.DBPath, err)
         }</span>
 
         <span class="cov8" title="1">parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
+        // create CSRF protection
+        csrfProtection := http.NewCrossOriginProtection()
+
         s := &amp;Server{
                 store:          store,
-                crontabFile:    cfg.CrontabFile,
                 jobs:           make(map[string]persistence.JobInfo),
                 parser:         parser,
+                jobsProvider:   cfg.JobsProvider,
                 eventChan:      make(chan JobEvent, 1000),
                 updateInterval: cfg.UpdateInterval,
                 version:        cfg.Version,
+                passwordHash:   cfg.PasswordHash,
                 manualTrigger:  cfg.ManualTrigger,
+                csrfProtection: csrfProtection,
         }
 
         // parse templates
         templates, err := s.parseTemplates()
         if err != nil </span><span class="cov0" title="0">{
                 if closeErr := store.Close(); closeErr != nil </span><span class="cov0" title="0">{
-                        return nil, fmt.Errorf("failed to parse templates: %w (also failed to close: %v)", err, closeErr)
+                        return nil, fmt.Errorf("web server initialization failed: failed to parse HTML templates: %w (also failed to close store: %v)", err, closeErr)
                 }</span>
-                <span class="cov0" title="0">return nil, fmt.Errorf("failed to parse templates: %w", err)</span>
+                <span class="cov0" title="0">return nil, fmt.Errorf("web server initialization failed: failed to parse HTML templates: %w", err)</span>
         }
         <span class="cov8" title="1">s.templates = templates
 
@@ -249,13 +530,29 @@ func (s *Server) routes() http.Handler <span class="cov8" title="1">{
                 logger.New(logger.Log(log.Default()), logger.Prefix("[DEBUG]")).Handler,
         )
 
+        // add auth middleware if password hash is configured
+        // must be done before any routes are defined
+        if s.passwordHash != "" </span><span class="cov8" title="1">{
+                log.Printf("[INFO] authentication enabled for web UI")
+                // custom auth middleware that checks cookie or basic auth
+                router.Use(s.authMiddleware)
+        }</span>
+
+        // login routes - not protected by auth (Maybe middleware condition returns false for /login)
+        <span class="cov8" title="1">if s.passwordHash != "" </span><span class="cov8" title="1">{
+                router.HandleFunc("GET /login", s.handleLoginForm)
+                router.With(s.csrfProtection.Handler).HandleFunc("POST /login", s.handleLogin)
+                router.HandleFunc("GET /logout", s.handleLogout)
+        }</span>
+
         // dashboard route
-        router.HandleFunc("GET /", s.handleDashboard)
+        <span class="cov8" title="1">router.HandleFunc("GET /", s.handleDashboard)
 
         // api routes with grouping
         router.Mount("/api").Route(func(api *routegroup.Bundle) </span><span class="cov8" title="1">{
                 // api-specific middleware
-                api.Use(rest.NoCache) // prevent caching of API responses
+                api.Use(rest.NoCache)             // prevent caching of API responses
+                api.Use(s.csrfProtection.Handler) // CSRF protection for POST endpoints
 
                 // HTMX endpoints
                 api.HandleFunc("GET /jobs", s.handleJobsPartial)
@@ -321,10 +618,12 @@ func (s *Server) OnJobComplete(command, schedule string, startTime, endTime time
 // syncJobs syncs jobs from crontab file
 func (s *Server) syncJobs(ctx context.Context) <span class="cov8" title="1">{
         // initial sync
-        s.loadJobsFromCrontab()
+        if err := s.loadJobsFromCrontab(); err != nil </span><span class="cov0" title="0">{
+                log.Printf("[WARN] failed to load jobs from crontab: %v", err)
+        }</span>
 
         // if update interval is 0, don't start ticker
-        if s.updateInterval &lt;= 0 </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">if s.updateInterval &lt;= 0 </span><span class="cov0" title="0">{
                 &lt;-ctx.Done()
                 return
         }</span>
@@ -337,7 +636,9 @@ func (s *Server) syncJobs(ctx context.Context) <span class="cov8" title="1">{
                 case &lt;-ctx.Done():<span class="cov8" title="1">
                         return</span>
                 case &lt;-ticker.C:<span class="cov8" title="1">
-                        s.loadJobsFromCrontab()</span>
+                        if err := s.loadJobsFromCrontab(); err != nil </span><span class="cov0" title="0">{
+                                log.Printf("[WARN] failed to load jobs from crontab: %v", err)
+                        }</span>
                 }
         }
 }
@@ -365,12 +666,14 @@ func (s *Server) loadJobsFromDB() <span class="cov8" title="1">{
 }
 
 // loadJobsFromCrontab loads jobs from crontab file
-func (s *Server) loadJobsFromCrontab() <span class="cov8" title="1">{
-        parser := crontab.New(s.crontabFile, 0, nil)
-        specs, err := parser.List()
-        if err != nil </span><span class="cov0" title="0">{
-                log.Printf("[WARN] failed to parse crontab: %v", err)
-                return
+func (s *Server) loadJobsFromCrontab() error <span class="cov8" title="1">{
+        if s.jobsProvider == nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("cannot load jobs: JobsProvider not configured")
+        }</span>
+
+        <span class="cov8" title="1">specs, err := s.jobsProvider.List()
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("failed to load job specifications from provider: %w", err)
         }</span>
 
         <span class="cov8" title="1">s.jobsMu.Lock()
@@ -386,7 +689,7 @@ func (s *Server) loadJobsFromCrontab() <span class="cov8" title="1">{
                 // parse schedule for next run calculation
                 schedule, err := s.parser.Parse(spec.Spec)
                 if err != nil </span><span class="cov0" title="0">{
-                        log.Printf("[WARN] failed to parse schedule %q: %v", spec.Spec, err)
+                        log.Printf("[WARN] failed to parse schedule %q for command %q: %v", spec.Spec, spec.Command, err)
                         continue</span>
                 }
 
@@ -420,7 +723,8 @@ func (s *Server) loadJobsFromCrontab() <span class="cov8" title="1">{
         <span class="cov8" title="1">s.jobsMu.Unlock()
 
         // persist to database (after releasing the lock)
-        s.persistJobs()</span>
+        s.persistJobs()
+        return nil</span>
 }
 
 // persistJobs saves jobs to database
@@ -438,7 +742,7 @@ func (s *Server) persistJobs() <span class="cov8" title="1">{
         }
         <span class="cov8" title="1">s.jobsMu.RUnlock()
 
-        if err := s.store.SaveJobs(jobs); err != nil </span><span class="cov8" title="1">{
+        if err := s.store.SaveJobs(jobs); err != nil </span><span class="cov0" title="0">{
                 log.Printf("[WARN] failed to persist jobs: %v", err)
         }</span>
 }
@@ -503,7 +807,7 @@ func (s *Server) handleJobEvent(event JobEvent) <span class="cov8" title="1">{
         s.jobs[id] = job
 
         // save execution to database
-        if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil </span><span class="cov8" title="1">{
+        if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil </span><span class="cov0" title="0">{
                 log.Printf("[WARN] failed to save execution: %v", err)
         }</span>
 }
@@ -527,6 +831,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) <span c
                 RunningCount: stats.runningCount,
                 NextRunTime:  stats.nextRunTime,
                 TotalCount:   stats.totalCount,
+                AuthEnabled:  s.passwordHash != "",
         }
 
         s.render(w, "base.html", "base", data)
@@ -660,8 +965,7 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) <s
                 SameSite: http.SameSiteLaxMode,
         })
 
-        // trigger full page refresh to update the toggle button icon
-        w.Header().Set("HX-Refresh", "true")
+        // respond with empty body - the base template handles refresh via custom event
         w.WriteHeader(http.StatusOK)</span>
 }
 
@@ -687,7 +991,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) <span
                 Value:    nextTheme.String(),
                 Path:     "/",
                 MaxAge:   365 * 24 * 60 * 60, // 1 year
-                HttpOnly: false,              // allow JS to read for immediate update
+                HttpOnly: true,
                 SameSite: http.SameSiteLaxMode,
         })
 
@@ -782,10 +1086,10 @@ func (s *Server) renderSortedJobs(w http.ResponseWriter, data TemplateData) erro
         }</span>
 
         // write response with all OOB updates
-        <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html")
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html; charset=utf-8")
         _, _ = w.Write(jobsHTML.Bytes())
         _, _ = w.Write(sortButtonHTML.Bytes())
-        
+
         return nil</span>
 }
 
@@ -812,7 +1116,7 @@ func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) <spa
         }
 
         // render jobs and send response with OOB updates
-        if err := s.renderFilteredJobs(w, data); err != nil </span><span class="cov0" title="0">{
+        if err := s.renderFilteredJobs(w, data); err != nil </span><span class="cov8" title="1">{
                 log.Printf("[ERROR] failed to render filtered jobs: %v", err)
                 http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
         }</span>
@@ -884,16 +1188,16 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
                 IsOOB:        true,
         }
         var statsHTML bytes.Buffer
-        if err := tmpl.ExecuteTemplate(&amp;statsHTML, "stats-updates", statsData); err != nil </span><span class="cov0" title="0">{
+        if err := tmpl.ExecuteTemplate(&amp;statsHTML, "stats-updates", statsData); err != nil </span><span class="cov8" title="1">{
                 return fmt.Errorf("failed to render stats updates template: %w", err)
         }</span>
 
         // write response with all OOB updates
-        <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html")
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "text/html; charset=utf-8")
         _, _ = w.Write(jobsHTML.Bytes())
         _, _ = w.Write(filterButtonHTML.Bytes())
         _, _ = w.Write(statsHTML.Bytes())
-        
+
         return nil</span>
 }
 
@@ -1054,6 +1358,13 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) <span c
                 return nil, fmt.Errorf("failed to parse partials: %w", err)
         }</span>
         <span class="cov8" title="1">templates["partials/jobs.html"] = partials
+
+        // parse login template (standalone, doesn't use base)
+        login, err := template.New("login.html").ParseFS(templatesFS, "templates/login.html")
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to parse login template: %w", err)
+        }</span>
+        <span class="cov8" title="1">templates["login"] = login
 
         return templates, nil</span>
 }

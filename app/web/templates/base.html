@@ -94,6 +94,10 @@
             <span>© {{.CurrentYear}} Umputun</span>
             <span class="separator">•</span>
             <a href="https://github.com/umputun/cronn" class="footer-link">GitHub</a>
+            {{if .AuthEnabled}}
+            <span class="separator">•</span>
+            <a href="/logout" class="footer-link" data-hx-boost="false">Logout</a>
+            {{end}}
         </footer>
     </div>
 

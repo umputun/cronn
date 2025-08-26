@@ -58,6 +58,7 @@ type Scheduler struct {
 	NotifyTimeout   time.Duration
 	JobEventHandler JobEventHandler       // handler for job execution events
 	ManualTrigger   chan ManualJobRequest // channel for manual job triggers
+	AltTemplate     bool                  // use alternative template format [[.YYYYMMDD]]
 }
 
 // ManualJobRequest represents a request to manually trigger a job
@@ -173,7 +174,7 @@ func (s *Scheduler) schedule(ctx context.Context, r crontab.JobSpec) error {
 func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedule) cron.FuncJob {
 
 	runJob := func(ctx context.Context, r crontab.JobSpec, rptr Repeater) error {
-		cmd, err := NewDayTemplate(time.Now()).Parse(r.Command)
+		cmd, err := NewDayTemplate(time.Now(), AltTemplateFormat(s.AltTemplate)).Parse(r.Command)
 		if err != nil {
 			return err
 		}

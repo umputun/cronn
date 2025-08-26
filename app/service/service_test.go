@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -799,10 +800,13 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 			},
 		}
 
+		var mu sync.Mutex
 		var capturedCommand string
 		var capturedStartTime time.Time
 		mockEventHandler := &mocks.JobEventHandlerMock{
 			OnJobStartFunc: func(command, schedule string, startTime time.Time) {
+				mu.Lock()
+				defer mu.Unlock()
 				capturedCommand = command
 				capturedStartTime = startTime
 			},
@@ -842,9 +846,11 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 
 		// verify job was started
+		mu.Lock()
 		assert.Equal(t, "echo test", capturedCommand)
 		assert.True(t, capturedStartTime.After(startBefore))
 		assert.True(t, capturedStartTime.Before(time.Now()))
+		mu.Unlock()
 
 		// verify onJobStart was called
 		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))

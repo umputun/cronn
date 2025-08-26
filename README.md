@@ -61,6 +61,28 @@ Templates can be passed in command line or crontab file and will be evaluated an
 cronn executes the command. For example `cronn "0 0 * * 1-5" echo {{.YYYYMMDD}}` will print the current date every 
 weekday on midnight.
 
+### Alternative Template Delimiters
+
+In some situations, templates can conflict with application-specific templates that also use `{{` and `}}` syntax.
+To avoid conflicts, cronn supports alternative template delimiters using `[[` and `]]` by passing the `--alt-template` 
+flag (or setting the `CRONN_ALT_TEMPLATE` environment variable).
+
+For example:
+```bash
+# Normal template syntax
+cronn -c "0 0 * * *" echo {{.YYYYMMDD}}
+
+# Alternative template syntax (useful when command uses {{ }} for its own templates)
+cronn --alt-template -c "0 0 * * *" echo [[.YYYYMMDD]]
+
+# In crontab file with alternative templates enabled
+cronn --alt-template -f crontab
+# where crontab contains: 0 0 * * * backup.sh --date=[[.YYYYMMDD]]
+```
+
+This is particularly useful when running commands that use Go templates, Helm charts, or other templating systems
+that conflict with cronn's default `{{` and `}}` delimiters.
+
 ### Configuration file formats
 
 Cronn supports two configuration file formats, automatically detected by file extension:
@@ -443,6 +465,7 @@ When enabled, notifications are sent to the specified destinations on job failur
   -j, --jitter                    enable jitter [$CRONN_JITTER]
       --jitter-duration=          jitter duration (default: 10s) [$CRONN_JITTER_DURATION]
       --dedup                     prevent duplicated jobs [$CRONN_DEDUP]
+      --alt-template              use alternative templates, i.e. [[.YYYYMMDD]] [$CRONN_ALT_TEMPLATE]
 
 web:
       --web.enabled               enable web dashboard [$CRONN_WEB_ENABLED]

@@ -38,6 +38,7 @@ var opts struct {
 	JitterDuration      time.Duration `long:"jitter-duration" env:"CRONN_JITTER_DURATION" default:"10s" description:"jitter duration"`
 	DeDup               bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
 	MaxConcurrentChecks int           `long:"max-concurrent-checks" env:"CRONN_MAX_CONCURRENT_CHECKS" default:"10" description:"max concurrent condition checks"`
+	AltTemplate         bool          `long:"alt-template" env:"CRONN_ALT_TEMPLATE" description:"use alternative templates, i.e. [[.YYYYMMDD]]"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -192,6 +193,7 @@ func main() {
 		NotifyTimeout:     opts.Notify.TimeOut,
 		JobEventHandler:   eventHandler,
 		ManualTrigger:     manualTrigger,
+		AltTemplate:       opts.AltTemplate,
 	}
 
 	cronService.RepeaterDefaults.Attempts = opts.Repeater.Attempts

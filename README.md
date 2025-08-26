@@ -247,19 +247,11 @@ The dashboard is accessible via web browser at the configured address. Job data 
 <details>
 <summary>Screenshots</summary>
 
-### Light Theme - Card View
-
 ![Dashboard Light Cards](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-light-cards.png)
-
-### Light Theme - List View  
 
 ![Dashboard Light List](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-light-list.png)
 
-### Dark Theme - Card View
-
 ![Dashboard Dark Cards](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-dark-cards.png)
-
-### Dark Theme - List View
 
 ![Dashboard Dark List](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-dark-list.png)
 

@@ -46,6 +46,45 @@ func TestDayParser_Parse(t *testing.T) {
 	}
 }
 
+func TestDayParser_ParseWithAltTemplate(t *testing.T) {
+	nytz, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+
+	tbl := []struct {
+		day time.Time
+		src string
+		res string
+		err error
+	}{
+		{time.Date(2016, 11, 1, 0, 0, 0, 0, nytz), "xxx [[.YYYYMMDD]] blah [[.YYYYMMDDEOD]]", "xxx 20161101 blah 20161031", nil},
+		{time.Date(2016, 11, 1, 17, 30, 0, 0, nytz), "xxx [[.YYYYMMDD]] blah [[.YYYYMMDDEOD]]", "xxx 20161101 blah 20161101", nil},
+		{time.Date(2016, 11, 1, 0, 0, 0, 0, nytz), "xxx [[.YYYYMM]] blah", "xxx 201611 blah", nil},
+		{time.Date(2016, 11, 1, 0, 0, 0, 0, nytz), "xxx [[.YYYY]] blah", "xxx 2016 blah", nil},
+		{time.Date(2016, 11, 1, 0, 0, 0, 0, nytz), "xxx [[.ISODATE]] blah", "xxx 2016-11-01T00:00:00.000Z blah", nil},
+		{time.Date(2016, 11, 1, 0, 0, 0, 0, nytz), "xxx blah", "xxx blah", nil},
+		{time.Date(2018, 1, 15, 14, 40, 0, 0, nytz), "xxx [[.MM]] blah [[.DD]]", "xxx 01 blah 15", nil},
+		{time.Date(2018, 1, 15, 14, 40, 22, 123000000, nytz), "xxx [[.UNIX]] blah [[.UNIXMSEC]]", "xxx 1516045222 blah 1516045222123", nil},
+		{time.Date(2018, 1, 15, 14, 40, 0, 0, nytz), "[[.MMXX]]", "", nil},
+		{time.Date(2018, 1, 15, 14, 40, 0, 0, nytz), "zz [[.YYMMDD]]", "zz 180115", nil},
+		{time.Date(2018, 1, 15, 14, 40, 0, 0, nytz), "zz [[.YY]]", "zz 18", nil},
+		// test mixing curly braces with alt template - they should be literal
+		{time.Date(2018, 1, 15, 14, 40, 0, 0, nytz), "cmd {{.YY}} [[.YYYYMMDD]]", "cmd {{.YY}} 20180115", nil},
+	}
+
+	for i, tt := range tbl {
+		tt := tt
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			d := NewDayTemplate(tt.day, TimeZone(nytz), AltTemplateFormat(true))
+			res, err := d.Parse(tt.src)
+			if tt.err != nil {
+				require.EqualError(t, err, tt.err.Error())
+				return
+			}
+			assert.Equal(t, tt.res, res)
+		})
+	}
+}
+
 func TestDayParser_weekdayBackward(t *testing.T) {
 	nytz, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

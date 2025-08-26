@@ -16,6 +16,7 @@ type DayParser struct {
 	eodHour        int
 	skipWeekDays   []time.Weekday
 	holidayChecker HolidayChecker
+	altTemplate    bool
 }
 
 // HolidayChecker is a single-method interface returning status of the day
@@ -65,6 +66,7 @@ func NewDayTemplate(ts time.Time, options ...Option) *DayParser {
 		eodHour:        17,
 		skipWeekDays:   []time.Weekday{time.Saturday, time.Sunday},
 		holidayChecker: HolidayCheckerFunc(func(time.Time) bool { return false }), // inactive by default
+		altTemplate:    false,
 	}
 
 	for _, opt := range options {
@@ -111,7 +113,11 @@ func NewDayTemplate(ts time.Time, options ...Option) *DayParser {
 // Parse translate template to final string
 func (p DayParser) Parse(dayTemplate string) (string, error) {
 	b1 := bytes.Buffer{}
-	err := template.Must(template.New("ymd").Parse(dayTemplate)).Execute(&b1, p.tmpl)
+	tmpl := template.New("ymd")
+	if p.altTemplate {
+		tmpl = tmpl.Delims("[[", "]]")
+	}
+	err := template.Must(tmpl.Parse(dayTemplate)).Execute(&b1, p.tmpl)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse day from %s: %w", dayTemplate, err)
 	}
@@ -176,5 +182,12 @@ func SkipWeekDays(days ...time.Weekday) Option {
 func Holiday(checker HolidayChecker) Option {
 	return func(l *DayParser) {
 		l.holidayChecker = checker
+	}
+}
+
+// AltTemplateFormat sets alternative template format with [[.YYYYMMDD]] instead of {{.YYYYMMDD}}
+func AltTemplateFormat(enabled bool) Option {
+	return func(l *DayParser) {
+		l.altTemplate = enabled
 	}
 }

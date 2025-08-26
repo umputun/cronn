@@ -39,7 +39,7 @@ func TestNew(t *testing.T) {
 			UpdateInterval: time.Minute,
 			Version:        "test",
 			JobsProvider:   createTestProvider(t, tmpDir),
-			// LoginTTL not set, should default to 24h
+			// loginTTL not set, should default to 24h
 		}
 
 		server, err := New(cfg)

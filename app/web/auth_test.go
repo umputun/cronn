@@ -457,7 +457,7 @@ func TestServer_handleLoginEdgeCases(t *testing.T) {
 
 		assert.Equal(t, http.StatusSeeOther, rec.Code)
 		assert.Equal(t, "/", rec.Header().Get("Location"))
-		
+
 		// check cookie was set
 		cookies := rec.Result().Cookies()
 		require.Len(t, cookies, 1)

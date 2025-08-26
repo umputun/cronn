@@ -85,6 +85,63 @@ func TestDayParser_ParseWithAltTemplate(t *testing.T) {
 	}
 }
 
+func TestDayParser_ParseMalformed(t *testing.T) {
+	nytz, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		template    string
+		altTemplate bool
+		wantErr     bool
+	}{
+		{
+			name:        "malformed default template - unclosed",
+			template:    "{{.YYYYMMDD",
+			altTemplate: false,
+			wantErr:     true,
+		},
+		{
+			name:        "malformed alt template - unclosed",
+			template:    "[[.YYYYMMDD",
+			altTemplate: true,
+			wantErr:     true,
+		},
+		{
+			name:        "malformed default template - bad syntax",
+			template:    "{{if}}",
+			altTemplate: false,
+			wantErr:     true,
+		},
+		{
+			name:        "malformed alt template - bad syntax",
+			template:    "[[if]]",
+			altTemplate: true,
+			wantErr:     true,
+		},
+		{
+			name:        "valid template should not error",
+			template:    "{{.YYYYMMDD}}",
+			altTemplate: false,
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := NewDayTemplate(time.Date(2018, 1, 15, 14, 40, 0, 0, nytz),
+				TimeZone(nytz), AltTemplateFormat(tt.altTemplate))
+			_, err := d.Parse(tt.template)
+			if tt.wantErr {
+				assert.Error(t, err, "Parse should return error for malformed template")
+				assert.Contains(t, err.Error(), "failed to parse template")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestDayParser_weekdayBackward(t *testing.T) {
 	nytz, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

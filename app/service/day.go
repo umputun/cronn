@@ -117,9 +117,12 @@ func (p DayParser) Parse(dayTemplate string) (string, error) {
 	if p.altTemplate {
 		tmpl = tmpl.Delims("[[", "]]")
 	}
-	err := template.Must(tmpl.Parse(dayTemplate)).Execute(&b1, p.tmpl)
+	parsedTmpl, err := tmpl.Parse(dayTemplate)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse day from %s: %w", dayTemplate, err)
+		return "", fmt.Errorf("failed to parse template from %q: %w", dayTemplate, err)
+	}
+	if err = parsedTmpl.Execute(&b1, p.tmpl); err != nil {
+		return "", fmt.Errorf("failed to execute template from %q: %w", dayTemplate, err)
 	}
 	return b1.String(), nil
 }

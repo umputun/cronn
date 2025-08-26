@@ -106,7 +106,9 @@ func TestScheduler_Do(t *testing.T) {
 }
 
 func TestScheduler_DoIntegration(t *testing.T) {
-	t.Skip()
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	out := bytes.NewBuffer(nil)
 	cr := cron.New()
 	parser := crontab.New("testfiles/crontab", time.Minute, nil)
@@ -139,7 +141,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 
 	svc.Do(ctx)
 	t.Log(out.String())
-	assert.Contains(t, out.String(), "something: command not found")
+	assert.Contains(t, out.String(), "something: not found")
 }
 
 func TestScheduler_execute(t *testing.T) {

@@ -30,9 +30,9 @@ func TestParse(t *testing.T) {
 	for _, tt := range tbl {
 		r, err := Parse(tt.inp)
 		if tt.wasError {
-			assert.NotNil(t, err, tt.inp)
+			assert.Error(t, err, tt.inp)
 		} else {
-			assert.Nil(t, err, tt.inp)
+			assert.NoError(t, err, tt.inp)
 		}
 		assert.Equal(t, tt.js, r, tt.inp)
 	}
@@ -72,8 +72,8 @@ func TestParser_ListYAMLInvalid(t *testing.T) {
 	tmp, err := os.CreateTemp("", "crontab*.yml")
 	require.NoError(t, err)
 	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
+		require.NoError(t, tmp.Close())
+		require.NoError(t, os.Remove(tmp.Name()))
 	}()
 
 	// write invalid YAML
@@ -91,8 +91,8 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 	tmp, err := os.CreateTemp("", "crontab*.yml")
 	require.NoError(t, err)
 	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
+		require.NoError(t, tmp.Close())
+		require.NoError(t, os.Remove(tmp.Name()))
 	}()
 
 	// write YAML with neither spec nor sched
@@ -106,8 +106,9 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 	assert.Contains(t, err.Error(), "either 'spec' or 'sched' field is required")
 
 	// write YAML with empty command
-	_ = tmp.Truncate(0)
-	_, _ = tmp.Seek(0, 0)
+	require.NoError(t, tmp.Truncate(0))
+	_, err = tmp.Seek(0, 0)
+	require.NoError(t, err)
 	_, err = tmp.WriteString(`jobs:
   - spec: "* * * * *"
     command: ""`)
@@ -192,8 +193,8 @@ func TestParser_Changes(t *testing.T) {
 	tmp, err := os.CreateTemp("", "crontab")
 	require.NoError(t, err)
 	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
+		require.NoError(t, tmp.Close())
+		require.NoError(t, os.Remove(tmp.Name()))
 	}()
 
 	_, err = tmp.WriteString("1 * * * * ls\n")
@@ -227,8 +228,8 @@ func TestParser_ChangesHup(t *testing.T) {
 	tmp, err := os.CreateTemp("", "crontab")
 	require.NoError(t, err)
 	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
+		require.NoError(t, tmp.Close())
+		require.NoError(t, os.Remove(tmp.Name()))
 	}()
 
 	_, err = tmp.WriteString("1 * * * * ls\n")

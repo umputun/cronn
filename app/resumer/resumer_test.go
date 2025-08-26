@@ -15,11 +15,11 @@ func TestResumer_OnStart(t *testing.T) {
 	defer os.RemoveAll("/tmp/resumer.test")
 
 	s, err := r.OnStart("cmd 1 2 blah")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	t.Log(s)
 
 	data, err := os.ReadFile(s) // nolint gosec
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, "cmd 1 2 blah", string(data))
 }
 
@@ -28,12 +28,12 @@ func TestResumer_OnFinish(t *testing.T) {
 	defer os.RemoveAll("/tmp/resumer.test")
 
 	s, err := r.OnStart("cmd 1 2 blah")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	err = r.OnFinish(s)
 
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	_, err = os.ReadFile(s) // nolint gosec
-	assert.NotNil(t, err)
+	assert.Error(t, err)
 }
 
 func TestResumer_List(t *testing.T) {
@@ -41,11 +41,11 @@ func TestResumer_List(t *testing.T) {
 	defer os.RemoveAll("/tmp/resumer.test")
 
 	_, e := r.OnStart("cmd1 1 2 blah")
-	assert.Nil(t, e)
+	assert.NoError(t, e)
 	_, e = r.OnStart("cmd2 1 2 3 blah")
-	assert.Nil(t, e)
+	assert.NoError(t, e)
 	_, e = r.OnStart("cmd3 blah")
-	assert.Nil(t, e)
+	assert.NoError(t, e)
 
 	err := os.WriteFile("/tmp/resumer.test/old.cronn", []byte("something"), 0600) //nolint
 	require.NoError(t, err)
@@ -54,8 +54,9 @@ func TestResumer_List(t *testing.T) {
 	res := r.List()
 	assert.Equal(t, 4, len(res))
 
-	_ = os.Chtimes("/tmp/resumer.test/old.cronn",
+	err = os.Chtimes("/tmp/resumer.test/old.cronn",
 		time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
 	res = r.List()
 	assert.Equal(t, 3, len(res))
 

@@ -873,7 +873,7 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 				if resp.StatusCode >= 400 {
 					errors <- fmt.Errorf("client %d request %d to %s got status %d", clientID, j, endpoint.path, resp.StatusCode)
 				}
-				_ = resp.Body.Close()
+				require.NoError(t, resp.Body.Close())
 
 				// tiny random delay
 				time.Sleep(time.Duration(rand.Intn(100)) * time.Microsecond) //nolint:gosec // test only, not security sensitive

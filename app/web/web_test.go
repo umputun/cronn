@@ -56,7 +56,7 @@ func TestNew(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, jobs)
 
-		_ = server.store.Close()
+		require.NoError(t, server.store.Close())
 	})
 
 	t.Run("custom LoginTTL", func(t *testing.T) {
@@ -71,7 +71,7 @@ func TestNew(t *testing.T) {
 		server, err := New(cfg)
 		require.NoError(t, err)
 		assert.Equal(t, 12*time.Hour, server.loginTTL)
-		_ = server.store.Close()
+		require.NoError(t, server.store.Close())
 	})
 }
 

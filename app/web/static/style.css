@@ -605,7 +605,7 @@ code {
 }
 
 .th-schedule, .td-schedule {
-    min-width: 100px;
+    min-width: 140px;
 }
 
 .th-command, .td-command {

@@ -44,11 +44,11 @@ archives:
     files:
       - LICENSE
       - README.md
+    rlcp: true
 
 brews:
-  -
-    name: cronn
-    repository:
+  - name: cronn
+    tap:
       owner: umputun
       name: homebrew-apps
       branch: master
@@ -72,6 +72,7 @@ nfpms:
     formats:
       - deb
       - rpm
+      - apk
     bindir: /usr/bin
     epoch: 1
     release: 1

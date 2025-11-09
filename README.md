@@ -32,6 +32,56 @@ In addition `cronn` provides:
 - Custom condition scripts for advanced scheduling logic
 - Rotated logs
 
+## Installation
+
+### From GitHub Releases
+
+download the latest release for your platform from the [releases page](https://github.com/umputun/cronn/releases/latest).
+
+### Homebrew (macOS and Linux)
+
+```bash
+brew install umputun/apps/cronn
+```
+
+### Debian/Ubuntu (deb package)
+
+```bash
+# download and install the latest deb package
+wget https://github.com/umputun/cronn/releases/latest/download/cronn_<version>_linux_amd64.deb
+sudo dpkg -i cronn_<version>_linux_amd64.deb
+```
+
+### RHEL/CentOS/Fedora (rpm package)
+
+```bash
+# download and install the latest rpm package
+wget https://github.com/umputun/cronn/releases/latest/download/cronn_<version>_linux_amd64.rpm
+sudo rpm -i cronn_<version>_linux_amd64.rpm
+```
+
+### Alpine Linux (apk package)
+
+```bash
+# download and install the latest apk package
+wget https://github.com/umputun/cronn/releases/latest/download/cronn_<version>_linux_amd64.apk
+sudo apk add --allow-untrusted cronn_<version>_linux_amd64.apk
+```
+
+### Docker
+
+```bash
+docker pull umputun/cronn:latest
+docker run -v $(pwd)/crontab:/srv/crontab umputun/cronn -f /srv/crontab
+```
+
+releases are automated via GitHub Actions. to create a new release, push a tag:
+
+```bash
+git tag v1.x.x
+git push origin v1.x.x
+```
+
 ## Basic usage
  
 - `cronn -c "30 23 * * 1-5 command arg1 arg2 ..."` - runs `command` with `arg1` and `arg2` every day at 23:30

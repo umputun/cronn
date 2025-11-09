@@ -732,6 +732,116 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	assert.Contains(t, body, "view-toggle")
 }
 
+func TestServer_handleAPIJobs_Search(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// start event processor
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go server.processEvents(ctx)
+
+	// add test jobs with different commands
+	startTime := time.Now()
+	server.OnJobStart("echo backup daily", "* * * * *", startTime)
+	server.OnJobComplete("echo backup daily", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
+	server.OnJobStart("echo cleanup logs", "@daily", startTime)
+	server.OnJobStart("python backup.py", "@weekly", startTime)
+
+	// wait for all events to be processed
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		return len(server.jobs) == 3
+	}, time.Second, 10*time.Millisecond)
+
+	// test search for "backup"
+	req := httptest.NewRequest("GET", "/api/jobs?search=backup", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
+	w := httptest.NewRecorder()
+
+	server.handleJobsPartial(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body := w.Body.String()
+	assert.Contains(t, body, "backup daily")
+	assert.Contains(t, body, "backup.py")
+	assert.NotContains(t, body, "cleanup logs")
+
+	// test case-insensitive search
+	req = httptest.NewRequest("GET", "/api/jobs?search=BACKUP", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
+	w = httptest.NewRecorder()
+
+	server.handleJobsPartial(w, req)
+
+	resp = w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body = w.Body.String()
+	assert.Contains(t, body, "backup daily")
+	assert.Contains(t, body, "backup.py")
+	assert.NotContains(t, body, "cleanup logs")
+
+	// test search for "python"
+	req = httptest.NewRequest("GET", "/api/jobs?search=python", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
+	w = httptest.NewRecorder()
+
+	server.handleJobsPartial(w, req)
+
+	resp = w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body = w.Body.String()
+	assert.Contains(t, body, "backup.py")
+	assert.NotContains(t, body, "backup daily")
+	assert.NotContains(t, body, "cleanup logs")
+
+	// test empty search returns all jobs
+	req = httptest.NewRequest("GET", "/api/jobs?search=", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
+	w = httptest.NewRecorder()
+
+	server.handleJobsPartial(w, req)
+
+	resp = w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body = w.Body.String()
+	assert.Contains(t, body, "backup daily")
+	assert.Contains(t, body, "cleanup logs")
+	assert.Contains(t, body, "backup.py")
+
+	// test search with no matches
+	req = httptest.NewRequest("GET", "/api/jobs?search=nonexistent", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
+	w = httptest.NewRecorder()
+
+	server.handleJobsPartial(w, req)
+
+	resp = w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body = w.Body.String()
+	assert.NotContains(t, body, "backup daily")
+	assert.NotContains(t, body, "cleanup logs")
+	assert.NotContains(t, body, "backup.py")
+}
+
 func TestServer_handleToggleTheme(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -1641,7 +1751,7 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 	}
 
 	t.Run("filter all", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeAll)
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeAll, "")
 		assert.Len(t, stats.jobs, 5)
 		assert.Equal(t, 2, stats.runningCount)
 		assert.Equal(t, 5, stats.totalCount)
@@ -1649,7 +1759,7 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 	})
 
 	t.Run("filter running", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeRunning)
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeRunning, "")
 		assert.Len(t, stats.jobs, 2)
 		assert.Equal(t, 2, stats.runningCount)
 		assert.Equal(t, 5, stats.totalCount)
@@ -1659,7 +1769,7 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 	})
 
 	t.Run("filter success", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeSuccess)
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeSuccess, "")
 		assert.Len(t, stats.jobs, 2)
 		assert.Equal(t, 2, stats.runningCount)
 		assert.Equal(t, 5, stats.totalCount)
@@ -1669,7 +1779,7 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 	})
 
 	t.Run("filter failed", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeFailed)
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeFailed, "")
 		assert.Len(t, stats.jobs, 1)
 		assert.Equal(t, 2, stats.runningCount)
 		assert.Equal(t, 5, stats.totalCount)
@@ -1677,7 +1787,7 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 	})
 
 	t.Run("sorting works with filtering", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeNextrun, enums.FilterModeAll)
+		stats := server.getJobsWithStats(enums.SortModeNextrun, enums.FilterModeAll, "")
 		assert.Len(t, stats.jobs, 5)
 		// verify sorted by next run time
 		for i := 1; i < len(stats.jobs); i++ {

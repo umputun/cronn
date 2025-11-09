@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -507,7 +508,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	sortMode := s.getSortMode(r)
 	filterMode := s.getFilterMode(r)
 
-	stats := s.getJobsWithStats(sortMode, filterMode)
+	stats := s.getJobsWithStats(sortMode, filterMode, "")
 
 	data := TemplateData{
 		Jobs:         stats.jobs,
@@ -526,7 +527,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // getJobsWithStats retrieves jobs with calculated stats and applies filtering
-func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.FilterMode) jobsStats {
+func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.FilterMode, searchTerm string) jobsStats {
 	s.jobsMu.RLock()
 	allJobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	runningCount := 0
@@ -556,8 +557,9 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 	// store total count before filtering
 	totalCount := len(allJobs)
 
-	// apply filtering
-	jobs := s.filterJobs(allJobs, filterMode)
+	// apply search first, then status filtering
+	jobs := s.searchJobs(allJobs, searchTerm)
+	jobs = s.filterJobs(jobs, filterMode)
 
 	// sort jobs based on selected mode
 	s.sortJobs(jobs, sortMode)
@@ -581,7 +583,8 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	viewMode := s.getViewMode(r)
 	sortMode := s.getSortMode(r)
 	filterMode := s.getFilterMode(r)
-	stats := s.getJobsWithStats(sortMode, filterMode)
+	searchTerm := r.FormValue("search")
+	stats := s.getJobsWithStats(sortMode, filterMode, searchTerm)
 
 	data := TemplateData{
 		Jobs:         stats.jobs,
@@ -673,7 +676,8 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	// get sorted jobs for the new view mode
 	sortMode := s.getSortMode(r)
 	filterMode := s.getFilterMode(r)
-	stats := s.getJobsWithStats(sortMode, filterMode)
+	searchTerm := r.FormValue("search")
+	stats := s.getJobsWithStats(sortMode, filterMode, searchTerm)
 
 	// prepare template data
 	theme := s.getTheme(r)
@@ -756,7 +760,8 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	// get sorted jobs for the new mode
 	viewMode := s.getViewMode(r)
 	filterMode := s.getFilterMode(r)
-	stats := s.getJobsWithStats(nextMode, filterMode)
+	searchTerm := r.FormValue("search")
+	stats := s.getJobsWithStats(nextMode, filterMode, searchTerm)
 
 	// prepare template data
 	data := TemplateData{
@@ -853,7 +858,8 @@ func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
 	// get filtered jobs for the new mode
 	viewMode := s.getViewMode(r)
 	sortMode := s.getSortMode(r)
-	stats := s.getJobsWithStats(sortMode, nextMode)
+	searchTerm := r.FormValue("search")
+	stats := s.getJobsWithStats(sortMode, nextMode, searchTerm)
 
 	// prepare template data
 	data := TemplateData{
@@ -1263,6 +1269,22 @@ func (s *Server) filterJobs(jobs []persistence.JobInfo, filterMode enums.FilterM
 			if job.LastStatus == enums.JobStatusFailed {
 				filtered = append(filtered, job)
 			}
+		}
+	}
+	return filtered
+}
+
+// searchJobs filters jobs by search term (case-insensitive command search)
+func (s *Server) searchJobs(jobs []persistence.JobInfo, searchTerm string) []persistence.JobInfo {
+	if searchTerm == "" {
+		return jobs
+	}
+
+	searchLower := strings.ToLower(searchTerm)
+	filtered := make([]persistence.JobInfo, 0, len(jobs))
+	for _, job := range jobs {
+		if strings.Contains(strings.ToLower(job.Command), searchLower) {
+			filtered = append(filtered, job)
 		}
 	}
 	return filtered

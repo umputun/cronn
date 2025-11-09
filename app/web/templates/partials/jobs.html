@@ -170,9 +170,10 @@
 
 {{define "filter-button"}}
 <button {{if .IsOOB}}hx-swap-oob="outerHTML:.filter-button"{{end}}
-        hx-post="/api/filter-toggle" 
+        hx-post="/api/filter-toggle"
         hx-target="#jobs-container"
         hx-swap="innerHTML"
+        hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
         class="filter-button"
         title="Filter by status">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="filter-icon">
@@ -189,9 +190,10 @@
 
 {{define "sort-button"}}
 <button {{if .IsOOB}}hx-swap-oob="outerHTML:.sort-button"{{end}}
-        hx-post="/api/sort-toggle" 
+        hx-post="/api/sort-toggle"
         hx-target="#jobs-container"
         hx-swap="innerHTML"
+        hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
         class="sort-button"
         title="Change sort order">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="sort-icon">
@@ -204,10 +206,11 @@
 {{end}}
 
 {{define "jobs-container"}}
-<div id="jobs-container" 
-     hx-get="/api/jobs" 
+<div id="jobs-container"
+     hx-get="/api/jobs"
      hx-trigger="load, every 5s"
      hx-swap="innerHTML settle:0ms"
+     hx-include="[name='search']"
      class="jobs-container {{.ViewMode}}">
 {{if eq .ViewMode.String "cards"}}
     {{template "jobs-cards" .}}
@@ -222,6 +225,7 @@
         hx-trigger="click"
         hx-target="#jobs-container"
         hx-swap="outerHTML"
+        hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
         {{if .IsOOB}}hx-swap-oob="outerHTML:.view-toggle"{{end}}
         class="control-btn view-toggle"
         title="Toggle view mode">

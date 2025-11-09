@@ -19,7 +19,8 @@ In addition `cronn` provides:
 
 - Both single-job scheduler and more traditional crontab file with multiple jobs
 - Runs as an ordinary process or the entry point of a container
-- Supports wide range of date templates 
+- Web dashboard with real-time monitoring, job history, manual execution, and modern UI
+- Supports wide range of date templates
 - Optional notification on failed or/and passed jobs using email, Slack, Telegram, or webhook
 - Optional jitter adding a random delay prior to execution of a job
 - Automatic resume (restart) of jobs in cronn service or container failed unexpectedly
@@ -46,15 +47,36 @@ Scheduling can be defined as:
 
 Cronn also understands various day-realted templates evaluated at the time of job's execution:
 
+**Standard Date Templates:**
 - `{{.YYYYMMDD}}` - current day in local TZ
+- `{{.YYYYMMDDEOD}}` - current business day based on EOD threshold (default: 17:00)
 - `{{.YYYY}}` - current year
 - `{{.YYYYMM}}` - year and month
+- `{{.YYMMDD}}` - current day (short form YYMMDD)
 - `{{.YY}}` - current year (short form)
 - `{{.MM}}` - current month
 - `{{.DD}}` - current day
 - `{{.ISODATE}` - day-time formatted as `2006-01-02T00:00:00.000Z` (RFC3339)
 - `{{.UNIX}}` - unix timestamp (in seconds)
 - `{{.UNIXMSEC}}` - unix timestamp (in milliseconds)
+
+**Weekday Templates (W-prefixed):**
+
+These templates automatically skip backward to the previous business day (skipping weekends by default):
+- `{{.WYYYYMMDD}}` - previous business day
+- `{{.WYYYYMMDDEOD}}` - previous business day with EOD logic
+- `{{.WYYYY}}` - year from previous business day
+- `{{.WYYYYMM}}` - year-month from previous business day
+- `{{.WYYMMDD}}` - short date from previous business day
+- `{{.WISODATE}}` - ISO date from previous business day
+- `{{.WYY}}`, `{{.WMM}}`, `{{.WDD}}` - year/month/day components from previous business day
+
+**Business Day Logic:**
+- EOD (End of Day) templates use a threshold hour (default: 17:00/5pm) to determine which business day to use
+- If current time is before EOD threshold, uses previous business day
+- If current time is at or after EOD threshold, uses current business day
+- Weekday templates skip Saturday and Sunday by default
+- Example: Running on Monday at 9am, `{{.WYYYYMMDD}}` returns Friday's date (skipping weekend)
 
 
 Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
@@ -82,6 +104,30 @@ cronn --alt-template -f crontab
 
 This is particularly useful when running commands that use Go templates, Helm charts, or other templating systems
 that conflict with cronn's default `{{` and `}}` delimiters.
+
+### Business Day Template Examples
+
+Weekday and EOD templates are useful for financial systems, reporting, and backup jobs that need to align with business days:
+
+```bash
+# Backup with previous business day date (skips weekends)
+cronn -c "0 1 * * 1-5" backup.sh --date={{.WYYYYMMDD}}
+
+# Report for business day based on EOD logic
+# If run before 5pm, uses previous business day; after 5pm uses current day
+cronn -c "0 18 * * *" generate-report.sh {{.YYYYMMDDEOD}}
+
+# Example behavior:
+# Monday 2025-01-06 at 9am:
+#   {{.YYYYMMDD}}     → 20250106 (current day)
+#   {{.WYYYYMMDD}}    → 20250103 (Friday, skipped weekend)
+#   {{.YYYYMMDDEOD}}  → 20250103 (before 5pm EOD, uses previous business day)
+
+# Monday 2025-01-06 at 6pm:
+#   {{.YYYYMMDD}}     → 20250106 (current day)
+#   {{.WYYYYMMDD}}    → 20250103 (Friday, skipped weekend)
+#   {{.YYYYMMDDEOD}}  → 20250106 (after 5pm EOD, uses current day)
+```
 
 ### Configuration file formats
 

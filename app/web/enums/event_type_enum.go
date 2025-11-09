@@ -2,9 +2,8 @@
 package enums
 
 import (
-	"fmt"
-
 	"database/sql/driver"
+	"fmt"
 )
 
 // EventType is the exported type for the enum

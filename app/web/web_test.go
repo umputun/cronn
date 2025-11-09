@@ -748,10 +748,9 @@ func TestServer_handleToggleTheme(t *testing.T) {
 		current  string
 		expected string
 	}{
-		{"auto to light", "auto", "light"},
 		{"light to dark", "light", "dark"},
-		{"dark to auto", "dark", "auto"},
-		{"no cookie defaults to light", "", "light"},
+		{"dark to light", "dark", "light"},
+		{"no cookie - dark default toggles to light", "", "light"},
 	}
 
 	for _, tt := range tests {
@@ -1333,7 +1332,7 @@ func TestServer_getTheme_CookieErrors(t *testing.T) {
 		})
 
 		theme := server.getTheme(req)
-		assert.Equal(t, enums.ThemeAuto, theme) // should return default
+		assert.Equal(t, enums.ThemeDark, theme) // should return default
 	})
 
 	t.Run("empty cookie value", func(t *testing.T) {
@@ -1344,7 +1343,15 @@ func TestServer_getTheme_CookieErrors(t *testing.T) {
 		})
 
 		theme := server.getTheme(req)
-		assert.Equal(t, enums.ThemeAuto, theme) // should return default
+		assert.Equal(t, enums.ThemeDark, theme) // should return default
+	})
+
+	t.Run("no cookie", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		// no cookie set
+
+		theme := server.getTheme(req)
+		assert.Equal(t, enums.ThemeDark, theme) // should return dark default
 	})
 }
 

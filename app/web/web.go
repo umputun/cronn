@@ -670,12 +670,13 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	stats := s.getJobsWithStats(sortMode, filterMode)
 
 	// prepare template data
+	theme := s.getTheme(r)
 	data := TemplateData{
 		Jobs:         stats.jobs,
 		ViewMode:     newMode,
 		SortMode:     sortMode,
 		FilterMode:   filterMode,
-		Theme:        s.getTheme(r),
+		Theme:        theme,
 		TotalCount:   stats.totalCount,
 		RunningCount: stats.runningCount,
 		NextRunTime:  stats.nextRunTime,
@@ -718,16 +719,11 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	currentTheme := s.getTheme(r)
 
-	// cycle: light -> dark -> auto -> light
+	// toggle: light <-> dark
 	var nextTheme enums.Theme
-	switch currentTheme {
-	case enums.ThemeLight:
+	if currentTheme == enums.ThemeLight {
 		nextTheme = enums.ThemeDark
-	case enums.ThemeDark:
-		nextTheme = enums.ThemeAuto
-	case enums.ThemeAuto:
-		nextTheme = enums.ThemeLight
-	default:
+	} else {
 		nextTheme = enums.ThemeLight
 	}
 
@@ -1130,12 +1126,12 @@ func (s *Server) getViewMode(r *http.Request) enums.ViewMode {
 func (s *Server) getTheme(r *http.Request) enums.Theme {
 	cookie, err := r.Cookie("theme")
 	if err != nil {
-		return enums.ThemeAuto // default
+		return enums.ThemeDark // default to dark when no cookie
 	}
 	theme, err := enums.ParseTheme(cookie.Value)
 	if err != nil {
 		log.Printf("[WARN] invalid theme %q: %v", cookie.Value, err)
-		return enums.ThemeAuto // default on parse error
+		return enums.ThemeDark // default on parse error
 	}
 	return theme
 }

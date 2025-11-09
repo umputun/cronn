@@ -2,9 +2,8 @@
 package enums
 
 import (
-	"fmt"
-
 	"database/sql/driver"
+	"fmt"
 )
 
 // SortMode is the exported type for the enum

@@ -293,21 +293,33 @@ The dashboard is accessible via web browser at the configured address. Job data 
 <details markdown>
   <summary>Screenshots</summary>
 
-### Light Theme - Card View
+### Desktop - Dark Theme
 
-![Dashboard Light Cards](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-light-cards.png)
+![Dashboard Dark Desktop](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-dark-desktop.png)
 
-### Light Theme - List View
+### Desktop - Light Theme
 
-![Dashboard Light List](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-light-list.png)
+![Dashboard Light Desktop](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-light-desktop.png)
 
-### Dark Theme - Card View
+### List View
 
-![Dashboard Dark Cards](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-dark-cards.png)
+![Dashboard List View](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-list-view.png)
 
-### Dark Theme - List View
+### Sort by Next Run
 
-![Dashboard Dark List](https://raw.githubusercontent.com/umputun/cronn/master/docs/screenshots/dashboard-dark-list.png)
+![Dashboard Sort Next Run](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-sort-nextrun.png)
+
+### Sort by Last Run
+
+![Dashboard Sort Last Run](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-sort-lastrun.png)
+
+### Mobile - Dark Theme
+
+![Dashboard Dark Mobile](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-dark-mobile.png)
+
+### Mobile - Light Theme
+
+![Dashboard Light Mobile](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-light-mobile.png)
 
 </details>
 

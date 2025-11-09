@@ -42,12 +42,12 @@
 // All actual code should use the generated exported types.
 package enums
 
-//go:generate go run github.com/go-pkgz/enum@latest -type jobStatus -lower
-//go:generate go run github.com/go-pkgz/enum@latest -type eventType -lower
-//go:generate go run github.com/go-pkgz/enum@latest -type viewMode -lower
-//go:generate go run github.com/go-pkgz/enum@latest -type theme -lower
-//go:generate go run github.com/go-pkgz/enum@latest -type sortMode -lower
-//go:generate go run github.com/go-pkgz/enum@latest -type filterMode -lower
+//go:generate go run github.com/go-pkgz/enum@latest -type jobStatus -lower -sql
+//go:generate go run github.com/go-pkgz/enum@latest -type eventType -lower -sql
+//go:generate go run github.com/go-pkgz/enum@latest -type viewMode -lower -sql
+//go:generate go run github.com/go-pkgz/enum@latest -type theme -lower -sql
+//go:generate go run github.com/go-pkgz/enum@latest -type sortMode -lower -sql
+//go:generate go run github.com/go-pkgz/enum@latest -type filterMode -lower -sql
 
 // jobStatus represents the status of a job.
 // This is an unexported type used only as input for the code generator.
@@ -90,7 +90,6 @@ type theme int
 const (
 	themeLight theme = iota
 	themeDark
-	themeAuto
 )
 
 // sortMode represents job sorting modes.

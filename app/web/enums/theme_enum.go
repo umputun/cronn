@@ -2,9 +2,8 @@
 package enums
 
 import (
-	"fmt"
-
 	"database/sql/driver"
+	"fmt"
 )
 
 // Theme is the exported type for the enum
@@ -71,7 +70,6 @@ func (e *Theme) Scan(value interface{}) error {
 var _themeParseMap = map[string]Theme{
 	"light": ThemeLight,
 	"dark":  ThemeDark,
-	"auto":  ThemeAuto,
 }
 
 // ParseTheme converts string to theme enum value
@@ -97,21 +95,18 @@ func MustTheme(v string) Theme {
 var (
 	ThemeLight = Theme{name: "light", value: 0}
 	ThemeDark  = Theme{name: "dark", value: 1}
-	ThemeAuto  = Theme{name: "auto", value: 2}
 )
 
 // ThemeValues contains all possible enum values
 var ThemeValues = []Theme{
 	ThemeLight,
 	ThemeDark,
-	ThemeAuto,
 }
 
 // ThemeNames contains all possible enum names
 var ThemeNames = []string{
 	"light",
 	"dark",
-	"auto",
 }
 
 // ThemeIter returns a function compatible with Go 1.23's range-over-func syntax.
@@ -139,7 +134,5 @@ var _ = func() bool {
 	var _ theme = themeLight
 	// This avoids "defined but not used" linter error for themeDark
 	var _ theme = themeDark
-	// This avoids "defined but not used" linter error for themeAuto
-	var _ theme = themeAuto
 	return true
 }()

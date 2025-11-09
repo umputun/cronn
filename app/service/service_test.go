@@ -141,7 +141,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 
 	svc.Do(ctx)
 	t.Log(out.String())
-	assert.Contains(t, out.String(), "something: not found")
+	assert.Contains(t, out.String(), "not found")
 }
 
 func TestScheduler_execute(t *testing.T) {

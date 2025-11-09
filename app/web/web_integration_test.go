@@ -123,7 +123,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 
 	t.Run("theme toggle", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/toggle-theme", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "theme", Value: "auto"})
+		req.AddCookie(&http.Cookie{Name: "theme", Value: "light"})
 		w := httptest.NewRecorder()
 
 		server.handleThemeToggle(w, req)
@@ -134,7 +134,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 		cookies := resp.Cookies()
 		require.Len(t, cookies, 1)
 		assert.Equal(t, "theme", cookies[0].Name)
-		assert.Equal(t, "light", cookies[0].Value)
+		assert.Equal(t, "dark", cookies[0].Value)
 	})
 
 	t.Run("view mode toggle", func(t *testing.T) {

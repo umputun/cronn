@@ -837,7 +837,7 @@ code {
 .footer {
     background: var(--color-surface);
     border-top: 1px solid var(--color-border);
-    padding: var(--spacing-md) var(--spacing-lg);
+    padding: var(--spacing-sm) var(--spacing-md);
     text-align: center;
     color: var(--color-text-secondary);
     font-size: 0.875rem;

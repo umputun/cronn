@@ -194,7 +194,7 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 		// notify job start after resumer registration
 		startTime := time.Now()
 		if s.JobEventHandler != nil {
-			s.JobEventHandler.OnJobStart(cmd, r.Spec, startTime)
+			s.JobEventHandler.OnJobStart(r.Command, r.Spec, startTime)
 		}
 
 		err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
@@ -210,7 +210,7 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 					exitCode = 1 // generic error for non-exec errors
 				}
 			}
-			s.JobEventHandler.OnJobComplete(cmd, r.Spec, startTime, endTime, exitCode, err)
+			s.JobEventHandler.OnJobComplete(r.Command, r.Spec, startTime, endTime, exitCode, err)
 		}
 
 		ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)

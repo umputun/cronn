@@ -426,7 +426,8 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 		defer server1.jobsMu.RUnlock()
 		job1, exists1 := server1.jobs[HashCommand("echo test1")]
 		job2, exists2 := server1.jobs[HashCommand("echo test2")]
-		return exists1 && exists2 && !job1.IsRunning && !job2.IsRunning
+		return exists1 && exists2 && !job1.IsRunning && !job2.IsRunning &&
+			job1.LastStatus == enums.JobStatusSuccess && job2.LastStatus == enums.JobStatusFailed
 	}, time.Second, 10*time.Millisecond)
 
 	// persist job changes to database

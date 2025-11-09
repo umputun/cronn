@@ -627,7 +627,7 @@ func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) e
 		return fmt.Errorf("failed to render stats updates: %w", err)
 	}
 
-	// render view mode button if OOB
+	// render view mode button if OOB (for multi-tab sync during polling)
 	var buttonHTML bytes.Buffer
 	if data.IsOOB {
 		if err := tmpl.ExecuteTemplate(&buttonHTML, "view-mode-button", data); err != nil {
@@ -638,10 +638,16 @@ func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) e
 	// write response
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(jobsHTML.Bytes())
-	_, _ = w.Write(statsHTML.Bytes())
+	if _, err := w.Write(jobsHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write jobs HTML: %v", err)
+	}
+	if _, err := w.Write(statsHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write stats HTML: %v", err)
+	}
 	if buttonHTML.Len() > 0 {
-		_, _ = w.Write(buttonHTML.Bytes())
+		if _, err := w.Write(buttonHTML.Bytes()); err != nil {
+			log.Printf("[ERROR] failed to write button HTML: %v", err)
+		}
 	}
 
 	return nil
@@ -828,8 +834,12 @@ func (s *Server) renderSortedJobs(w http.ResponseWriter, data TemplateData) erro
 
 	// write response with all OOB updates
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(jobsHTML.Bytes())
-	_, _ = w.Write(sortButtonHTML.Bytes())
+	if _, err := w.Write(jobsHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write jobs HTML: %v", err)
+	}
+	if _, err := w.Write(sortButtonHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write sort button HTML: %v", err)
+	}
 
 	return nil
 }
@@ -935,9 +945,15 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
 
 	// write response with all OOB updates
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(jobsHTML.Bytes())
-	_, _ = w.Write(filterButtonHTML.Bytes())
-	_, _ = w.Write(statsHTML.Bytes())
+	if _, err := w.Write(jobsHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write jobs HTML: %v", err)
+	}
+	if _, err := w.Write(filterButtonHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write filter button HTML: %v", err)
+	}
+	if _, err := w.Write(statsHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write stats HTML: %v", err)
+	}
 
 	return nil
 }
@@ -1042,8 +1058,11 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 		Schedule: job.Schedule,
 	}:
 		log.Printf("[INFO] manual trigger sent for job %s: %s", jobID, job.Command)
+		w.Header().Set("HX-Trigger", "refresh-jobs")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte("Job triggered"))
+		if _, err := w.Write([]byte("Job triggered")); err != nil {
+			log.Printf("[ERROR] failed to write response: %v", err)
+		}
 	default:
 		// non-blocking send failed, channel full
 		http.Error(w, "System busy, too many manual triggers", http.StatusServiceUnavailable)

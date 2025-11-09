@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/static/style.css">
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
-<body hx-boost="true" hx-ext="response-targets">
+<body hx-boost="true">
     <div class="app">
         <!-- Header with controls -->
         <header class="header">
@@ -63,7 +63,7 @@
         <footer class="footer">
             <span>© {{.CurrentYear}} Umputun</span>
             <span class="separator">•</span>
-            <a href="https://github.com/umputun/cronn" class="footer-link">GitHub</a>
+            <a href="https://github.com/umputun/cronn" class="footer-link" data-hx-boost="false">GitHub</a>
             {{if .AuthEnabled}}
             <span class="separator">•</span>
             <a href="/logout" class="footer-link" data-hx-boost="false">Logout</a>
@@ -71,9 +71,8 @@
         </footer>
     </div>
 
-    <!-- HTMX and extensions -->
+    <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/htmx-ext-response-targets@2.0.1/response-targets.js"></script>
 
     <!-- Handle refresh-jobs event -->
     <script>

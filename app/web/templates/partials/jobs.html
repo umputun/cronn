@@ -218,11 +218,11 @@
 {{end}}
 
 {{define "view-mode-button"}}
-<button hx-post="/api/view-mode" 
+<button hx-post="/api/view-mode"
         hx-trigger="click"
         hx-target="#jobs-container"
         hx-swap="outerHTML"
-        hx-swap-oob="outerHTML:.view-toggle"
+        {{if .IsOOB}}hx-swap-oob="outerHTML:.view-toggle"{{end}}
         class="control-btn view-toggle"
         title="Toggle view mode">
     {{if eq .ViewMode.String "cards"}}

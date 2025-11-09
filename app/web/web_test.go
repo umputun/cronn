@@ -710,6 +710,8 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	assert.Contains(t, body, "job-card")
 	assert.Contains(t, body, "echo test1")
 	assert.Contains(t, body, "echo test2")
+	// verify view-mode-button IS rendered during polling (for multi-tab sync)
+	assert.Contains(t, body, "view-toggle")
 
 	// test list view
 	req = httptest.NewRequest("GET", "/api/jobs", http.NoBody)
@@ -726,6 +728,8 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	assert.Contains(t, body, "jobs-table")
 	assert.Contains(t, body, "echo test1")
 	assert.Contains(t, body, "echo test2")
+	// verify view-mode-button IS rendered during polling (for multi-tab sync)
+	assert.Contains(t, body, "view-toggle")
 }
 
 func TestServer_handleToggleTheme(t *testing.T) {
@@ -1869,6 +1873,7 @@ func TestServer_handleRunJob(t *testing.T) {
 
 		assert.Equal(t, http.StatusAccepted, w.Code)
 		assert.Equal(t, "Job triggered", w.Body.String())
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"))
 
 		// verify manual trigger was sent
 		select {

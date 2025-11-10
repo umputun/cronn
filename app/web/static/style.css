@@ -633,7 +633,7 @@ code {
 }
 
 .jobs-table thead {
-    background: var(--color-bg);
+    background: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
 }
 
@@ -1069,7 +1069,7 @@ code {
 }
 
 .history-table thead {
-    background: var(--color-bg);
+    background: var(--color-surface);
     border-bottom: 2px solid var(--color-border);
 }
 

@@ -35,3 +35,6 @@ test_schedule.go
 
 # Playwright screenshots
 .playwright-mcp/
+
+# Internal process docs
+CONDUCTOR_UPDATE.md

@@ -92,6 +92,22 @@
         <div class="modal-content" id="modal-content"></div>
     </div>
 
+    <!-- Confirmation dialog -->
+    <div id="confirm-dialog" class="modal-backdrop" style="display: none;">
+        <div class="confirm-modal">
+            <div class="confirm-header">
+                <h3 id="confirm-title">Confirm Action</h3>
+            </div>
+            <div class="confirm-body">
+                <p id="confirm-message"></p>
+            </div>
+            <div class="confirm-actions">
+                <button class="btn-cancel" onclick="window.confirmResolve(false)">Cancel</button>
+                <button class="btn-confirm" onclick="window.confirmResolve(true)">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
 
@@ -103,14 +119,59 @@
             htmx.ajax('GET', '/api/jobs' + searchParam, {target: '#jobs-container', swap: 'innerHTML'});
         });
 
-        // close modal on ESC key
+        // close modal on ESC key and confirm on Enter
         document.addEventListener('keydown', function(e) {
+            const modal = document.getElementById('job-modal');
+            const confirmDialog = document.getElementById('confirm-dialog');
+            const dialogVisible = confirmDialog && confirmDialog.style.display !== 'none';
+
             if (e.key === 'Escape') {
-                const modal = document.getElementById('job-modal');
                 if (modal && modal.style.display !== 'none') {
                     modal.style.display = 'none';
                 }
+                if (dialogVisible && typeof window.confirmResolve === 'function') {
+                    window.confirmResolve(false);
+                }
             }
+
+            if (
+                dialogVisible &&
+                e.key === 'Enter' &&
+                !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
+                typeof window.confirmResolve === 'function'
+            ) {
+                e.preventDefault();
+                window.confirmResolve(true);
+            }
+        });
+
+        // custom confirm dialog
+        window.customConfirm = function(message) {
+            return new Promise(function(resolve) {
+                const dialog = document.getElementById('confirm-dialog');
+                const messageEl = document.getElementById('confirm-message');
+                messageEl.textContent = message;
+                dialog.style.display = 'flex';
+
+                window.confirmResolve = function(result) {
+                    dialog.style.display = 'none';
+                    resolve(result);
+                };
+            });
+        };
+
+        // override HTMX confirm behavior
+        document.body.addEventListener('htmx:confirm', function(evt) {
+            const question = evt.detail && evt.detail.question;
+            if (!question) {
+                return;
+            }
+            evt.preventDefault();
+            window.customConfirm(question).then(function(confirmed) {
+                if (confirmed) {
+                    evt.detail.issueRequest(true);
+                }
+            });
         });
     </script>
 </body>

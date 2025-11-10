@@ -59,8 +59,7 @@
                     {{if and .Enabled (not .IsRunning)}}
                     hx-post="/api/jobs/{{.ID}}/run"
                     hx-swap="none"
-                    hx-confirm="{{.Command}}"
-                    hx-indicator="#run-spinner-{{.ID}}"
+                    hx-confirm='{{.Command}}'
                     hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
                     {{else}}
                     disabled
@@ -70,7 +69,6 @@
                 </svg>
                 <span>Run</span>
             </button>
-            {{if and .Enabled (not .IsRunning)}}<span id="run-spinner-{{.ID}}" class="htmx-indicator spinner-small"></span>{{end}}
         </div>
     </div>
     
@@ -200,8 +198,7 @@
                         {{if and .Enabled (not .IsRunning)}}
                         hx-post="/api/jobs/{{.ID}}/run"
                         hx-swap="none"
-                        hx-confirm="{{.Command}}"
-                        hx-indicator="#run-spinner-{{.ID}}"
+                        hx-confirm='{{.Command}}'
                         hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
                         {{else}}
                         disabled
@@ -211,7 +208,6 @@
                     </svg>
                     <span>Run</span>
                 </button>
-                {{if and .Enabled (not .IsRunning)}}<span id="run-spinner-{{.ID}}" class="htmx-indicator spinner-small"></span>{{end}}
             </td>
         </tr>
         {{end}}
@@ -261,7 +257,6 @@
      hx-get="/api/jobs"
      hx-trigger="load, every 5s"
      hx-swap="innerHTML settle:0ms"
-     hx-indicator="none"
      hx-include="[name='search']"
      class="jobs-container {{.ViewMode}}">
 {{if eq .ViewMode.String "cards"}}

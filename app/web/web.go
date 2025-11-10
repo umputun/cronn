@@ -447,6 +447,10 @@ func (s *Server) processEvents(ctx context.Context) {
 			return
 		case event := <-s.eventChan:
 			s.handleJobEvent(event)
+			// persist jobs after status changes to ensure database stays in sync
+			if event.EventType == enums.EventTypeCompleted || event.EventType == enums.EventTypeFailed {
+				s.persistJobs()
+			}
 		}
 	}
 }

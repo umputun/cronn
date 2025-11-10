@@ -21,7 +21,6 @@
          hx-get="/api/jobs"
          hx-trigger="load, every 5s"
          hx-swap="innerHTML settle:0ms"
-         hx-indicator="none"
          hx-include="[name='search']"
          class="jobs-container {{.ViewMode}}">
         <!-- Jobs will be loaded here via HTMX -->

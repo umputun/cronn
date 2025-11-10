@@ -114,7 +114,7 @@
     </div>
 
     <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
+    <script src="/static/htmx.min.js"></script>
 
     <!-- Handle refresh-jobs event -->
     <script>
@@ -169,16 +169,22 @@
             });
         };
 
-        // override HTMX confirm behavior
+        // override HTMX confirm behavior - capture URL and issue request directly
         document.body.addEventListener('htmx:confirm', function(evt) {
             const question = evt.detail && evt.detail.question;
             if (!question) {
                 return;
             }
             evt.preventDefault();
+
+            // capture the POST URL from the triggering element
+            const target = evt.detail.target;
+            const postUrl = target.getAttribute('hx-post');
+
             window.customConfirm(question).then(function(confirmed) {
-                if (confirmed) {
-                    evt.detail.issueRequest(true);
+                if (confirmed && postUrl) {
+                    // issue request directly via htmx.ajax with body as target
+                    htmx.ajax('POST', postUrl, {target: 'body', swap: 'none'});
                 }
             });
         });

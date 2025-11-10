@@ -283,7 +283,11 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 ### Features
 - **Real-time job monitoring** with live updates every 30 seconds
 - **Persistent job history** stored in SQLite database that survives restarts
-- **Manual job execution** - run any job on-demand directly from the UI with a single click
+- **Manual job execution** with advanced capabilities:
+  - Edit commands before execution for one-off modifications
+  - Override template variables with custom dates (YYYYMMDD format)
+  - Execution history showing last 50 runs with both base and executed commands
+  - Visual indicators for customized manual runs
 - **Multiple view modes**: Card view and compact list view with toggle button
 - **Sorting options**: Sort jobs by original order, last run time, or next run time
 - **Status filtering**: Filter jobs by status (all, running, success, failed)

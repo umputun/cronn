@@ -1035,6 +1035,12 @@ code {
     font-size: var(--text-base);
     line-height: 1.5;
     margin: 0;
+    font-family: var(--font-mono);
+    background: var(--color-bg);
+    padding: var(--spacing-md);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .confirm-actions {

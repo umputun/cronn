@@ -43,7 +43,7 @@
                     {{if and .Enabled (not .IsRunning)}}
                     hx-post="/api/jobs/{{.ID}}/run"
                     hx-swap="none"
-                    hx-confirm="Run job now: {{.Command}}?"
+                    hx-confirm="{{.Command}}"
                     hx-indicator="#run-spinner-{{.ID}}"
                     hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
                     {{else}}
@@ -168,7 +168,7 @@
                         {{if and .Enabled (not .IsRunning)}}
                         hx-post="/api/jobs/{{.ID}}/run"
                         hx-swap="none"
-                        hx-confirm="Run job now: {{.Command}}?"
+                        hx-confirm="{{.Command}}"
                         hx-indicator="#run-spinner-{{.ID}}"
                         hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
                         {{else}}

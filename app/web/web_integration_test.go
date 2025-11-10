@@ -62,13 +62,13 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// simulate some job events
-	server.OnJobStart("echo hourly", "0 * * * *", time.Now())
+	server.OnJobStart("echo hourly", "echo hourly", "0 * * * *", time.Now())
 	time.Sleep(10 * time.Millisecond)
-	server.OnJobComplete("echo hourly", "0 * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
+	server.OnJobComplete("echo hourly", "echo hourly", "0 * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
 
-	server.OnJobStart("echo five-minutes", "*/5 * * * *", time.Now())
+	server.OnJobStart("echo five-minutes", "echo five-minutes", "*/5 * * * *", time.Now())
 	time.Sleep(10 * time.Millisecond)
-	server.OnJobComplete("echo five-minutes", "*/5 * * * *", time.Now().Add(-time.Second), time.Now(), 1, fmt.Errorf("test error"))
+	server.OnJobComplete("echo five-minutes", "echo five-minutes", "*/5 * * * *", time.Now().Add(-time.Second), time.Now(), 1, fmt.Errorf("test error"))
 
 	t.Run("dashboard", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", http.NoBody)
@@ -414,11 +414,11 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 
 	// simulate job execution events
 	now := time.Now()
-	server1.OnJobStart("echo test1", "* * * * *", now)
-	server1.OnJobComplete("echo test1", "* * * * *", now, now.Add(time.Second), 0, nil)
+	server1.OnJobStart("echo test1", "echo test1", "* * * * *", now)
+	server1.OnJobComplete("echo test1", "echo test1", "* * * * *", now, now.Add(time.Second), 0, nil)
 
-	server1.OnJobStart("echo test2", "0 * * * *", now.Add(-time.Hour))
-	server1.OnJobComplete("echo test2", "0 * * * *", now.Add(-time.Hour), now.Add(-time.Hour).Add(time.Second), 1, fmt.Errorf("test error"))
+	server1.OnJobStart("echo test2", "echo test2", "0 * * * *", now.Add(-time.Hour))
+	server1.OnJobComplete("echo test2", "echo test2", "0 * * * *", now.Add(-time.Hour), now.Add(-time.Hour).Add(time.Second), 1, fmt.Errorf("test error"))
 
 	// wait for events to be processed
 	require.Eventually(t, func() bool {
@@ -720,10 +720,10 @@ func TestServer_ConcurrentJobEvents(t *testing.T) {
 				// randomly send start or complete events
 				if j%2 == 0 {
 					// send start event
-					server.OnJobStart(jobCmd, "* * * * *", startTime.Add(time.Duration(j)*time.Millisecond))
+					server.OnJobStart(jobCmd, jobCmd, "* * * * *", startTime.Add(time.Duration(j)*time.Millisecond))
 				} else {
 					// send complete event
-					server.OnJobComplete(jobCmd, "* * * * *",
+					server.OnJobComplete(jobCmd, jobCmd, "* * * * *",
 						startTime.Add(time.Duration(j-1)*time.Millisecond),
 						startTime.Add(time.Duration(j)*time.Millisecond),
 						0, nil)
@@ -954,9 +954,9 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 		for i := 0; i < 50; i++ {
 			jobCmd := fmt.Sprintf("echo job%d", i%10)
 			if i%2 == 0 {
-				server.OnJobStart(jobCmd, "* * * * *", time.Now())
+				server.OnJobStart(jobCmd, jobCmd, "* * * * *", time.Now())
 			} else {
-				server.OnJobComplete(jobCmd, "* * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
+				server.OnJobComplete(jobCmd, jobCmd, "* * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
 			}
 			time.Sleep(2 * time.Millisecond)
 		}

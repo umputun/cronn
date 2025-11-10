@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -285,7 +286,7 @@ func TestServer_OnJobStart(t *testing.T) {
 	go server.processEvents(ctx)
 
 	startTime := time.Now()
-	server.OnJobStart("echo test", "* * * * *", startTime)
+	server.OnJobStart("echo test", "echo test", "* * * * *", startTime)
 
 	// wait for event to be processed
 	require.Eventually(t, func() bool {
@@ -332,7 +333,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 	endTime := startTime.Add(time.Second)
 
 	// first start the job
-	server.OnJobStart("echo test", "* * * * *", startTime)
+	server.OnJobStart("echo test", "echo test", "* * * * *", startTime)
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -341,7 +342,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	// then complete it successfully
-	server.OnJobComplete("echo test", "* * * * *", startTime, endTime, 0, nil)
+	server.OnJobComplete("echo test", "echo test", "* * * * *", startTime, endTime, 0, nil)
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -359,7 +360,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 	assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
 
 	// test with error
-	server.OnJobStart("echo error", "* * * * *", startTime)
+	server.OnJobStart("echo error", "echo error", "* * * * *", startTime)
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -367,7 +368,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 		return exists && job.LastStatus == enums.JobStatusRunning
 	}, time.Second, 10*time.Millisecond)
 
-	server.OnJobComplete("echo error", "* * * * *", startTime, endTime, 1, fmt.Errorf("test error"))
+	server.OnJobComplete("echo error", "echo error", "* * * * *", startTime, endTime, 1, fmt.Errorf("test error"))
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -401,10 +402,10 @@ func TestServer_handleViewModeToggle(t *testing.T) {
 
 	// add test jobs
 	startTime := time.Now()
-	server.OnJobStart("echo test1", "* * * * *", startTime)
-	server.OnJobComplete("echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo test2", "0 * * * *", startTime.Add(-time.Hour))
-	server.OnJobComplete("echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-59*time.Minute), 1, fmt.Errorf("failed"))
+	server.OnJobStart("echo test1", "echo test1", "* * * * *", startTime)
+	server.OnJobComplete("echo test1", "echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
+	server.OnJobStart("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour))
+	server.OnJobComplete("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-59*time.Minute), 1, fmt.Errorf("failed"))
 
 	// start event processor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -535,7 +536,7 @@ func TestServer_OnJobStartEdgeCases(t *testing.T) {
 
 	// test with invalid schedule that will fail to parse
 	startTime := time.Now()
-	server.OnJobStart("echo test", "invalid schedule", startTime)
+	server.OnJobStart("echo test", "echo test", "invalid schedule", startTime)
 
 	// wait a bit for processing
 	time.Sleep(50 * time.Millisecond)
@@ -552,7 +553,7 @@ func TestServer_OnJobStartEdgeCases(t *testing.T) {
 	assert.Equal(t, enums.JobStatusRunning, job.LastStatus)
 
 	// test updating an existing job - schedule should NOT change from events
-	server.OnJobStart("echo test", "* * * * *", startTime.Add(time.Hour))
+	server.OnJobStart("echo test", "echo test", "* * * * *", startTime.Add(time.Hour))
 
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
@@ -641,7 +642,7 @@ func TestServer_handleDashboard(t *testing.T) {
 	go server.processEvents(ctx)
 
 	// add test job
-	server.OnJobStart("echo test", "* * * * *", time.Now())
+	server.OnJobStart("echo test", "echo test", "* * * * *", time.Now())
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -685,9 +686,9 @@ func TestServer_handleAPIJobs(t *testing.T) {
 
 	// add test jobs
 	startTime := time.Now()
-	server.OnJobStart("echo test1", "* * * * *", startTime)
-	server.OnJobComplete("echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo test2", "@daily", startTime)
+	server.OnJobStart("echo test1", "echo test1", "* * * * *", startTime)
+	server.OnJobComplete("echo test1", "echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
+	server.OnJobStart("echo test2", "echo test2", "@daily", startTime)
 
 	// wait for all events to be processed
 	require.Eventually(t, func() bool {
@@ -754,10 +755,10 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 
 	// add test jobs with different commands
 	startTime := time.Now()
-	server.OnJobStart("echo backup daily", "* * * * *", startTime)
-	server.OnJobComplete("echo backup daily", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo cleanup logs", "@daily", startTime)
-	server.OnJobStart("python backup.py", "@weekly", startTime)
+	server.OnJobStart("echo backup daily", "echo backup daily", "* * * * *", startTime)
+	server.OnJobComplete("echo backup daily", "echo backup daily", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
+	server.OnJobStart("echo cleanup logs", "echo cleanup logs", "@daily", startTime)
+	server.OnJobStart("python backup.py", "python backup.py", "@weekly", startTime)
 
 	// wait for all events to be processed
 	require.Eventually(t, func() bool {
@@ -1175,10 +1176,10 @@ func TestServer_handleSortToggle(t *testing.T) {
 
 	// add test jobs with different schedules
 	startTime := time.Now()
-	server.OnJobStart("echo test1", "* * * * *", startTime)
-	server.OnJobComplete("echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo test2", "0 * * * *", startTime.Add(-time.Hour))
-	server.OnJobComplete("echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-time.Hour).Add(time.Second), 0, nil)
+	server.OnJobStart("echo test1", "echo test1", "* * * * *", startTime)
+	server.OnJobComplete("echo test1", "echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
+	server.OnJobStart("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour))
+	server.OnJobComplete("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-time.Hour).Add(time.Second), 0, nil)
 
 	// start event processor to handle the job events
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1988,8 +1989,10 @@ func TestServer_handleRunJob(t *testing.T) {
 		// verify manual trigger was sent
 		select {
 		case trigger := <-manualTrigger:
+			assert.Equal(t, "test-job-id", trigger.JobID)
 			assert.Equal(t, "echo test", trigger.Command)
 			assert.Equal(t, "* * * * *", trigger.Schedule)
+			assert.Nil(t, trigger.CustomDate)
 		case <-time.After(100 * time.Millisecond):
 			t.Fatal("manual trigger not received")
 		}
@@ -2112,6 +2115,85 @@ func TestServer_handleRunJob(t *testing.T) {
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 		assert.Contains(t, w.Body.String(), "Manual trigger not configured")
 	})
+
+	t.Run("manual trigger with edited command", func(t *testing.T) {
+		// create form data with edited command
+		form := url.Values{}
+		form.Add("command", "echo edited")
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req.SetPathValue("id", "test-job-id")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+
+		// verify edited command was sent
+		select {
+		case trigger := <-manualTrigger:
+			assert.Equal(t, "test-job-id", trigger.JobID)
+			assert.Equal(t, "echo edited", trigger.Command)
+			assert.Equal(t, "* * * * *", trigger.Schedule)
+			assert.Nil(t, trigger.CustomDate)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("manual trigger not received")
+		}
+	})
+
+	t.Run("manual trigger with custom date", func(t *testing.T) {
+		// create form data with custom date
+		form := url.Values{}
+		form.Add("command", "echo test")
+		form.Add("date", "20241225")
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req.SetPathValue("id", "test-job-id")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+
+		// verify custom date was sent in local timezone
+		select {
+		case trigger := <-manualTrigger:
+			assert.Equal(t, "test-job-id", trigger.JobID)
+			assert.Equal(t, "echo test", trigger.Command)
+			assert.Equal(t, "* * * * *", trigger.Schedule)
+			require.NotNil(t, trigger.CustomDate)
+			// verify date components
+			assert.Equal(t, 2024, trigger.CustomDate.Year())
+			assert.Equal(t, time.December, trigger.CustomDate.Month())
+			assert.Equal(t, 25, trigger.CustomDate.Day())
+			// verify it's midnight in local timezone, not UTC
+			assert.Equal(t, time.Local, trigger.CustomDate.Location())
+			assert.Equal(t, 0, trigger.CustomDate.Hour())
+			assert.Equal(t, 0, trigger.CustomDate.Minute())
+			assert.Equal(t, 0, trigger.CustomDate.Second())
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("manual trigger not received")
+		}
+	})
+
+	t.Run("manual trigger with invalid date format", func(t *testing.T) {
+		// create form data with invalid date
+		form := url.Values{}
+		form.Add("command", "echo test")
+		form.Add("date", "invalid")
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req.SetPathValue("id", "test-job-id")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Invalid date format")
+	})
 }
 
 func TestServer_handleJobHistory(t *testing.T) {
@@ -2135,9 +2217,9 @@ func TestServer_handleJobHistory(t *testing.T) {
 
 	t.Run("successful retrieval with executions", func(t *testing.T) {
 		baseTime := time.Now()
-		err = server.store.RecordExecution("test-job-id", baseTime.Add(-5*time.Minute), baseTime.Add(-4*time.Minute), enums.JobStatusSuccess, 0)
+		err = server.store.RecordExecution("test-job-id", baseTime.Add(-5*time.Minute), baseTime.Add(-4*time.Minute), enums.JobStatusSuccess, 0, "echo test1")
 		require.NoError(t, err)
-		err = server.store.RecordExecution("test-job-id", baseTime.Add(-2*time.Minute), baseTime.Add(-1*time.Minute), enums.JobStatusFailed, 1)
+		err = server.store.RecordExecution("test-job-id", baseTime.Add(-2*time.Minute), baseTime.Add(-1*time.Minute), enums.JobStatusFailed, 1, "echo test2")
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/jobs/test-job-id/history", http.NoBody)

@@ -101,94 +101,31 @@
     <div id="confirm-dialog" class="modal-backdrop" style="display: none;">
         <div class="confirm-modal">
             <div class="confirm-header">
-                <h3 id="confirm-title">Confirm Action</h3>
+                <h3 id="confirm-title">Confirm Manual Run</h3>
             </div>
             <div class="confirm-body">
-                <p id="confirm-message"></p>
+                <div class="confirm-field">
+                    <label for="confirm-command">Command:</label>
+                    <textarea id="confirm-command" rows="3"></textarea>
+                </div>
+                <div class="confirm-field" id="confirm-date-field" style="display: none;">
+                    <label for="confirm-date">Date (YYYYMMDD):</label>
+                    <input type="text" id="confirm-date" pattern="\d{8}" placeholder="YYYYMMDD (optional)">
+                    <small>Leave empty to use current date</small>
+                </div>
+                <input type="hidden" id="confirm-job-id">
+                <input type="hidden" id="confirm-post-url">
             </div>
             <div class="confirm-actions">
                 <button class="btn-cancel" onclick="window.confirmResolve(false)">Cancel</button>
-                <button class="btn-confirm" onclick="window.confirmResolve(true)">Confirm</button>
+                <button class="btn-confirm" onclick="window.confirmResolve(true)">Run</button>
             </div>
         </div>
     </div>
 
     <!-- HTMX -->
     <script src="/static/htmx.min.js"></script>
-
-    <!-- Handle refresh-jobs event -->
-    <script>
-        document.body.addEventListener('refresh-jobs', function(evt) {
-            const searchInput = document.querySelector('[name="search"]');
-            const searchParam = searchInput && searchInput.value ? '?search=' + encodeURIComponent(searchInput.value) : '';
-            htmx.ajax('GET', '/api/jobs' + searchParam, {target: '#jobs-container', swap: 'innerHTML'});
-        });
-
-        // close modal on ESC key and confirm on Enter
-        document.addEventListener('keydown', function(e) {
-            const modal = document.getElementById('job-modal');
-            const historyModal = document.getElementById('history-modal');
-            const confirmDialog = document.getElementById('confirm-dialog');
-            const dialogVisible = confirmDialog && confirmDialog.style.display !== 'none';
-
-            if (e.key === 'Escape') {
-                if (modal && modal.style.display !== 'none') {
-                    modal.style.display = 'none';
-                }
-                if (historyModal && historyModal.style.display !== 'none') {
-                    historyModal.style.display = 'none';
-                }
-                if (dialogVisible && typeof window.confirmResolve === 'function') {
-                    window.confirmResolve(false);
-                }
-            }
-
-            if (
-                dialogVisible &&
-                e.key === 'Enter' &&
-                !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
-                typeof window.confirmResolve === 'function'
-            ) {
-                e.preventDefault();
-                window.confirmResolve(true);
-            }
-        });
-
-        // custom confirm dialog
-        window.customConfirm = function(message) {
-            return new Promise(function(resolve) {
-                const dialog = document.getElementById('confirm-dialog');
-                const messageEl = document.getElementById('confirm-message');
-                messageEl.textContent = message;
-                dialog.style.display = 'flex';
-
-                window.confirmResolve = function(result) {
-                    dialog.style.display = 'none';
-                    resolve(result);
-                };
-            });
-        };
-
-        // override HTMX confirm behavior - capture URL and issue request directly
-        document.body.addEventListener('htmx:confirm', function(evt) {
-            const question = evt.detail && evt.detail.question;
-            if (!question) {
-                return;
-            }
-            evt.preventDefault();
-
-            // capture the POST URL from the triggering element
-            const target = evt.detail.target;
-            const postUrl = target.getAttribute('hx-post');
-
-            window.customConfirm(question).then(function(confirmed) {
-                if (confirmed && postUrl) {
-                    // issue request directly via htmx.ajax with body as target
-                    htmx.ajax('POST', postUrl, {target: 'body', swap: 'none'});
-                }
-            });
-        });
-    </script>
+    <script src="/static/app.js"></script>
 </body>
 </html>
 {{end}}

@@ -71,20 +71,21 @@ type JobsProvider interface {
 type Persistence interface {
 	LoadJobs() ([]persistence.JobInfo, error)
 	SaveJobs(jobs []persistence.JobInfo) error
-	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error
+	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int, executedCommand string) error
 	GetExecutions(jobID string, limit int) ([]persistence.ExecutionInfo, error)
 	Close() error
 }
 
 // JobEvent represents job execution events
 type JobEvent struct {
-	JobID      string
-	Command    string
-	Schedule   string
-	EventType  enums.EventType
-	ExitCode   int
-	StartedAt  time.Time
-	FinishedAt time.Time
+	JobID           string
+	Command         string
+	ExecutedCommand string
+	Schedule        string
+	EventType       enums.EventType
+	ExitCode        int
+	StartedAt       time.Time
+	FinishedAt      time.Time
 }
 
 // TemplateData holds data for templates
@@ -270,13 +271,14 @@ func (s *Server) routes() http.Handler {
 }
 
 // OnJobStart implements service.JobEventHandler interface
-func (s *Server) OnJobStart(command, schedule string, startTime time.Time) {
+func (s *Server) OnJobStart(command, executedCommand, schedule string, startTime time.Time) {
 	event := JobEvent{
-		JobID:     HashCommand(command),
-		Command:   command,
-		Schedule:  schedule,
-		EventType: enums.EventTypeStarted,
-		StartedAt: startTime,
+		JobID:           HashCommand(command),
+		Command:         command,
+		ExecutedCommand: executedCommand,
+		Schedule:        schedule,
+		EventType:       enums.EventTypeStarted,
+		StartedAt:       startTime,
 	}
 	select {
 	case s.eventChan <- event:
@@ -286,19 +288,20 @@ func (s *Server) OnJobStart(command, schedule string, startTime time.Time) {
 }
 
 // OnJobComplete implements service.JobEventHandler interface
-func (s *Server) OnJobComplete(command, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+func (s *Server) OnJobComplete(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
 	eventType := enums.EventTypeCompleted
 	if err != nil {
 		eventType = enums.EventTypeFailed
 	}
 	event := JobEvent{
-		JobID:      HashCommand(command),
-		Command:    command,
-		Schedule:   schedule,
-		EventType:  eventType,
-		ExitCode:   exitCode,
-		StartedAt:  startTime,
-		FinishedAt: endTime,
+		JobID:           HashCommand(command),
+		Command:         command,
+		ExecutedCommand: executedCommand,
+		Schedule:        schedule,
+		EventType:       eventType,
+		ExitCode:        exitCode,
+		StartedAt:       startTime,
+		FinishedAt:      endTime,
 	}
 	select {
 	case s.eventChan <- event:
@@ -493,7 +496,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.LastStatus = enums.JobStatusSuccess
 		s.updateNextRun(&job)
 		// save execution to database
-		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil {
+		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode, event.ExecutedCommand); err != nil {
 			log.Printf("[WARN] failed to save execution: %v", err)
 		}
 	case enums.EventTypeFailed:
@@ -501,7 +504,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.LastStatus = enums.JobStatusFailed
 		s.updateNextRun(&job)
 		// save execution to database
-		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil {
+		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode, event.ExecutedCommand); err != nil {
 			log.Printf("[WARN] failed to save execution: %v", err)
 		}
 	}
@@ -1061,6 +1064,30 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// parse form data
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	// get command from form, fallback to job command if not provided
+	command := r.FormValue("command")
+	if command == "" {
+		command = job.Command
+	}
+
+	// parse custom date if provided
+	var customDate *time.Time
+	dateStr := r.FormValue("date")
+	if dateStr != "" {
+		parsedDate, err := time.ParseInLocation("20060102", dateStr, time.Local)
+		if err != nil {
+			http.Error(w, "Invalid date format, expected YYYYMMDD", http.StatusBadRequest)
+			return
+		}
+		customDate = &parsedDate
+	}
+
 	// use request context with timeout for sending
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
@@ -1070,10 +1097,12 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Request canceled", http.StatusRequestTimeout)
 		return
 	case s.manualTrigger <- service.ManualJobRequest{
-		Command:  job.Command,
-		Schedule: job.Schedule,
+		JobID:      jobID,
+		Command:    command,
+		Schedule:   job.Schedule,
+		CustomDate: customDate,
 	}:
-		log.Printf("[INFO] manual trigger sent for job %s: %s", jobID, job.Command)
+		log.Printf("[INFO] manual trigger sent for job %s: %s", jobID, command)
 		w.Header().Set("HX-Trigger", "refresh-jobs")
 		w.WriteHeader(http.StatusAccepted)
 		if _, err := w.Write([]byte("Job triggered")); err != nil {

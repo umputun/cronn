@@ -131,7 +131,7 @@ func TestSQLiteStore_RecordExecution(t *testing.T) {
 	// record an execution
 	started := time.Now().Add(-5 * time.Second)
 	finished := time.Now()
-	err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0)
+	err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0, "echo test")
 	require.NoError(t, err)
 
 	// verify execution was recorded
@@ -152,6 +152,28 @@ func TestSQLiteStore_RecordExecution(t *testing.T) {
 	assert.WithinDuration(t, finished, finishedAt, time.Second)
 	assert.Equal(t, enums.JobStatusSuccess.String(), status)
 	assert.Equal(t, 0, exitCode)
+}
+
+func TestSQLiteStore_RecordExecutionWithEditedCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	// record execution with different executed command
+	started := time.Now().Add(-5 * time.Second)
+	finished := time.Now()
+	err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0, "echo edited")
+	require.NoError(t, err)
+
+	// verify executed command is stored
+	executions, err := store.GetExecutions("job1", 50)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	assert.Equal(t, "echo edited", executions[0].ExecutedCommand)
+	assert.Equal(t, enums.JobStatusSuccess, executions[0].Status)
 }
 
 func TestSQLiteStore_UpdateExistingJobs(t *testing.T) {
@@ -292,7 +314,7 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		}
 
 		for _, exec := range executions {
-			err = store.RecordExecution("job1", exec.started, exec.finished, exec.status, exec.exitCode)
+			err = store.RecordExecution("job1", exec.started, exec.finished, exec.status, exec.exitCode, "echo test")
 			require.NoError(t, err)
 		}
 
@@ -328,7 +350,7 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
 			finished := started.Add(30 * time.Second)
-			err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0)
+			err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0, "echo test")
 			require.NoError(t, err)
 		}
 

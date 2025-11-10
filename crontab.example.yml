@@ -4,7 +4,7 @@
 jobs:
   # Using traditional spec field
   - spec: "*/5 * * * *"
-    command: "ls -la ."
+    command: "ls -la . && echo {{.YYYYMMDD}}"
     name: "Directory listing"  # optional: descriptive name shown in logs
   
   # Using structured sched field (alternative to spec)

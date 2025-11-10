@@ -14,10 +14,10 @@ import (
 //
 //		// make and configure a mocked service.JobEventHandler
 //		mockedJobEventHandler := &JobEventHandlerMock{
-//			OnJobCompleteFunc: func(command string, schedule string, startTime time.Time, endTime time.Time, exitCode int, err error)  {
+//			OnJobCompleteFunc: func(command string, executedCommand string, schedule string, startTime time.Time, endTime time.Time, exitCode int, err error)  {
 //				panic("mock out the OnJobComplete method")
 //			},
-//			OnJobStartFunc: func(command string, schedule string, startTime time.Time)  {
+//			OnJobStartFunc: func(command string, executedCommand string, schedule string, startTime time.Time)  {
 //				panic("mock out the OnJobStart method")
 //			},
 //		}
@@ -28,10 +28,10 @@ import (
 //	}
 type JobEventHandlerMock struct {
 	// OnJobCompleteFunc mocks the OnJobComplete method.
-	OnJobCompleteFunc func(command string, schedule string, startTime time.Time, endTime time.Time, exitCode int, err error)
+	OnJobCompleteFunc func(command string, executedCommand string, schedule string, startTime time.Time, endTime time.Time, exitCode int, err error)
 
 	// OnJobStartFunc mocks the OnJobStart method.
-	OnJobStartFunc func(command string, schedule string, startTime time.Time)
+	OnJobStartFunc func(command string, executedCommand string, schedule string, startTime time.Time)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -39,6 +39,8 @@ type JobEventHandlerMock struct {
 		OnJobComplete []struct {
 			// Command is the command argument value.
 			Command string
+			// ExecutedCommand is the executedCommand argument value.
+			ExecutedCommand string
 			// Schedule is the schedule argument value.
 			Schedule string
 			// StartTime is the startTime argument value.
@@ -54,6 +56,8 @@ type JobEventHandlerMock struct {
 		OnJobStart []struct {
 			// Command is the command argument value.
 			Command string
+			// ExecutedCommand is the executedCommand argument value.
+			ExecutedCommand string
 			// Schedule is the schedule argument value.
 			Schedule string
 			// StartTime is the startTime argument value.
@@ -65,29 +69,31 @@ type JobEventHandlerMock struct {
 }
 
 // OnJobComplete calls OnJobCompleteFunc.
-func (mock *JobEventHandlerMock) OnJobComplete(command string, schedule string, startTime time.Time, endTime time.Time, exitCode int, err error) {
+func (mock *JobEventHandlerMock) OnJobComplete(command string, executedCommand string, schedule string, startTime time.Time, endTime time.Time, exitCode int, err error) {
 	if mock.OnJobCompleteFunc == nil {
 		panic("JobEventHandlerMock.OnJobCompleteFunc: method is nil but JobEventHandler.OnJobComplete was just called")
 	}
 	callInfo := struct {
-		Command   string
-		Schedule  string
-		StartTime time.Time
-		EndTime   time.Time
-		ExitCode  int
-		Err       error
+		Command         string
+		ExecutedCommand string
+		Schedule        string
+		StartTime       time.Time
+		EndTime         time.Time
+		ExitCode        int
+		Err             error
 	}{
-		Command:   command,
-		Schedule:  schedule,
-		StartTime: startTime,
-		EndTime:   endTime,
-		ExitCode:  exitCode,
-		Err:       err,
+		Command:         command,
+		ExecutedCommand: executedCommand,
+		Schedule:        schedule,
+		StartTime:       startTime,
+		EndTime:         endTime,
+		ExitCode:        exitCode,
+		Err:             err,
 	}
 	mock.lockOnJobComplete.Lock()
 	mock.calls.OnJobComplete = append(mock.calls.OnJobComplete, callInfo)
 	mock.lockOnJobComplete.Unlock()
-	mock.OnJobCompleteFunc(command, schedule, startTime, endTime, exitCode, err)
+	mock.OnJobCompleteFunc(command, executedCommand, schedule, startTime, endTime, exitCode, err)
 }
 
 // OnJobCompleteCalls gets all the calls that were made to OnJobComplete.
@@ -95,20 +101,22 @@ func (mock *JobEventHandlerMock) OnJobComplete(command string, schedule string, 
 //
 //	len(mockedJobEventHandler.OnJobCompleteCalls())
 func (mock *JobEventHandlerMock) OnJobCompleteCalls() []struct {
-	Command   string
-	Schedule  string
-	StartTime time.Time
-	EndTime   time.Time
-	ExitCode  int
-	Err       error
+	Command         string
+	ExecutedCommand string
+	Schedule        string
+	StartTime       time.Time
+	EndTime         time.Time
+	ExitCode        int
+	Err             error
 } {
 	var calls []struct {
-		Command   string
-		Schedule  string
-		StartTime time.Time
-		EndTime   time.Time
-		ExitCode  int
-		Err       error
+		Command         string
+		ExecutedCommand string
+		Schedule        string
+		StartTime       time.Time
+		EndTime         time.Time
+		ExitCode        int
+		Err             error
 	}
 	mock.lockOnJobComplete.RLock()
 	calls = mock.calls.OnJobComplete
@@ -117,23 +125,25 @@ func (mock *JobEventHandlerMock) OnJobCompleteCalls() []struct {
 }
 
 // OnJobStart calls OnJobStartFunc.
-func (mock *JobEventHandlerMock) OnJobStart(command string, schedule string, startTime time.Time) {
+func (mock *JobEventHandlerMock) OnJobStart(command string, executedCommand string, schedule string, startTime time.Time) {
 	if mock.OnJobStartFunc == nil {
 		panic("JobEventHandlerMock.OnJobStartFunc: method is nil but JobEventHandler.OnJobStart was just called")
 	}
 	callInfo := struct {
-		Command   string
-		Schedule  string
-		StartTime time.Time
+		Command         string
+		ExecutedCommand string
+		Schedule        string
+		StartTime       time.Time
 	}{
-		Command:   command,
-		Schedule:  schedule,
-		StartTime: startTime,
+		Command:         command,
+		ExecutedCommand: executedCommand,
+		Schedule:        schedule,
+		StartTime:       startTime,
 	}
 	mock.lockOnJobStart.Lock()
 	mock.calls.OnJobStart = append(mock.calls.OnJobStart, callInfo)
 	mock.lockOnJobStart.Unlock()
-	mock.OnJobStartFunc(command, schedule, startTime)
+	mock.OnJobStartFunc(command, executedCommand, schedule, startTime)
 }
 
 // OnJobStartCalls gets all the calls that were made to OnJobStart.
@@ -141,14 +151,16 @@ func (mock *JobEventHandlerMock) OnJobStart(command string, schedule string, sta
 //
 //	len(mockedJobEventHandler.OnJobStartCalls())
 func (mock *JobEventHandlerMock) OnJobStartCalls() []struct {
-	Command   string
-	Schedule  string
-	StartTime time.Time
+	Command         string
+	ExecutedCommand string
+	Schedule        string
+	StartTime       time.Time
 } {
 	var calls []struct {
-		Command   string
-		Schedule  string
-		StartTime time.Time
+		Command         string
+		ExecutedCommand string
+		Schedule        string
+		StartTime       time.Time
 	}
 	mock.lockOnJobStart.RLock()
 	calls = mock.calls.OnJobStart

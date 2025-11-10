@@ -745,8 +745,8 @@ func TestScheduler_JobEventHandler(t *testing.T) {
 		var capturedErrors []error
 
 		mockEventHandler := &mocks.JobEventHandlerMock{
-			OnJobStartFunc: func(command, schedule string, startTime time.Time) {},
-			OnJobCompleteFunc: func(command, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
 				capturedExitCodes = append(capturedExitCodes, exitCode)
 				capturedErrors = append(capturedErrors, err)
 			},
@@ -755,13 +755,13 @@ func TestScheduler_JobEventHandler(t *testing.T) {
 		svc := &Scheduler{JobEventHandler: mockEventHandler}
 
 		// test successful job (exit code 0)
-		svc.JobEventHandler.OnJobComplete("echo test", "* * * * *", time.Now(), time.Now(), 0, nil)
+		svc.JobEventHandler.OnJobComplete("echo test", "echo test", "* * * * *", time.Now(), time.Now(), 0, nil)
 
 		// test failed job with specific exit code
-		svc.JobEventHandler.OnJobComplete("exit 42", "* * * * *", time.Now(), time.Now(), 42, errors.New("exit status 42"))
+		svc.JobEventHandler.OnJobComplete("exit 42", "exit 42", "* * * * *", time.Now(), time.Now(), 42, errors.New("exit status 42"))
 
 		// test generic error (non-exec)
-		svc.JobEventHandler.OnJobComplete("invalid", "* * * * *", time.Now(), time.Now(), 1, errors.New("command not found"))
+		svc.JobEventHandler.OnJobComplete("invalid", "invalid", "* * * * *", time.Now(), time.Now(), 1, errors.New("command not found"))
 
 		// verify captured values
 		require.Len(t, capturedExitCodes, 3)
@@ -806,13 +806,13 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		var capturedCommand string
 		var capturedStartTime time.Time
 		mockEventHandler := &mocks.JobEventHandlerMock{
-			OnJobStartFunc: func(command, schedule string, startTime time.Time) {
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
 				mu.Lock()
 				defer mu.Unlock()
 				capturedCommand = command
 				capturedStartTime = startTime
 			},
-			OnJobCompleteFunc: func(command, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
 				// job complete handler
 			},
 		}
@@ -839,7 +839,9 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 
 		// send manual trigger
 		startBefore := time.Now()
+		jobID := s.jobIDFromCommand("echo test")
 		manualTrigger <- ManualJobRequest{
+			JobID:    jobID,
 			Command:  "echo test",
 			Schedule: "* * * * *",
 		}
@@ -959,6 +961,153 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 
 		// scheduler should have stopped cleanly
 		assert.Equal(t, 1, len(mockCron.StopCalls()))
+	})
+
+	t.Run("manual trigger with custom date for template parsing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		mockCron := &mocks.CronMock{
+			StartFunc:   func() {},
+			StopFunc:    context.Background,
+			EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		mockParser := &mocks.CrontabParserMock{
+			StringFunc: func() string { return "test.crontab" },
+			ListFunc: func() ([]crontab.JobSpec, error) {
+				return []crontab.JobSpec{
+					{Spec: "* * * * *", Command: "echo {{.YYYYMMDD}}"},
+				}, nil
+			},
+		}
+
+		var mu sync.Mutex
+		var capturedExecutedCommand string
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
+				mu.Lock()
+				defer mu.Unlock()
+				capturedExecutedCommand = executedCommand
+			},
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+				// job complete handler
+			},
+		}
+
+		manualTrigger := make(chan ManualJobRequest, 10)
+		s := &Scheduler{
+			Cron:             mockCron,
+			CrontabParser:    mockParser,
+			ManualTrigger:    manualTrigger,
+			Resumer:          resumer.New("", false),
+			DeDup:            NewDeDup(false),
+			JobEventHandler:  mockEventHandler,
+			Stdout:           &bytes.Buffer{},
+			ConditionChecker: conditions.NewChecker(1),
+			Repeater:         repeater.New(&strategy.Once{}),
+		}
+
+		go s.Do(ctx)
+		time.Sleep(100 * time.Millisecond)
+
+		// send manual trigger with custom date
+		customDate := time.Date(2024, 12, 25, 10, 0, 0, 0, time.UTC)
+		jobID := s.jobIDFromCommand("echo {{.YYYYMMDD}}")
+		manualTrigger <- ManualJobRequest{
+			JobID:      jobID,
+			Command:    "echo {{.YYYYMMDD}}",
+			Schedule:   "* * * * *",
+			CustomDate: &customDate,
+		}
+
+		// wait for job to execute
+		time.Sleep(200 * time.Millisecond)
+
+		// verify executed command has the custom date, not today's date
+		mu.Lock()
+		assert.Equal(t, "echo 20241225", capturedExecutedCommand)
+		mu.Unlock()
+
+		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
+	})
+
+	t.Run("manual trigger with edited command", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		mockCron := &mocks.CronMock{
+			StartFunc:   func() {},
+			StopFunc:    context.Background,
+			EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		mockParser := &mocks.CrontabParserMock{
+			StringFunc: func() string { return "test.crontab" },
+			ListFunc: func() ([]crontab.JobSpec, error) {
+				return []crontab.JobSpec{
+					{Spec: "* * * * *", Command: "echo original"},
+				}, nil
+			},
+		}
+
+		var mu sync.Mutex
+		var capturedBaseCommand string
+		var capturedExecutedCommand string
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
+				mu.Lock()
+				defer mu.Unlock()
+				capturedBaseCommand = command
+				capturedExecutedCommand = executedCommand
+			},
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+				// job complete handler
+			},
+		}
+
+		manualTrigger := make(chan ManualJobRequest, 10)
+		s := &Scheduler{
+			Cron:             mockCron,
+			CrontabParser:    mockParser,
+			ManualTrigger:    manualTrigger,
+			Resumer:          resumer.New("", false),
+			DeDup:            NewDeDup(false),
+			JobEventHandler:  mockEventHandler,
+			Stdout:           &bytes.Buffer{},
+			ConditionChecker: conditions.NewChecker(1),
+			Repeater:         repeater.New(&strategy.Once{}),
+		}
+
+		go s.Do(ctx)
+		time.Sleep(100 * time.Millisecond)
+
+		// send manual trigger with edited command
+		jobID := s.jobIDFromCommand("echo original")
+		manualTrigger <- ManualJobRequest{
+			JobID:    jobID,
+			Command:  "echo edited",
+			Schedule: "* * * * *",
+		}
+
+		// wait for job to execute
+		time.Sleep(200 * time.Millisecond)
+
+		// verify base command remains original, but executed command is edited
+		mu.Lock()
+		assert.Equal(t, "echo original", capturedBaseCommand)
+		assert.Equal(t, "echo edited", capturedExecutedCommand)
+		mu.Unlock()
+
+		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
 	})
 }
 

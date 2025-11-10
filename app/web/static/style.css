@@ -532,16 +532,12 @@ code {
 
 .job-command {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: var(--spacing-2);
     background: var(--color-bg);
     padding: var(--spacing-3);
     border-radius: 6px;
     margin: var(--spacing-3) 0;
-}
-
-.job-command .icon {
-    margin-top: 0.25em;
 }
 
 .job-command code {
@@ -855,6 +851,148 @@ code {
 .separator {
     margin: 0 var(--spacing-sm);
     color: var(--color-text-muted);
+}
+
+/* Info button */
+.info-btn {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    padding: 4px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.2s ease;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.info-btn:hover {
+    color: var(--color-text);
+    background: var(--color-surface-hover);
+    border-color: var(--color-text-secondary);
+    transform: scale(1.1);
+}
+
+/* Modal */
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    backdrop-filter: blur(2px);
+}
+
+.modal-content {
+    max-width: 70%;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.job-modal {
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--color-border);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.modal-header h2 {
+    font-size: var(--text-xl);
+    font-weight: var(--font-semibold);
+    color: var(--color-text);
+    margin: 0;
+}
+
+.modal-close {
+    background: transparent;
+    border: none;
+    padding: var(--spacing-xs);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+}
+
+.modal-body {
+    padding: var(--spacing-lg);
+}
+
+.modal-row {
+    display: grid;
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.modal-row:first-child {
+    grid-template-columns: auto 1fr auto;
+}
+
+.modal-row:nth-child(2) {
+    grid-template-columns: 1fr 1fr;
+}
+
+.modal-section {
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-section-full {
+    margin-top: var(--spacing-lg);
+}
+
+.modal-label {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--spacing-xs);
+}
+
+.modal-value {
+    color: var(--color-text);
+    font-size: var(--text-base);
+}
+
+.modal-value code {
+    background: var(--color-bg);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: 4px;
+    font-size: var(--text-sm);
+    display: inline-block;
+}
+
+.modal-command code {
+    display: block;
+    padding: var(--spacing-md);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    line-height: 1.5;
 }
 
 /* Loading */

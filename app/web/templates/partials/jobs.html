@@ -59,11 +59,17 @@
     </div>
     
     <div class="job-command">
-        <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/>
-            <path d="M7 10l2 2-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M13 14h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
+        <button class="info-btn"
+                hx-get="/api/jobs/{{.ID}}/modal"
+                hx-target="#modal-content"
+                hx-swap="innerHTML"
+                hx-on::after-request="document.getElementById('job-modal').style.display='flex'"
+                title="Show job details">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </button>
         <code title="{{.Command}}">{{truncate .Command 60}}</code>
     </div>
     
@@ -133,6 +139,17 @@
             </td>
             
             <td class="td-command command">
+                <button class="info-btn"
+                        hx-get="/api/jobs/{{.ID}}/modal"
+                        hx-target="#modal-content"
+                        hx-swap="innerHTML"
+                        hx-on::after-request="document.getElementById('job-modal').style.display='flex'"
+                        title="Show job details">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                        <path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </button>
                 <code class="command-text" title="{{.Command}}">{{truncate .Command 80}}</code>
             </td>
             
@@ -260,4 +277,93 @@
 <span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span>
 <span id="total-count" hx-swap-oob="innerHTML">{{.TotalCount}}</span>
 {{end}}
+{{end}}
+
+{{define "job-modal"}}
+<div class="job-modal">
+    <div class="modal-header">
+        <h2>Job Details</h2>
+        <button class="modal-close" onclick="document.getElementById('job-modal').style.display='none'">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </button>
+    </div>
+
+    <div class="modal-body">
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Status</div>
+                <div class="modal-value">
+                    {{if .IsRunning}}
+                    <div class="status-badge running">
+                        <div class="status-dot"></div>
+                        Running
+                    </div>
+                    {{else if eq .LastStatus.String "success"}}
+                    <div class="status-badge success">
+                        <div class="status-dot"></div>
+                        Success
+                    </div>
+                    {{else if eq .LastStatus.String "failed"}}
+                    <div class="status-badge failed">
+                        <div class="status-dot"></div>
+                        Failed
+                    </div>
+                    {{else}}
+                    <div class="status-badge idle">
+                        <div class="status-dot"></div>
+                        Idle
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-label">Schedule</div>
+                <div class="modal-value">
+                    <code>{{.Schedule}}</code>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-label">Enabled</div>
+                <div class="modal-value">
+                    {{if .Enabled}}Yes{{else}}No{{end}}
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Next Run</div>
+                <div class="modal-value">
+                    {{if .NextRun.IsZero}}
+                    Never
+                    {{else}}
+                    {{.NextRun.Format "2006-01-02 15:04:05"}} ({{timeUntil .NextRun}})
+                    {{end}}
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-label">Last Run</div>
+                <div class="modal-value">
+                    {{if .LastRun.IsZero}}
+                    Never
+                    {{else}}
+                    {{.LastRun.Format "2006-01-02 15:04:05"}} ({{humanTime .LastRun}})
+                    {{end}}
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-section modal-section-full">
+            <div class="modal-label">Command</div>
+            <div class="modal-value modal-command">
+                <code>{{.Command}}</code>
+            </div>
+        </div>
+    </div>
+</div>
 {{end}}

@@ -251,6 +251,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
 		api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
+		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
 	})
 
 	// static files with proper error handling
@@ -1073,6 +1074,30 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 		// non-blocking send failed, channel full
 		http.Error(w, "System busy, too many manual triggers", http.StatusServiceUnavailable)
 	}
+}
+
+// handleJobModal handles job details modal requests
+func (s *Server) handleJobModal(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		http.Error(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+
+	s.jobsMu.RLock()
+	job, exists := s.jobs[jobID]
+	s.jobsMu.RUnlock()
+
+	if !exists {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// create a copy and update next run time
+	jobCopy := job
+	s.updateNextRun(&jobCopy)
+
+	s.render(w, "partials/jobs.html", "job-modal", jobCopy)
 }
 
 // render renders a template

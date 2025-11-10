@@ -87,6 +87,11 @@
         </footer>
     </div>
 
+    <!-- Modal container -->
+    <div id="job-modal" class="modal-backdrop" style="display: none;" onclick="if(event.target === this) this.style.display='none'">
+        <div class="modal-content" id="modal-content"></div>
+    </div>
+
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
 
@@ -96,6 +101,16 @@
             const searchInput = document.querySelector('[name="search"]');
             const searchParam = searchInput && searchInput.value ? '?search=' + encodeURIComponent(searchInput.value) : '';
             htmx.ajax('GET', '/api/jobs' + searchParam, {target: '#jobs-container', swap: 'innerHTML'});
+        });
+
+        // close modal on ESC key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('job-modal');
+                if (modal && modal.style.display !== 'none') {
+                    modal.style.display = 'none';
+                }
+            }
         });
     </script>
 </body>

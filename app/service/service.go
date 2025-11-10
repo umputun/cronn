@@ -414,8 +414,7 @@ func (s *Scheduler) listenForManualTriggers(ctx context.Context) {
 			var originalJob *crontab.JobSpec
 			for i := range allJobs {
 				if s.jobIDFromCommand(allJobs[i].Command) == req.JobID {
-					job := allJobs[i]
-					originalJob = &job
+					originalJob = &allJobs[i]
 					break
 				}
 			}

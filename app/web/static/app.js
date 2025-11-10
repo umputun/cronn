@@ -49,7 +49,7 @@ window.customConfirm = function(command, postUrl) {
         postUrlInput.value = postUrl;
 
         // show date field if command contains templates
-        const hasTemplates = command.indexOf('{' + '{') !== -1 || command.indexOf('[' + '[') !== -1;
+        const hasTemplates = /\{\{|\[\[/.test(command);
         dateField.style.display = hasTemplates ? 'block' : 'none';
 
         // clear date input

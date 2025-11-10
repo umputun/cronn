@@ -212,7 +212,7 @@ code {
 
 .search-input {
     width: 100%;
-    padding: 6px 14px 6px 36px;
+    padding: 7px 14px 7px 36px;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: 20px;

@@ -270,6 +270,152 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	assert.Equal(t, 1, len(notif.SendCalls()))
 }
 
+func TestScheduler_runJobWithCommand(t *testing.T) {
+	t.Run("successful execution with template parsing", func(t *testing.T) {
+		customTime := time.Date(2024, 12, 25, 10, 0, 0, 0, time.UTC)
+
+		resmr := &mocks.ResumerMock{
+			OnStartFunc: func(cmd string) (string, error) {
+				assert.Equal(t, "echo 20241225", cmd)
+				return "resume.file", nil
+			},
+			OnFinishFunc: func(fname string) error {
+				assert.Equal(t, "resume.file", fname)
+				return nil
+			},
+		}
+
+		var mu sync.Mutex
+		var capturedBaseCommand, capturedExecutedCommand string
+		var capturedExitCode int
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
+				mu.Lock()
+				defer mu.Unlock()
+				capturedBaseCommand = command
+				capturedExecutedCommand = executedCommand
+			},
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+				mu.Lock()
+				defer mu.Unlock()
+				capturedExitCode = exitCode
+			},
+		}
+
+		wr := bytes.NewBuffer(nil)
+		svc := Scheduler{
+			Stdout:          wr,
+			Resumer:         resmr,
+			Repeater:        repeater.New(&strategy.Once{}),
+			DeDup:           NewDeDup(true),
+			JobEventHandler: mockEventHandler,
+			NotifyTimeout:   time.Second,
+		}
+
+		err := svc.runJobWithCommand(context.Background(),
+			crontab.JobSpec{Spec: "* * * * *", Command: "echo base"},
+			"echo {{.YYYYMMDD}}",
+			&customTime,
+			repeater.New(&strategy.Once{}))
+
+		require.NoError(t, err)
+		assert.Contains(t, wr.String(), "20241225")
+		assert.Equal(t, 1, len(resmr.OnStartCalls()))
+		assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+
+		mu.Lock()
+		assert.Equal(t, "echo base", capturedBaseCommand)
+		assert.Equal(t, "echo 20241225", capturedExecutedCommand)
+		assert.Equal(t, 0, capturedExitCode)
+		mu.Unlock()
+	})
+
+	t.Run("dedup prevents concurrent execution", func(t *testing.T) {
+		resmr := &mocks.ResumerMock{
+			OnStartFunc:  func(cmd string) (string, error) { return "resume.file", nil },
+			OnFinishFunc: func(fname string) error { return nil },
+		}
+
+		wr := bytes.NewBuffer(nil)
+		dedup := NewDeDup(true)
+		svc := Scheduler{
+			Stdout:        wr,
+			Resumer:       resmr,
+			Repeater:      repeater.New(&strategy.Once{}),
+			DeDup:         dedup,
+			NotifyTimeout: time.Second,
+		}
+
+		jobSpec := crontab.JobSpec{Spec: "* * * * *", Command: "echo test"}
+
+		// first execution should succeed
+		dedup.Add("echo test#* * * * *")
+		err := svc.runJobWithCommand(context.Background(), jobSpec, "echo test", nil, repeater.New(&strategy.Once{}))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicated job")
+	})
+
+	t.Run("failed execution with exit code", func(t *testing.T) {
+		resmr := &mocks.ResumerMock{
+			OnStartFunc: func(cmd string) (string, error) {
+				return "resume.file", nil
+			},
+		}
+
+		var mu sync.Mutex
+		var capturedExitCode int
+		var capturedErr error
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+				mu.Lock()
+				defer mu.Unlock()
+				capturedExitCode = exitCode
+				capturedErr = err
+			},
+		}
+
+		wr := bytes.NewBuffer(nil)
+		svc := Scheduler{
+			Stdout:          wr,
+			Resumer:         resmr,
+			Repeater:        repeater.New(&strategy.Once{}),
+			DeDup:           NewDeDup(true),
+			JobEventHandler: mockEventHandler,
+			NotifyTimeout:   time.Second,
+		}
+
+		err := svc.runJobWithCommand(context.Background(),
+			crontab.JobSpec{Spec: "* * * * *", Command: "false"},
+			"false",
+			nil,
+			repeater.New(&strategy.Once{}))
+
+		require.Error(t, err)
+		mu.Lock()
+		assert.Equal(t, 1, capturedExitCode)
+		assert.Error(t, capturedErr)
+		mu.Unlock()
+	})
+
+	t.Run("template parsing error", func(t *testing.T) {
+		svc := Scheduler{
+			Repeater:      repeater.New(&strategy.Once{}),
+			DeDup:         NewDeDup(true),
+			NotifyTimeout: time.Second,
+		}
+
+		err := svc.runJobWithCommand(context.Background(),
+			crontab.JobSpec{Spec: "* * * * *", Command: "echo test"},
+			"echo {{.INVALID}}",
+			nil,
+			repeater.New(&strategy.Once{}))
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "can't evaluate field INVALID")
+	})
+}
+
 func TestScheduler_notifyOnError(t *testing.T) {
 	notif := &mocks.NotifierMock{
 		SendFunc: func(ctx context.Context, destination string, text string) error {

@@ -179,78 +179,80 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 	return s.jobFuncWithTime(ctx, r, sched, nil)
 }
 
+// runJobWithCommand executes a job with the specified command string after parsing through template
+// r.Command is used for job identity, commandToParse is what actually gets parsed and executed
+func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, commandToParse string, customTime *time.Time, rptr Repeater) error {
+	// use custom time if provided, otherwise use current time
+	templateTime := time.Now()
+	if customTime != nil {
+		templateTime = *customTime
+	}
+
+	// parse the command through template
+	cmd, err := NewDayTemplate(templateTime, AltTemplateFormat(s.AltTemplate)).Parse(commandToParse)
+	if err != nil {
+		return err
+	}
+
+	dedupKey := cmd + "#" + r.Spec // dedup by command and spec
+	if !s.DeDup.Add(dedupKey) {
+		// already running
+		return fmt.Errorf("duplicated job %q ignored", dedupKey)
+	}
+	defer s.DeDup.Remove(dedupKey)
+
+	rfile, rerr := s.Resumer.OnStart(cmd) // register job in resumer prior to execution
+	if rerr != nil {
+		return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
+	}
+
+	// notify job start after resumer registration
+	// use r.Command for identity, cmd for execution
+	startTime := time.Now()
+	if s.JobEventHandler != nil {
+		s.JobEventHandler.OnJobStart(r.Command, cmd, r.Spec, startTime)
+	}
+
+	err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
+
+	// notify job complete
+	endTime := time.Now()
+	if s.JobEventHandler != nil {
+		exitCode := 0
+		if err != nil {
+			if exitError, ok := err.(*exec.ExitError); ok {
+				exitCode = exitError.ExitCode()
+			} else {
+				exitCode = 1 // generic error for non-exec errors
+			}
+		}
+		s.JobEventHandler.OnJobComplete(r.Command, cmd, r.Spec, startTime, endTime, exitCode, err)
+	}
+
+	ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
+	defer cancel()
+	var errMsg string
+	if err != nil {
+		errMsg = err.Error()
+	}
+	if e := s.notify(ctxTimeout, r, errMsg); e != nil {
+		return fmt.Errorf("failed to notify: %w", e)
+	}
+	if err != nil {
+		return err
+	}
+
+	// if no error, finish (unregister) resumer
+	if err := s.Resumer.OnFinish(rfile); err != nil {
+		return fmt.Errorf("failed to finish resumer for %s: %w", rfile, err)
+	}
+
+	return nil
+}
+
 // jobFuncWithEditedCommand creates job function with edited command for manual execution
 // r.Command is used for job identity, editedCmd is what actually gets executed
 func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobSpec, editedCmd string, customTime *time.Time) cron.FuncJob {
-	runJob := func(ctx context.Context, r crontab.JobSpec, rptr Repeater) error {
-		// use custom time if provided, otherwise use current time
-		templateTime := time.Now()
-		if customTime != nil {
-			templateTime = *customTime
-		}
-
-		// parse the edited command through template
-		cmd, err := NewDayTemplate(templateTime, AltTemplateFormat(s.AltTemplate)).Parse(editedCmd)
-		if err != nil {
-			return err
-		}
-
-		dedupKey := cmd + "#" + r.Spec // dedup by command and spec
-		if !s.DeDup.Add(dedupKey) {
-			// already running
-			return fmt.Errorf("duplicated job %q ignored", dedupKey)
-		}
-		defer s.DeDup.Remove(dedupKey)
-
-		rfile, rerr := s.Resumer.OnStart(cmd) // register job in resumer prior to execution
-		if rerr != nil {
-			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
-		}
-
-		// notify job start after resumer registration
-		// use r.Command for identity, cmd for execution
-		startTime := time.Now()
-		if s.JobEventHandler != nil {
-			s.JobEventHandler.OnJobStart(r.Command, cmd, r.Spec, startTime)
-		}
-
-		err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
-
-		// notify job complete
-		endTime := time.Now()
-		if s.JobEventHandler != nil {
-			exitCode := 0
-			if err != nil {
-				if exitError, ok := err.(*exec.ExitError); ok {
-					exitCode = exitError.ExitCode()
-				} else {
-					exitCode = 1 // generic error for non-exec errors
-				}
-			}
-			s.JobEventHandler.OnJobComplete(r.Command, cmd, r.Spec, startTime, endTime, exitCode, err)
-		}
-
-		ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
-		defer cancel()
-		var errMsg string
-		if err != nil {
-			errMsg = err.Error()
-		}
-		if e := s.notify(ctxTimeout, r, errMsg); e != nil {
-			return fmt.Errorf("failed to notify: %w", e)
-		}
-		if err != nil {
-			return err
-		}
-
-		// if no error, finish (unregister) resumer
-		if err := s.Resumer.OnFinish(rfile); err != nil {
-			return fmt.Errorf("failed to finish resumer for %s: %w", rfile, err)
-		}
-
-		return nil
-	}
-
 	return func() {
 		jobDesc := s.jobDescription(r)
 		jobRepeater := s.getJobRepeater(r.Repeater)
@@ -263,7 +265,7 @@ func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobS
 			}
 		}
 
-		if err := runJob(ctx, r, jobRepeater); err != nil {
+		if err := s.runJobWithCommand(ctx, r, editedCmd, customTime, jobRepeater); err != nil {
 			log.Printf("[WARN] %v, %s", err, jobDesc)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)
@@ -272,74 +274,6 @@ func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobS
 }
 
 func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sched Schedule, customTime *time.Time) cron.FuncJob {
-
-	runJob := func(ctx context.Context, r crontab.JobSpec, rptr Repeater) error {
-		// use custom time if provided, otherwise use current time
-		templateTime := time.Now()
-		if customTime != nil {
-			templateTime = *customTime
-		}
-
-		cmd, err := NewDayTemplate(templateTime, AltTemplateFormat(s.AltTemplate)).Parse(r.Command)
-		if err != nil {
-			return err
-		}
-
-		dedupKey := cmd + "#" + r.Spec // dedup by command and spec
-		if !s.DeDup.Add(dedupKey) {
-			// already running
-			return fmt.Errorf("duplicated job %q ignored", dedupKey)
-		}
-		defer s.DeDup.Remove(dedupKey)
-
-		rfile, rerr := s.Resumer.OnStart(cmd) // register job in resumer prior to execution
-		if rerr != nil {
-			return fmt.Errorf("failed to initiate resumer for %+v: %w", cmd, rerr)
-		}
-
-		// notify job start after resumer registration
-		startTime := time.Now()
-		if s.JobEventHandler != nil {
-			s.JobEventHandler.OnJobStart(r.Command, cmd, r.Spec, startTime)
-		}
-
-		err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
-
-		// notify job complete
-		endTime := time.Now()
-		if s.JobEventHandler != nil {
-			exitCode := 0
-			if err != nil {
-				if exitError, ok := err.(*exec.ExitError); ok {
-					exitCode = exitError.ExitCode()
-				} else {
-					exitCode = 1 // generic error for non-exec errors
-				}
-			}
-			s.JobEventHandler.OnJobComplete(r.Command, cmd, r.Spec, startTime, endTime, exitCode, err)
-		}
-
-		ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
-		defer cancel()
-		var errMsg string
-		if err != nil {
-			errMsg = err.Error()
-		}
-		if e := s.notify(ctxTimeout, r, errMsg); e != nil {
-			return fmt.Errorf("failed to notify: %w", e)
-		}
-		if err != nil {
-			return err
-		}
-
-		// if no error, finish (unregister) resumer
-		if err := s.Resumer.OnFinish(rfile); err != nil {
-			return fmt.Errorf("failed to finish resumer for %s: %w", rfile, err)
-		}
-
-		return nil
-	}
-
 	return func() {
 		jobDesc := s.jobDescription(r)
 		jobRepeater := s.getJobRepeater(r.Repeater)
@@ -353,7 +287,7 @@ func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sche
 		}
 
 		log.Printf("[INFO] executing: %s", jobDesc)
-		if err := runJob(ctx, r, jobRepeater); err != nil {
+		if err := s.runJobWithCommand(ctx, r, r.Command, customTime, jobRepeater); err != nil {
 			log.Printf("[WARN] job failed: %s, %v", jobDesc, err)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)

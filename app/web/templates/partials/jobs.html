@@ -39,6 +39,22 @@
         </div>
         <div></div><!-- Spacer for grid -->
         <div class="job-header-actions">
+            <button class="history-btn"
+                    {{if eq .LastStatus.String "idle"}}
+                    disabled
+                    title="No execution history"
+                    {{else}}
+                    hx-get="/api/jobs/{{.ID}}/history"
+                    hx-target="#history-content"
+                    hx-swap="innerHTML"
+                    hx-on::after-request="document.getElementById('history-modal').style.display='flex'"
+                    title="Show execution history"
+                    {{end}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                    <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
             <button class="btn-compact"
                     {{if and .Enabled (not .IsRunning)}}
                     hx-post="/api/jobs/{{.ID}}/run"
@@ -164,6 +180,22 @@
             </td>
             
             <td class="td-actions">
+                <button class="history-btn"
+                        {{if eq .LastStatus.String "idle"}}
+                        disabled
+                        title="No execution history"
+                        {{else}}
+                        hx-get="/api/jobs/{{.ID}}/history"
+                        hx-target="#history-content"
+                        hx-swap="innerHTML"
+                        hx-on::after-request="document.getElementById('history-modal').style.display='flex'"
+                        title="Show execution history"
+                        {{end}}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                        <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </button>
                 <button class="btn-compact"
                         {{if and .Enabled (not .IsRunning)}}
                         hx-post="/api/jobs/{{.ID}}/run"
@@ -364,6 +396,81 @@
                 <code>{{.Command}}</code>
             </div>
         </div>
+    </div>
+</div>
+{{end}}
+
+{{define "history-modal"}}
+<div class="history-modal">
+    <div class="modal-header">
+        <h2>Execution History</h2>
+        <button class="modal-close" onclick="document.getElementById('history-modal').style.display='none'">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </button>
+    </div>
+
+    <div class="modal-body">
+        <div class="modal-section modal-section-full">
+            <div class="modal-label">Command</div>
+            <div class="modal-value modal-command">
+                <code>{{.Job.Command}}</code>
+            </div>
+        </div>
+
+        {{if .Executions}}
+        <div class="history-table-container">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Started</th>
+                        <th>Finished</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Executions}}
+                    <tr>
+                        <td class="history-date">{{.StartedAt.Format "Jan 2, 15:04:05"}}</td>
+                        <td class="history-date">
+                            {{if .FinishedAt.IsZero}}
+                            -
+                            {{else}}
+                            {{.FinishedAt.Format "Jan 2, 15:04:05"}}
+                            {{end}}
+                        </td>
+                        <td class="history-duration">
+                            {{if or (.StartedAt.IsZero) (.FinishedAt.IsZero)}}
+                            -
+                            {{else}}
+                            {{humanDuration (.FinishedAt.Sub .StartedAt)}}
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if eq .Status.String "success"}}
+                            <div class="status-badge success">
+                                <div class="status-dot"></div>
+                                Success
+                            </div>
+                            {{else}}
+                            <div class="status-badge failed">
+                                <div class="status-dot"></div>
+                                Failed
+                            </div>
+                            {{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="history-empty">
+            <p>No execution history available</p>
+        </div>
+        {{end}}
     </div>
 </div>
 {{end}}

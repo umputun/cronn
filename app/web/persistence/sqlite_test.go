@@ -267,3 +267,103 @@ func TestSQLiteStore_SaveJobs_Error(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to save job")
 }
+
+func TestSQLiteStore_GetExecutions(t *testing.T) {
+	t.Run("retrieves executions ordered by started_at desc", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		baseTime := time.Now()
+		executions := []struct {
+			started  time.Time
+			finished time.Time
+			status   enums.JobStatus
+			exitCode int
+		}{
+			{baseTime.Add(-5 * time.Minute), baseTime.Add(-4 * time.Minute), enums.JobStatusSuccess, 0},
+			{baseTime.Add(-4 * time.Minute), baseTime.Add(-3 * time.Minute), enums.JobStatusFailed, 1},
+			{baseTime.Add(-3 * time.Minute), baseTime.Add(-2 * time.Minute), enums.JobStatusSuccess, 0},
+			{baseTime.Add(-2 * time.Minute), baseTime.Add(-1 * time.Minute), enums.JobStatusSuccess, 0},
+			{baseTime.Add(-1 * time.Minute), baseTime, enums.JobStatusFailed, 2},
+		}
+
+		for _, exec := range executions {
+			err = store.RecordExecution("job1", exec.started, exec.finished, exec.status, exec.exitCode)
+			require.NoError(t, err)
+		}
+
+		results, err := store.GetExecutions("job1", 10)
+		require.NoError(t, err)
+		assert.Len(t, results, 5)
+
+		// verify ordering - most recent first
+		for i := 0; i < len(results)-1; i++ {
+			assert.True(t, results[i].StartedAt.After(results[i+1].StartedAt) || results[i].StartedAt.Equal(results[i+1].StartedAt))
+		}
+
+		// verify first execution is the most recent
+		assert.WithinDuration(t, baseTime.Add(-1*time.Minute), results[0].StartedAt, time.Second)
+		assert.Equal(t, enums.JobStatusFailed, results[0].Status)
+		assert.Equal(t, 2, results[0].ExitCode)
+
+		// verify last execution is the oldest
+		assert.WithinDuration(t, baseTime.Add(-5*time.Minute), results[4].StartedAt, time.Second)
+		assert.Equal(t, enums.JobStatusSuccess, results[4].Status)
+		assert.Equal(t, 0, results[4].ExitCode)
+	})
+
+	t.Run("respects limit parameter", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		baseTime := time.Now()
+		for i := 0; i < 10; i++ {
+			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
+			finished := started.Add(30 * time.Second)
+			err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0)
+			require.NoError(t, err)
+		}
+
+		results, err := store.GetExecutions("job1", 3)
+		require.NoError(t, err)
+		assert.Len(t, results, 3)
+	})
+
+	t.Run("returns empty slice for job with no executions", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		results, err := store.GetExecutions("nonexistent", 50)
+		require.NoError(t, err)
+		assert.Empty(t, results)
+	})
+
+	t.Run("error when table dropped", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		_, err = store.db.Exec("DROP TABLE executions")
+		require.NoError(t, err)
+
+		results, err := store.GetExecutions("job1", 50)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to query executions")
+		assert.Nil(t, results)
+	})
+}

@@ -2113,3 +2113,84 @@ func TestServer_handleRunJob(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "Manual trigger not configured")
 	})
 }
+
+func TestServer_handleJobHistory(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	crontabFile := filepath.Join(tmpDir, "dummy")
+	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
+	parser := crontab.New(crontabFile, 0, nil)
+
+	cfg := Config{DBPath: dbPath, UpdateInterval: time.Minute, Version: "test", JobsProvider: parser}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	testJob := persistence.JobInfo{ID: "test-job-id", Command: "echo test", Schedule: "* * * * *", Enabled: true, LastStatus: enums.JobStatusIdle}
+	server.jobsMu.Lock()
+	server.jobs[testJob.ID] = testJob
+	server.jobsMu.Unlock()
+
+	t.Run("successful retrieval with executions", func(t *testing.T) {
+		baseTime := time.Now()
+		err = server.store.RecordExecution("test-job-id", baseTime.Add(-5*time.Minute), baseTime.Add(-4*time.Minute), enums.JobStatusSuccess, 0)
+		require.NoError(t, err)
+		err = server.store.RecordExecution("test-job-id", baseTime.Add(-2*time.Minute), baseTime.Add(-1*time.Minute), enums.JobStatusFailed, 1)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest("GET", "/api/jobs/test-job-id/history", http.NoBody)
+		req.SetPathValue("id", "test-job-id")
+		w := httptest.NewRecorder()
+
+		server.handleJobHistory(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "Execution History")
+		assert.Contains(t, body, "echo test")
+		assert.Contains(t, body, "Success")
+		assert.Contains(t, body, "Failed")
+		assert.Contains(t, body, "history-table")
+	})
+
+	t.Run("job not found", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs/nonexistent/history", http.NoBody)
+		req.SetPathValue("id", "nonexistent")
+		w := httptest.NewRecorder()
+
+		server.handleJobHistory(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "Job not found")
+	})
+
+	t.Run("empty job id", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs//history", http.NoBody)
+		w := httptest.NewRecorder()
+
+		server.handleJobHistory(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Job ID required")
+	})
+
+	t.Run("no executions", func(t *testing.T) {
+		emptyJob := persistence.JobInfo{ID: "empty-job-id", Command: "echo empty", Schedule: "* * * * *", Enabled: true}
+		server.jobsMu.Lock()
+		server.jobs[emptyJob.ID] = emptyJob
+		server.jobsMu.Unlock()
+
+		req := httptest.NewRequest("GET", "/api/jobs/empty-job-id/history", http.NoBody)
+		req.SetPathValue("id", "empty-job-id")
+		w := httptest.NewRecorder()
+
+		server.handleJobHistory(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "Execution History")
+		assert.Contains(t, body, "No execution history available")
+	})
+}

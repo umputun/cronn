@@ -92,6 +92,11 @@
         <div class="modal-content" id="modal-content"></div>
     </div>
 
+    <!-- History modal container -->
+    <div id="history-modal" class="modal-backdrop" style="display: none;" onclick="if(event.target === this) this.style.display='none'">
+        <div class="modal-content" id="history-content"></div>
+    </div>
+
     <!-- Confirmation dialog -->
     <div id="confirm-dialog" class="modal-backdrop" style="display: none;">
         <div class="confirm-modal">
@@ -122,12 +127,16 @@
         // close modal on ESC key and confirm on Enter
         document.addEventListener('keydown', function(e) {
             const modal = document.getElementById('job-modal');
+            const historyModal = document.getElementById('history-modal');
             const confirmDialog = document.getElementById('confirm-dialog');
             const dialogVisible = confirmDialog && confirmDialog.style.display !== 'none';
 
             if (e.key === 'Escape') {
                 if (modal && modal.style.display !== 'none') {
                     modal.style.display = 'none';
+                }
+                if (historyModal && historyModal.style.display !== 'none') {
+                    historyModal.style.display = 'none';
                 }
                 if (dialogVisible && typeof window.confirmResolve === 'function') {
                     window.confirmResolve(false);

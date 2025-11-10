@@ -27,6 +27,16 @@ type JobInfo struct {
 	SortIndex  int             `db:"sort_index"`
 }
 
+// ExecutionInfo represents a single job execution record
+type ExecutionInfo struct {
+	ID         int             `db:"id"`
+	JobID      string          `db:"job_id"`
+	StartedAt  time.Time       `db:"started_at"`
+	FinishedAt time.Time       `db:"finished_at"`
+	Status     enums.JobStatus `db:"status"`
+	ExitCode   int             `db:"exit_code"`
+}
+
 // SQLiteStore implements persistence using SQLite
 type SQLiteStore struct {
 	db *sqlx.DB
@@ -182,6 +192,32 @@ func (s *SQLiteStore) RecordExecution(jobID string, started, finished time.Time,
 	}
 
 	return nil
+}
+
+// GetExecutions retrieves execution history for a job, limited to the most recent executions
+func (s *SQLiteStore) GetExecutions(jobID string, limit int) ([]ExecutionInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var executions []ExecutionInfo
+	err := s.db.Select(&executions, `
+		SELECT id, job_id, started_at, finished_at, status, exit_code
+		FROM executions
+		WHERE job_id = ?
+		ORDER BY started_at DESC
+		LIMIT ?`,
+		jobID, limit)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to query executions: %w", err)
+	}
+
+	// ensure we return empty slice, not nil
+	if executions == nil {
+		executions = []ExecutionInfo{}
+	}
+
+	return executions, nil
 }
 
 // Close closes the database connection

@@ -72,6 +72,7 @@ type Persistence interface {
 	LoadJobs() ([]persistence.JobInfo, error)
 	SaveJobs(jobs []persistence.JobInfo) error
 	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int) error
+	GetExecutions(jobID string, limit int) ([]persistence.ExecutionInfo, error)
 	Close() error
 }
 
@@ -252,6 +253,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
+		api.HandleFunc("GET /jobs/{id}/history", s.handleJobHistory)
 	})
 
 	// static files with proper error handling
@@ -486,20 +488,23 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusSuccess
 		s.updateNextRun(&job)
+		// save execution to database
+		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil {
+			log.Printf("[WARN] failed to save execution: %v", err)
+		}
 	case enums.EventTypeFailed:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusFailed
 		s.updateNextRun(&job)
+		// save execution to database
+		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil {
+			log.Printf("[WARN] failed to save execution: %v", err)
+		}
 	}
 	job.UpdatedAt = time.Now()
 
 	// store the updated job back in the map
 	s.jobs[id] = job
-
-	// save execution to database
-	if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode); err != nil {
-		log.Printf("[WARN] failed to save execution: %v", err)
-	}
 }
 
 // handleDashboard renders the main dashboard
@@ -1098,6 +1103,43 @@ func (s *Server) handleJobModal(w http.ResponseWriter, r *http.Request) {
 	s.updateNextRun(&jobCopy)
 
 	s.render(w, "partials/jobs.html", "job-modal", jobCopy)
+}
+
+// handleJobHistory handles job execution history modal requests
+func (s *Server) handleJobHistory(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		http.Error(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+
+	s.jobsMu.RLock()
+	job, exists := s.jobs[jobID]
+	s.jobsMu.RUnlock()
+
+	if !exists {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// get execution history from database
+	executions, err := s.store.GetExecutions(jobID, 50)
+	if err != nil {
+		log.Printf("[ERROR] failed to get executions for job %s: %v", jobID, err)
+		http.Error(w, "Failed to load execution history", http.StatusInternalServerError)
+		return
+	}
+
+	// prepare data for template
+	data := struct {
+		Job        persistence.JobInfo
+		Executions []persistence.ExecutionInfo
+	}{
+		Job:        job,
+		Executions: executions,
+	}
+
+	s.render(w, "partials/jobs.html", "history-modal", data)
 }
 
 // render renders a template

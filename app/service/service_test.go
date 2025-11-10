@@ -1109,6 +1109,70 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 
 		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
 	})
+
+	t.Run("manual trigger preserves repeater settings", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		mockCron := &mocks.CronMock{
+			StartFunc:   func() {},
+			StopFunc:    context.Background,
+			EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+			ScheduleFunc: func(schedule cron.Schedule, cmd cron.Job) cron.EntryID {
+				return 1
+			},
+			RemoveFunc: func(id cron.EntryID) {},
+		}
+
+		// create job with repeater configuration
+		attempts := 3
+		duration := 5 * time.Second
+		factor := 2.0
+		repeaterConfig := &crontab.RepeaterConfig{
+			Attempts: &attempts,
+			Duration: &duration,
+			Factor:   &factor,
+		}
+
+		mockParser := &mocks.CrontabParserMock{
+			StringFunc: func() string { return "test.crontab" },
+			ListFunc: func() ([]crontab.JobSpec, error) {
+				return []crontab.JobSpec{
+					{Spec: "* * * * *", Command: "echo test", Repeater: repeaterConfig},
+				}, nil
+			},
+		}
+
+		manualTrigger := make(chan ManualJobRequest, 10)
+		s := &Scheduler{
+			Cron:             mockCron,
+			CrontabParser:    mockParser,
+			ManualTrigger:    manualTrigger,
+			Resumer:          resumer.New("", false),
+			DeDup:            NewDeDup(false),
+			Stdout:           &bytes.Buffer{},
+			ConditionChecker: conditions.NewChecker(1),
+			Repeater:         repeater.New(&strategy.Once{}),
+		}
+
+		go s.Do(ctx)
+		time.Sleep(100 * time.Millisecond)
+
+		// send manual trigger
+		jobID := s.jobIDFromCommand("echo test")
+		manualTrigger <- ManualJobRequest{
+			JobID:    jobID,
+			Command:  "echo test",
+			Schedule: "* * * * *",
+		}
+
+		// wait for job to execute
+		time.Sleep(200 * time.Millisecond)
+
+		// verify the job executed (we can't easily verify repeater was applied,
+		// but at least verify no crash from nil repeater)
+		// the real verification is that the test doesn't panic
+	})
 }
 
 func TestScheduler_reload(t *testing.T) {

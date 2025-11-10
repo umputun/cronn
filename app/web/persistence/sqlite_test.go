@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -174,6 +175,60 @@ func TestSQLiteStore_RecordExecutionWithEditedCommand(t *testing.T) {
 	require.Len(t, executions, 1)
 	assert.Equal(t, "echo edited", executions[0].ExecutedCommand)
 	assert.Equal(t, enums.JobStatusSuccess, executions[0].Status)
+}
+
+func TestSQLiteStore_Migration_ExecutedCommandColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// create database with old schema (without executed_command column)
+	db, err := sqlx.Open("sqlite", dbPath)
+	require.NoError(t, err)
+
+	// create old schema without executed_command column
+	_, err = db.Exec(`CREATE TABLE executions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		job_id TEXT,
+		started_at DATETIME,
+		finished_at DATETIME,
+		status TEXT,
+		exit_code INTEGER,
+		FOREIGN KEY (job_id) REFERENCES jobs(id)
+	)`)
+	require.NoError(t, err)
+
+	// insert a record with old schema
+	_, err = db.Exec(`INSERT INTO executions (job_id, started_at, finished_at, status, exit_code)
+		VALUES (?, ?, ?, ?, ?)`, "job1", time.Now(), time.Now(), "success", 0)
+	require.NoError(t, err)
+
+	// close old connection
+	require.NoError(t, db.Close())
+
+	// open with new store (should run migration)
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	// verify executed_command column was added
+	var columnExists bool
+	err = store.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('executions')
+		WHERE name = 'executed_command'
+	`).Scan(&columnExists)
+	require.NoError(t, err)
+	assert.True(t, columnExists, "executed_command column should exist after migration")
+
+	// verify we can insert with executed_command
+	err = store.RecordExecution("job2", time.Now(), time.Now(), enums.JobStatusSuccess, 0, "echo migrated")
+	require.NoError(t, err)
+
+	// verify we can read executions (old one should have empty executed_command)
+	executions, err := store.GetExecutions("job1", 50)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	assert.Equal(t, "", executions[0].ExecutedCommand, "old execution should have empty executed_command")
 }
 
 func TestSQLiteStore_UpdateExistingJobs(t *testing.T) {

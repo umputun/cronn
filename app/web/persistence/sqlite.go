@@ -118,6 +118,34 @@ func (s *SQLiteStore) initialize() error {
 		}
 	}
 
+	// run schema migrations
+	if err := s.migrate(); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	return nil
+}
+
+// migrate performs schema migrations for existing databases
+func (s *SQLiteStore) migrate() error {
+	// check if executed_command column exists
+	var columnExists bool
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('executions')
+		WHERE name = 'executed_command'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for executed_command column: %w", err)
+	}
+
+	// add executed_command column if it doesn't exist
+	if !columnExists {
+		if _, err := s.db.Exec("ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add executed_command column: %w", err)
+		}
+	}
+
 	return nil
 }
 

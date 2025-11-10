@@ -493,10 +493,12 @@ func (s *Scheduler) listenForManualTriggers(ctx context.Context) {
 
 			// create a JobSpec with original job properties for identity
 			// but we'll execute the edited command
+			// note: we copy Repeater (retry logic) but not Conditions (manual = run now, bypass guards)
 			jobSpec := crontab.JobSpec{
-				Spec:    originalJob.Spec,    // use original schedule
-				Command: originalJob.Command, // use original command for identity
-				Name:    originalJob.Name,
+				Spec:     originalJob.Spec,    // use original schedule
+				Command:  originalJob.Command, // use original command for identity
+				Name:     originalJob.Name,
+				Repeater: originalJob.Repeater, // preserve retry logic
 			}
 
 			// validate the schedule can be parsed

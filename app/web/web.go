@@ -1080,7 +1080,7 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	var customDate *time.Time
 	dateStr := r.FormValue("date")
 	if dateStr != "" {
-		parsedDate, err := time.Parse("20060102", dateStr)
+		parsedDate, err := time.ParseInLocation("20060102", dateStr, time.Local)
 		if err != nil {
 			http.Error(w, "Invalid date format, expected YYYYMMDD", http.StatusBadRequest)
 			return

@@ -2157,16 +2157,22 @@ func TestServer_handleRunJob(t *testing.T) {
 
 		assert.Equal(t, http.StatusAccepted, w.Code)
 
-		// verify custom date was sent
+		// verify custom date was sent in local timezone
 		select {
 		case trigger := <-manualTrigger:
 			assert.Equal(t, "test-job-id", trigger.JobID)
 			assert.Equal(t, "echo test", trigger.Command)
 			assert.Equal(t, "* * * * *", trigger.Schedule)
 			require.NotNil(t, trigger.CustomDate)
+			// verify date components
 			assert.Equal(t, 2024, trigger.CustomDate.Year())
 			assert.Equal(t, time.December, trigger.CustomDate.Month())
 			assert.Equal(t, 25, trigger.CustomDate.Day())
+			// verify it's midnight in local timezone, not UTC
+			assert.Equal(t, time.Local, trigger.CustomDate.Location())
+			assert.Equal(t, 0, trigger.CustomDate.Hour())
+			assert.Equal(t, 0, trigger.CustomDate.Minute())
+			assert.Equal(t, 0, trigger.CustomDate.Second())
 		case <-time.After(100 * time.Millisecond):
 			t.Fatal("manual trigger not received")
 		}

@@ -329,8 +329,8 @@ func TestCheckCustom_Timeout(t *testing.T) {
 
 	assert.False(t, ok)
 	assert.Equal(t, "custom check timed out after 1s", reason)
-	assert.True(t, duration >= 1*time.Second)
-	assert.True(t, duration < 2*time.Second)
+	assert.GreaterOrEqual(t, duration, 1*time.Second)
+	assert.Less(t, duration, 2*time.Second)
 
 	// test with custom timeout from config
 	conditions := Config{
@@ -344,8 +344,8 @@ func TestCheckCustom_Timeout(t *testing.T) {
 
 	assert.False(t, ok)
 	assert.Equal(t, "custom check timed out after 500ms", reason)
-	assert.True(t, duration >= 500*time.Millisecond)
-	assert.True(t, duration < 1*time.Second)
+	assert.GreaterOrEqual(t, duration, 500*time.Millisecond)
+	assert.Less(t, duration, 1*time.Second)
 }
 
 func TestCheckWithCustomScript(t *testing.T) {
@@ -457,7 +457,7 @@ func TestRealSystemMetrics(t *testing.T) {
 
 	t.Run("cpu metrics", func(t *testing.T) {
 		cpuPercent, err := cpu.Percent(time.Second, false)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotEmpty(t, cpuPercent)
 		assert.GreaterOrEqual(t, cpuPercent[0], 0.0)
 		assert.LessOrEqual(t, cpuPercent[0], 100.0)
@@ -465,7 +465,7 @@ func TestRealSystemMetrics(t *testing.T) {
 
 	t.Run("memory metrics", func(t *testing.T) {
 		v, err := mem.VirtualMemory()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotNil(t, v)
 		assert.GreaterOrEqual(t, v.UsedPercent, 0.0)
 		assert.LessOrEqual(t, v.UsedPercent, 100.0)
@@ -473,14 +473,14 @@ func TestRealSystemMetrics(t *testing.T) {
 
 	t.Run("load average", func(t *testing.T) {
 		loads, err := load.Avg()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotNil(t, loads)
 		assert.GreaterOrEqual(t, loads.Load1, 0.0)
 	})
 
 	t.Run("disk usage", func(t *testing.T) {
 		usage, err := disk.Usage("/")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotNil(t, usage)
 		assert.GreaterOrEqual(t, usage.UsedPercent, 0.0)
 		assert.LessOrEqual(t, usage.UsedPercent, 100.0)

@@ -324,7 +324,10 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 		return nil
 	})
 
-	return err
+	if err != nil {
+		return fmt.Errorf("command execution failed: %w", err)
+	}
+	return nil
 }
 
 func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string) error {
@@ -337,7 +340,10 @@ func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string
 		if err != nil {
 			return fmt.Errorf("can't make html email: %w", err)
 		}
-		return s.Notifier.Send(ctx, fmt.Sprintf("failed %q on %s", r.Command, s.HostName), msg)
+		if err := s.Notifier.Send(ctx, fmt.Sprintf("failed %q on %s", r.Command, s.HostName), msg); err != nil {
+			return fmt.Errorf("failed to send error notification: %w", err)
+		}
+		return nil
 	}
 
 	if errMsg == "" && s.Notifier.IsOnCompletion() {
@@ -345,7 +351,10 @@ func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string
 		if err != nil {
 			return fmt.Errorf("can't make html email: %w", err)
 		}
-		return s.Notifier.Send(ctx, fmt.Sprintf("completed %q on %s", r.Command, s.HostName), msg)
+		if err := s.Notifier.Send(ctx, fmt.Sprintf("completed %q on %s", r.Command, s.HostName), msg); err != nil {
+			return fmt.Errorf("failed to send completion notification: %w", err)
+		}
+		return nil
 	}
 
 	return nil

@@ -87,7 +87,7 @@ func New(file string, updInterval time.Duration, hupCh <-chan struct{}) *Parser 
 func (p Parser) List() (result []JobSpec, err error) {
 	bs, err := os.ReadFile(p.file)
 	if err != nil {
-		return []JobSpec{}, err
+		return []JobSpec{}, fmt.Errorf("failed to read file: %w", err)
 	}
 
 	if p.isYAML {

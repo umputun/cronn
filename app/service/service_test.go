@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -95,14 +94,14 @@ func TestScheduler_Do(t *testing.T) {
 
 	svc.Do(ctx)
 
-	assert.Equal(t, 1, len(resmr.ListCalls()))
+	assert.Len(t, resmr.ListCalls(), 1)
 
-	assert.Equal(t, 1, len(cr.EntriesCalls()))
-	assert.Equal(t, 3, len(cr.RemoveCalls()))
-	assert.Equal(t, 1, len(cr.StartCalls()))
-	assert.Equal(t, 1, len(cr.StopCalls()))
+	assert.Len(t, cr.EntriesCalls(), 1)
+	assert.Len(t, cr.RemoveCalls(), 3)
+	assert.Len(t, cr.StartCalls(), 1)
+	assert.Len(t, cr.StopCalls(), 1)
 
-	assert.Equal(t, 1, len(parser.ListCalls()))
+	assert.Len(t, parser.ListCalls(), 1)
 }
 
 func TestScheduler_DoIntegration(t *testing.T) {
@@ -176,7 +175,7 @@ func TestScheduler_executeFailedExitCode(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "TestScheduler_executeFailed")
 	t.Log(err)
-	assert.Equal(t, 10+3, len(strings.Split(err.Error(), "\n")))
+	assert.Len(t, strings.Split(err.Error(), "\n"), 10+3)
 	assert.Equal(t, "TestScheduler_executeFailed 14", strings.Split(err.Error(), "\n")[12])
 }
 
@@ -203,8 +202,8 @@ func TestScheduler_jobFunc(t *testing.T) {
 	svc.jobFunc(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "echo 123"}, scheduleMock).Run()
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
-	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
-	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+	assert.Len(t, resmr.OnStartCalls(), 1)
+	assert.Len(t, resmr.OnFinishCalls(), 1)
 }
 
 func TestScheduler_jobFuncWithName(t *testing.T) {
@@ -231,7 +230,7 @@ func TestScheduler_jobFuncWithName(t *testing.T) {
 	svc.jobFunc(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "echo test", Name: "Test job"}, scheduleMock).Run()
 	assert.Equal(t, "{echo test} test\n", wr.String())
 
-	assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+	assert.Len(t, resmr.OnFinishCalls(), 1)
 }
 
 func TestScheduler_jobFuncFailed(t *testing.T) {
@@ -266,8 +265,8 @@ func TestScheduler_jobFuncFailed(t *testing.T) {
 	svc.jobFunc(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, scheduleMock).Run()
 	assert.Contains(t, wr.String(), "not found")
 
-	assert.Equal(t, 1, len(resmr.OnStartCalls()))
-	assert.Equal(t, 1, len(notif.SendCalls()))
+	assert.Len(t, resmr.OnStartCalls(), 1)
+	assert.Len(t, notif.SendCalls(), 1)
 }
 
 func TestScheduler_runJobWithCommand(t *testing.T) {
@@ -285,20 +284,9 @@ func TestScheduler_runJobWithCommand(t *testing.T) {
 			},
 		}
 
-		var mu sync.Mutex
-		var capturedBaseCommand, capturedExecutedCommand string
-		var capturedExitCode int
 		mockEventHandler := &mocks.JobEventHandlerMock{
-			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
-				mu.Lock()
-				defer mu.Unlock()
-				capturedBaseCommand = command
-				capturedExecutedCommand = executedCommand
-			},
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
 			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
-				mu.Lock()
-				defer mu.Unlock()
-				capturedExitCode = exitCode
 			},
 		}
 
@@ -316,18 +304,23 @@ func TestScheduler_runJobWithCommand(t *testing.T) {
 			crontab.JobSpec{Spec: "* * * * *", Command: "echo base"},
 			"echo {{.YYYYMMDD}}",
 			&customTime,
-			repeater.New(&strategy.Once{}))
+			repeater.New(&strategy.Once{}),
+			false)
 
 		require.NoError(t, err)
 		assert.Contains(t, wr.String(), "20241225")
-		assert.Equal(t, 1, len(resmr.OnStartCalls()))
-		assert.Equal(t, 1, len(resmr.OnFinishCalls()))
+		assert.Len(t, resmr.OnStartCalls(), 1)
+		assert.Len(t, resmr.OnFinishCalls(), 1)
 
-		mu.Lock()
-		assert.Equal(t, "echo base", capturedBaseCommand)
-		assert.Equal(t, "echo 20241225", capturedExecutedCommand)
-		assert.Equal(t, 0, capturedExitCode)
-		mu.Unlock()
+		require.Len(t, mockEventHandler.OnJobStartCalls(), 1)
+		assert.Equal(t, "echo base", mockEventHandler.OnJobStartCalls()[0].Command)
+		assert.Empty(t, mockEventHandler.OnJobStartCalls()[0].ExecutedCommand, "scheduled run should have empty executedCommand")
+
+		require.Len(t, mockEventHandler.OnJobCompleteCalls(), 1)
+		assert.Equal(t, "echo base", mockEventHandler.OnJobCompleteCalls()[0].Command)
+		assert.Empty(t, mockEventHandler.OnJobCompleteCalls()[0].ExecutedCommand, "scheduled run OnJobComplete should have empty executedCommand")
+		assert.Equal(t, 0, mockEventHandler.OnJobCompleteCalls()[0].ExitCode)
+		assert.NoError(t, mockEventHandler.OnJobCompleteCalls()[0].Err)
 	})
 
 	t.Run("dedup prevents concurrent execution", func(t *testing.T) {
@@ -350,7 +343,7 @@ func TestScheduler_runJobWithCommand(t *testing.T) {
 
 		// first execution should succeed
 		dedup.Add("echo test#* * * * *")
-		err := svc.runJobWithCommand(context.Background(), jobSpec, "echo test", nil, repeater.New(&strategy.Once{}))
+		err := svc.runJobWithCommand(context.Background(), jobSpec, "echo test", nil, repeater.New(&strategy.Once{}), false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicated job")
 	})
@@ -362,16 +355,9 @@ func TestScheduler_runJobWithCommand(t *testing.T) {
 			},
 		}
 
-		var mu sync.Mutex
-		var capturedExitCode int
-		var capturedErr error
 		mockEventHandler := &mocks.JobEventHandlerMock{
 			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
 			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
-				mu.Lock()
-				defer mu.Unlock()
-				capturedExitCode = exitCode
-				capturedErr = err
 			},
 		}
 
@@ -389,13 +375,14 @@ func TestScheduler_runJobWithCommand(t *testing.T) {
 			crontab.JobSpec{Spec: "* * * * *", Command: "false"},
 			"false",
 			nil,
-			repeater.New(&strategy.Once{}))
+			repeater.New(&strategy.Once{}),
+			false)
 
 		require.Error(t, err)
-		mu.Lock()
-		assert.Equal(t, 1, capturedExitCode)
-		assert.Error(t, capturedErr)
-		mu.Unlock()
+		require.Len(t, mockEventHandler.OnJobCompleteCalls(), 1)
+		assert.Empty(t, mockEventHandler.OnJobCompleteCalls()[0].ExecutedCommand, "failed scheduled run should have empty executedCommand")
+		assert.Equal(t, 1, mockEventHandler.OnJobCompleteCalls()[0].ExitCode)
+		assert.Error(t, mockEventHandler.OnJobCompleteCalls()[0].Err)
 	})
 
 	t.Run("template parsing error", func(t *testing.T) {
@@ -409,10 +396,106 @@ func TestScheduler_runJobWithCommand(t *testing.T) {
 			crontab.JobSpec{Spec: "* * * * *", Command: "echo test"},
 			"echo {{.INVALID}}",
 			nil,
-			repeater.New(&strategy.Once{}))
+			repeater.New(&strategy.Once{}),
+			false)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "can't evaluate field INVALID")
+	})
+
+	t.Run("manual execution sets executed command", func(t *testing.T) {
+		customTime := time.Date(2024, 12, 25, 10, 0, 0, 0, time.UTC)
+
+		resmr := &mocks.ResumerMock{
+			OnStartFunc: func(cmd string) (string, error) {
+				assert.Equal(t, "echo 20241225", cmd)
+				return "resume.file", nil
+			},
+			OnFinishFunc: func(fname string) error {
+				assert.Equal(t, "resume.file", fname)
+				return nil
+			},
+		}
+
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+			},
+		}
+
+		wr := bytes.NewBuffer(nil)
+		svc := Scheduler{
+			Stdout:          wr,
+			Resumer:         resmr,
+			Repeater:        repeater.New(&strategy.Once{}),
+			DeDup:           NewDeDup(true),
+			JobEventHandler: mockEventHandler,
+			NotifyTimeout:   time.Second,
+		}
+
+		err := svc.runJobWithCommand(context.Background(),
+			crontab.JobSpec{Spec: "* * * * *", Command: "echo base"},
+			"echo {{.YYYYMMDD}}",
+			&customTime,
+			repeater.New(&strategy.Once{}),
+			true)
+
+		require.NoError(t, err)
+		assert.Contains(t, wr.String(), "20241225")
+		assert.Len(t, resmr.OnStartCalls(), 1)
+		assert.Len(t, resmr.OnFinishCalls(), 1)
+
+		require.Len(t, mockEventHandler.OnJobStartCalls(), 1)
+		assert.Equal(t, "echo 20241225", mockEventHandler.OnJobStartCalls()[0].ExecutedCommand, "manual run should have executed command after template parsing")
+
+		require.Len(t, mockEventHandler.OnJobCompleteCalls(), 1)
+		assert.Equal(t, "echo 20241225", mockEventHandler.OnJobCompleteCalls()[0].ExecutedCommand, "manual run OnJobComplete should have executed command")
+		assert.Equal(t, 0, mockEventHandler.OnJobCompleteCalls()[0].ExitCode)
+	})
+
+	t.Run("manual execution without templates sets executed command", func(t *testing.T) {
+		resmr := &mocks.ResumerMock{
+			OnStartFunc: func(cmd string) (string, error) {
+				assert.Equal(t, "echo hello", cmd)
+				return "resume.file", nil
+			},
+			OnFinishFunc: func(fname string) error {
+				return nil
+			},
+		}
+
+		mockEventHandler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
+			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+			},
+		}
+
+		wr := bytes.NewBuffer(nil)
+		svc := Scheduler{
+			Stdout:          wr,
+			Resumer:         resmr,
+			Repeater:        repeater.New(&strategy.Once{}),
+			DeDup:           NewDeDup(true),
+			JobEventHandler: mockEventHandler,
+			NotifyTimeout:   time.Second,
+		}
+
+		err := svc.runJobWithCommand(context.Background(),
+			crontab.JobSpec{Spec: "* * * * *", Command: "echo hello"},
+			"echo hello",
+			nil,
+			repeater.New(&strategy.Once{}),
+			true)
+
+		require.NoError(t, err)
+		assert.Contains(t, wr.String(), "hello")
+
+		require.Len(t, mockEventHandler.OnJobStartCalls(), 1)
+		assert.Equal(t, "echo hello", mockEventHandler.OnJobStartCalls()[0].ExecutedCommand, "manual run should have executed command even without template changes")
+
+		require.Len(t, mockEventHandler.OnJobCompleteCalls(), 1)
+		assert.Equal(t, "echo hello", mockEventHandler.OnJobCompleteCalls()[0].ExecutedCommand, "manual run OnJobComplete should have executed command")
+		assert.Equal(t, 0, mockEventHandler.OnJobCompleteCalls()[0].ExitCode)
 	})
 }
 
@@ -425,9 +508,9 @@ func TestScheduler_notifyOnError(t *testing.T) {
 			return true
 		},
 		MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
-			assert.Equal(t, spec, "@startup")
-			assert.Equal(t, command, "no-such-thing")
-			assert.Equal(t, errorLog, "message")
+			assert.Equal(t, "@startup", spec)
+			assert.Equal(t, "no-such-thing", command)
+			assert.Equal(t, "message", errorLog)
 			return "email msg", nil
 		},
 	}
@@ -436,9 +519,9 @@ func TestScheduler_notifyOnError(t *testing.T) {
 	err := svc.notify(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "no-such-thing"}, "message")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, len(notif.SendCalls()))
-	assert.Equal(t, 1, len(notif.IsOnErrorCalls()))
-	assert.Equal(t, 1, len(notif.MakeErrorHTMLCalls()))
+	assert.Len(t, notif.SendCalls(), 1)
+	assert.Len(t, notif.IsOnErrorCalls(), 1)
+	assert.Len(t, notif.MakeErrorHTMLCalls(), 1)
 }
 
 func TestScheduler_notifyOnCompletion(t *testing.T) {
@@ -451,8 +534,8 @@ func TestScheduler_notifyOnCompletion(t *testing.T) {
 			return true
 		},
 		MakeCompletionHTMLFunc: func(spec string, command string) (string, error) {
-			assert.Equal(t, spec, "@startup")
-			assert.Equal(t, command, "ls -la")
+			assert.Equal(t, "@startup", spec)
+			assert.Equal(t, "ls -la", command)
 			return "email msg", nil
 		},
 	}
@@ -460,9 +543,9 @@ func TestScheduler_notifyOnCompletion(t *testing.T) {
 	err := svc.notify(context.Background(), crontab.JobSpec{Spec: "@startup", Command: "ls -la"}, "")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, len(notif.SendCalls()))
-	assert.Equal(t, 1, len(notif.IsOnCompletionCalls()))
-	assert.Equal(t, 1, len(notif.MakeCompletionHTMLCalls()))
+	assert.Len(t, notif.SendCalls(), 1)
+	assert.Len(t, notif.IsOnCompletionCalls(), 1)
+	assert.Len(t, notif.MakeCompletionHTMLCalls(), 1)
 }
 
 func TestScheduler_notifyContextCancellation(t *testing.T) {
@@ -479,8 +562,8 @@ func TestScheduler_notifyContextCancellation(t *testing.T) {
 			return true
 		},
 		MakeCompletionHTMLFunc: func(spec string, command string) (string, error) {
-			assert.Equal(t, spec, "@startup")
-			assert.Equal(t, command, "ls -la")
+			assert.Equal(t, "@startup", spec)
+			assert.Equal(t, "ls -la", command)
 			return "email msg", nil
 		},
 	}
@@ -488,11 +571,11 @@ func TestScheduler_notifyContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := svc.notify(ctx, crontab.JobSpec{Spec: "@startup", Command: "ls -la"}, "")
-	require.EqualError(t, err, "context canceled")
+	require.EqualError(t, err, "failed to send completion notification: context canceled")
 
-	assert.Equal(t, 1, len(notif.SendCalls()))
-	assert.Equal(t, 1, len(notif.IsOnCompletionCalls()))
-	assert.Equal(t, 1, len(notif.MakeCompletionHTMLCalls()))
+	assert.Len(t, notif.SendCalls(), 1)
+	assert.Len(t, notif.IsOnCompletionCalls(), 1)
+	assert.Len(t, notif.MakeCompletionHTMLCalls(), 1)
 }
 
 func TestScheduler_DoWithReload(t *testing.T) {
@@ -553,12 +636,12 @@ func TestScheduler_DoWithReload(t *testing.T) {
 
 	svc.Do(ctx)
 
-	assert.Equal(t, 1, len(resmr.ListCalls()))
-	assert.Equal(t, 2, len(cr.EntriesCalls()))
-	assert.Equal(t, 6, len(cr.RemoveCalls()))
-	assert.Equal(t, 1, len(cr.StartCalls()))
-	assert.Equal(t, 1, len(cr.StopCalls()))
-	assert.Equal(t, 2, len(parser.ListCalls()))
+	assert.Len(t, resmr.ListCalls(), 1)
+	assert.Len(t, cr.EntriesCalls(), 2)
+	assert.Len(t, cr.RemoveCalls(), 6)
+	assert.Len(t, cr.StartCalls(), 1)
+	assert.Len(t, cr.StopCalls(), 1)
+	assert.Len(t, parser.ListCalls(), 2)
 }
 
 func TestScheduler_DoWithResume(t *testing.T) {
@@ -599,12 +682,12 @@ func TestScheduler_DoWithResume(t *testing.T) {
 
 	svc.Do(ctx)
 
-	assert.Equal(t, 1, len(resmr.ListCalls()))
-	assert.Equal(t, 2, len(resmr.OnFinishCalls()))
-	assert.Equal(t, 1, len(cr.EntriesCalls()))
-	assert.Equal(t, 1, len(cr.StartCalls()))
-	assert.Equal(t, 1, len(cr.StopCalls()))
-	assert.Equal(t, 1, len(parser.ListCalls()))
+	assert.Len(t, resmr.ListCalls(), 1)
+	assert.Len(t, resmr.OnFinishCalls(), 2)
+	assert.Len(t, cr.EntriesCalls(), 1)
+	assert.Len(t, cr.StartCalls(), 1)
+	assert.Len(t, cr.StopCalls(), 1)
+	assert.Len(t, parser.ListCalls(), 1)
 }
 
 func TestScheduler_getJobRepeater(t *testing.T) {
@@ -653,8 +736,8 @@ func TestScheduler_getJobRepeater(t *testing.T) {
 
 		assert.Equal(t, 5, resultBackoff.Repeats)
 		assert.Equal(t, 2*time.Second, resultBackoff.Duration)
-		assert.Equal(t, 3.0, resultBackoff.Factor)
-		assert.Equal(t, true, resultBackoff.Jitter)
+		assert.InDelta(t, 3.0, resultBackoff.Factor, 0.001)
+		assert.True(t, resultBackoff.Jitter)
 	})
 
 	t.Run("partial override", func(t *testing.T) {
@@ -675,8 +758,8 @@ func TestScheduler_getJobRepeater(t *testing.T) {
 
 		assert.Equal(t, 10, resultBackoff.Repeats)             // overridden
 		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
-		assert.Equal(t, 2.0, resultBackoff.Factor)             // from global
-		assert.Equal(t, false, resultBackoff.Jitter)           // from global
+		assert.InDelta(t, 2.0, resultBackoff.Factor, 0.001)    // from global
+		assert.False(t, resultBackoff.Jitter)                  // from global
 	})
 
 	t.Run("only jitter override", func(t *testing.T) {
@@ -697,8 +780,8 @@ func TestScheduler_getJobRepeater(t *testing.T) {
 
 		assert.Equal(t, 3, resultBackoff.Repeats)              // from global
 		assert.Equal(t, 1*time.Second, resultBackoff.Duration) // from global
-		assert.Equal(t, 2.0, resultBackoff.Factor)             // from global
-		assert.Equal(t, true, resultBackoff.Jitter)            // overridden
+		assert.InDelta(t, 2.0, resultBackoff.Factor, 0.001)    // from global
+		assert.True(t, resultBackoff.Jitter)                   // overridden
 	})
 }
 
@@ -731,7 +814,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 
 		result := svc.waitForConditions(context.Background(), cond, "test job")
 		assert.True(t, result)
-		assert.Equal(t, 1, len(mockChecker.CheckCalls()))
+		assert.Len(t, mockChecker.CheckCalls(), 1)
 	})
 
 	t.Run("conditions not met - skip job when no max_postpone", func(t *testing.T) {
@@ -751,7 +834,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 
 		result := svc.waitForConditions(context.Background(), cond, "test job")
 		assert.False(t, result)
-		assert.Equal(t, 1, len(mockChecker.CheckCalls()))
+		assert.Len(t, mockChecker.CheckCalls(), 1)
 	})
 
 	t.Run("conditions not met - wait and succeed", func(t *testing.T) {
@@ -783,8 +866,8 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		duration := time.Since(start)
 
 		assert.True(t, result)
-		assert.True(t, duration >= 100*time.Millisecond)
-		assert.True(t, duration < 300*time.Millisecond)
+		assert.GreaterOrEqual(t, duration, 100*time.Millisecond)
+		assert.Less(t, duration, 300*time.Millisecond)
 		assert.GreaterOrEqual(t, len(mockChecker.CheckCalls()), 2)
 	})
 
@@ -812,8 +895,8 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		duration := time.Since(start)
 
 		assert.True(t, result, "should execute after max postpone")
-		assert.True(t, duration >= 200*time.Millisecond)
-		assert.True(t, duration < 400*time.Millisecond)
+		assert.GreaterOrEqual(t, duration, 200*time.Millisecond)
+		assert.Less(t, duration, 400*time.Millisecond)
 	})
 
 	t.Run("context canceled - stop waiting", func(t *testing.T) {
@@ -848,8 +931,8 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		duration := time.Since(start)
 
 		assert.False(t, result, "should not execute when canceled")
-		assert.True(t, duration >= 150*time.Millisecond)
-		assert.True(t, duration < 300*time.Millisecond)
+		assert.GreaterOrEqual(t, duration, 150*time.Millisecond)
+		assert.Less(t, duration, 300*time.Millisecond)
 	})
 
 	t.Run("default check interval", func(t *testing.T) {
@@ -880,8 +963,8 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		duration := time.Since(start)
 
 		assert.True(t, result, "should execute after max postpone")
-		assert.True(t, duration >= 100*time.Millisecond)
-		assert.True(t, duration < 200*time.Millisecond)
+		assert.GreaterOrEqual(t, duration, 100*time.Millisecond)
+		assert.Less(t, duration, 200*time.Millisecond)
 	})
 }
 
@@ -915,8 +998,8 @@ func TestScheduler_JobEventHandler(t *testing.T) {
 		assert.Equal(t, 42, capturedExitCodes[1], "failed job should have specific exit code")
 		assert.Equal(t, 1, capturedExitCodes[2], "generic error should have exit code 1")
 
-		assert.NoError(t, capturedErrors[0])
-		assert.Error(t, capturedErrors[1])
+		require.NoError(t, capturedErrors[0])
+		require.Error(t, capturedErrors[1])
 		assert.Error(t, capturedErrors[2])
 	})
 }
@@ -948,18 +1031,9 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 			},
 		}
 
-		var mu sync.Mutex
-		var capturedCommand string
-		var capturedStartTime time.Time
 		mockEventHandler := &mocks.JobEventHandlerMock{
-			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
-				mu.Lock()
-				defer mu.Unlock()
-				capturedCommand = command
-				capturedStartTime = startTime
-			},
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
 			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
-				// job complete handler
 			},
 		}
 
@@ -995,15 +1069,11 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		// wait for job to execute
 		time.Sleep(200 * time.Millisecond)
 
-		// verify job was started
-		mu.Lock()
-		assert.Equal(t, "echo test", capturedCommand)
-		assert.True(t, capturedStartTime.After(startBefore))
-		assert.True(t, capturedStartTime.Before(time.Now()))
-		mu.Unlock()
-
 		// verify onJobStart was called
-		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
+		require.Len(t, mockEventHandler.OnJobStartCalls(), 1)
+		assert.Equal(t, "echo test", mockEventHandler.OnJobStartCalls()[0].Command)
+		assert.True(t, mockEventHandler.OnJobStartCalls()[0].StartTime.After(startBefore))
+		assert.True(t, mockEventHandler.OnJobStartCalls()[0].StartTime.Before(time.Now()))
 	})
 
 	t.Run("manual trigger with invalid schedule", func(t *testing.T) {
@@ -1106,7 +1176,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		}
 
 		// scheduler should have stopped cleanly
-		assert.Equal(t, 1, len(mockCron.StopCalls()))
+		assert.Len(t, mockCron.StopCalls(), 1)
 	})
 
 	t.Run("manual trigger with custom date for template parsing", func(t *testing.T) {
@@ -1132,16 +1202,9 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 			},
 		}
 
-		var mu sync.Mutex
-		var capturedExecutedCommand string
 		mockEventHandler := &mocks.JobEventHandlerMock{
-			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
-				mu.Lock()
-				defer mu.Unlock()
-				capturedExecutedCommand = executedCommand
-			},
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
 			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
-				// job complete handler
 			},
 		}
 
@@ -1175,11 +1238,8 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 
 		// verify executed command has the custom date, not today's date
-		mu.Lock()
-		assert.Equal(t, "echo 20241225", capturedExecutedCommand)
-		mu.Unlock()
-
-		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
+		require.Len(t, mockEventHandler.OnJobStartCalls(), 1)
+		assert.Equal(t, "echo 20241225", mockEventHandler.OnJobStartCalls()[0].ExecutedCommand)
 	})
 
 	t.Run("manual trigger with edited command", func(t *testing.T) {
@@ -1205,18 +1265,9 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 			},
 		}
 
-		var mu sync.Mutex
-		var capturedBaseCommand string
-		var capturedExecutedCommand string
 		mockEventHandler := &mocks.JobEventHandlerMock{
-			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {
-				mu.Lock()
-				defer mu.Unlock()
-				capturedBaseCommand = command
-				capturedExecutedCommand = executedCommand
-			},
+			OnJobStartFunc: func(command, executedCommand, schedule string, startTime time.Time) {},
 			OnJobCompleteFunc: func(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
-				// job complete handler
 			},
 		}
 
@@ -1248,12 +1299,9 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 
 		// verify base command remains original, but executed command is edited
-		mu.Lock()
-		assert.Equal(t, "echo original", capturedBaseCommand)
-		assert.Equal(t, "echo edited", capturedExecutedCommand)
-		mu.Unlock()
-
-		assert.Equal(t, 1, len(mockEventHandler.OnJobStartCalls()))
+		require.Len(t, mockEventHandler.OnJobStartCalls(), 1)
+		assert.Equal(t, "echo original", mockEventHandler.OnJobStartCalls()[0].Command)
+		assert.Equal(t, "echo edited", mockEventHandler.OnJobStartCalls()[0].ExecutedCommand)
 	})
 
 	t.Run("manual trigger preserves repeater settings", func(t *testing.T) {
@@ -1373,7 +1421,7 @@ func TestScheduler_reload(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// verify parser was called
-		assert.Equal(t, 1, len(mockParser.ListCalls()))
+		assert.Len(t, mockParser.ListCalls(), 1)
 	})
 
 	t.Run("reload with parser error returns early", func(t *testing.T) {
@@ -1392,7 +1440,7 @@ func TestScheduler_reload(t *testing.T) {
 		s.reload(ctx)
 
 		// verify Changes was called
-		assert.Equal(t, 1, len(mockParser.ChangesCalls()))
+		assert.Len(t, mockParser.ChangesCalls(), 1)
 	})
 
 	t.Run("reload stops on context cancel", func(t *testing.T) {
@@ -1527,7 +1575,7 @@ func TestScheduler_reload(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		// verify parser was called twice
-		assert.Equal(t, 2, len(mockParser.ListCalls()))
+		assert.Len(t, mockParser.ListCalls(), 2)
 	})
 }
 

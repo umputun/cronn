@@ -30,9 +30,9 @@ func TestParse(t *testing.T) {
 	for _, tt := range tbl {
 		r, err := Parse(tt.inp)
 		if tt.wasError {
-			assert.Error(t, err, tt.inp)
+			require.Error(t, err, tt.inp)
 		} else {
-			assert.NoError(t, err, tt.inp)
+			require.NoError(t, err, tt.inp)
 		}
 		assert.Equal(t, tt.js, r, tt.inp)
 	}
@@ -82,7 +82,7 @@ func TestParser_ListYAMLInvalid(t *testing.T) {
 
 	ctab := New(tmp.Name(), time.Hour, nil)
 	_, err = ctab.List()
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse YAML")
 }
 
@@ -102,7 +102,7 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 
 	ctab := New(tmp.Name(), time.Hour, nil)
 	_, err = ctab.List()
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "either 'spec' or 'sched' field is required")
 
 	// write YAML with empty command
@@ -116,7 +116,7 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 
 	ctab = New(tmp.Name(), time.Hour, nil)
 	_, err = ctab.List()
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "command is required")
 }
 
@@ -147,7 +147,7 @@ func TestParser_ListYAMLSched(t *testing.T) {
 func TestParser_ListYAMLSchedConflict(t *testing.T) {
 	ctab := New("testfiles/crontab-conflict.yml", time.Hour, nil)
 	_, err := ctab.List()
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "'spec' and 'sched' fields are mutually exclusive")
 }
 
@@ -274,8 +274,8 @@ func TestParseYAMLWithRepeater(t *testing.T) {
 	require.NotNil(t, jobs[0].Repeater)
 	assert.Equal(t, 5, *jobs[0].Repeater.Attempts)
 	assert.Equal(t, 2*time.Second, *jobs[0].Repeater.Duration)
-	assert.Equal(t, 2.5, *jobs[0].Repeater.Factor)
-	assert.Equal(t, true, *jobs[0].Repeater.Jitter)
+	assert.InDelta(t, 2.5, *jobs[0].Repeater.Factor, 0.001)
+	assert.True(t, *jobs[0].Repeater.Jitter)
 
 	// job with partial repeater config
 	assert.Equal(t, "*/5 * * * *", jobs[1].Spec)
@@ -341,7 +341,7 @@ func TestParseYAMLWithConditions(t *testing.T) {
 	assert.NotNil(t, jobs[3].Conditions.MemoryBelow)
 	assert.Equal(t, 60, *jobs[3].Conditions.MemoryBelow)
 	assert.NotNil(t, jobs[3].Conditions.LoadAvgBelow)
-	assert.Equal(t, 2.5, *jobs[3].Conditions.LoadAvgBelow)
+	assert.InDelta(t, 2.5, *jobs[3].Conditions.LoadAvgBelow, 0.001)
 	assert.NotNil(t, jobs[3].Conditions.DiskFreeAbove)
 	assert.Equal(t, 15, *jobs[3].Conditions.DiskFreeAbove)
 	assert.Equal(t, "/", jobs[3].Conditions.DiskFreePath)

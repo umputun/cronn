@@ -43,7 +43,10 @@ func (r *Resumer) OnStart(cmd string) (string, error) {
 	seq := atomic.AddUint64(&r.seq, 1)
 	fname := fmt.Sprintf("%s/%d-%d.cronn", r.location, time.Now().UnixNano(), seq)
 	log.Printf("[DEBUG] create resumer file %s", fname)
-	return fname, os.WriteFile(fname, []byte(cmd), 0o600)
+	if err := os.WriteFile(fname, []byte(cmd), 0o600); err != nil {
+		return "", fmt.Errorf("failed to write resumer file: %w", err)
+	}
+	return fname, nil
 }
 
 // OnFinish removes cronn fileÒ
@@ -52,7 +55,10 @@ func (r *Resumer) OnFinish(fname string) error {
 		return nil
 	}
 	log.Printf("[DEBUG] delete resumer file %s", fname)
-	return os.Remove(fname)
+	if err := os.Remove(fname); err != nil {
+		return fmt.Errorf("failed to remove resumer file: %w", err)
+	}
+	return nil
 }
 
 // List resumer files and filter old files from this result

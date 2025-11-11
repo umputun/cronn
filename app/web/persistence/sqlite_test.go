@@ -27,7 +27,7 @@ func TestNewSQLiteStore(t *testing.T) {
 	t.Run("invalid path", func(t *testing.T) {
 		// try to create database in non-existent directory
 		store, err := NewSQLiteStore("/invalid/path/that/does/not/exist/test.db")
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Nil(t, store)
 	})
 }
@@ -228,7 +228,7 @@ func TestSQLiteStore_Migration_ExecutedCommandColumn(t *testing.T) {
 	executions, err := store.GetExecutions("job1", 50)
 	require.NoError(t, err)
 	require.Len(t, executions, 1)
-	assert.Equal(t, "", executions[0].ExecutedCommand, "old execution should have empty executed_command")
+	assert.Empty(t, executions[0].ExecutedCommand, "old execution should have empty executed_command")
 }
 
 func TestSQLiteStore_UpdateExistingJobs(t *testing.T) {
@@ -312,7 +312,7 @@ func TestSQLiteStore_LoadJobs_Error(t *testing.T) {
 
 	// now LoadJobs should fail
 	jobs, err := store.LoadJobs()
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to query jobs")
 	assert.Nil(t, jobs)
 
@@ -341,7 +341,7 @@ func TestSQLiteStore_SaveJobs_Error(t *testing.T) {
 	}
 
 	err = store.SaveJobs(jobs)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to save job")
 }
 
@@ -439,7 +439,7 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		require.NoError(t, err)
 
 		results, err := store.GetExecutions("job1", 50)
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to query executions")
 		assert.Nil(t, results)
 	})

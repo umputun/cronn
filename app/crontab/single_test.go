@@ -17,7 +17,7 @@ func TestSingle(t *testing.T) {
 
 	s = NewSingle("bad")
 	_, err = s.List()
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	assert.Equal(t, "bad", s.String())
 

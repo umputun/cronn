@@ -133,7 +133,7 @@ func TestDayParser_ParseMalformed(t *testing.T) {
 				TimeZone(nytz), AltTemplateFormat(tt.altTemplate))
 			_, err := d.Parse(tt.template)
 			if tt.wantErr {
-				assert.Error(t, err, "Parse should return error for malformed template")
+				require.Error(t, err, "Parse should return error for malformed template")
 				assert.Contains(t, err.Error(), "failed to parse template")
 			} else {
 				assert.NoError(t, err)

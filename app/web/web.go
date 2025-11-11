@@ -202,7 +202,10 @@ func (s *Server) Run(ctx context.Context, address string) error {
 	}()
 
 	log.Printf("[INFO] starting web server on %s", address)
-	return server.ListenAndServe()
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("web server failed: %w", err)
+	}
+	return nil
 }
 
 // routes returns the http.Handler with all routes configured

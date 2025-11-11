@@ -90,7 +90,7 @@ func TestHashCommand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := HashCommand(tt.cmd)
-			assert.Equal(t, 64, len(got)) // SHA256 is 64 hex chars
+			assert.Len(t, got, 64) // SHA256 is 64 hex chars
 			// verify consistency
 			assert.Equal(t, got, HashCommand(tt.cmd))
 		})
@@ -1931,8 +1931,8 @@ func TestServer_Run(t *testing.T) {
 	// wait for server to stop
 	select {
 	case err := <-done:
-		// server should return http.ErrServerClosed when shut down gracefully
-		assert.Equal(t, http.ErrServerClosed, err)
+		// server returns nil when shut down gracefully (ErrServerClosed is filtered out)
+		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not stop in time")
 	}

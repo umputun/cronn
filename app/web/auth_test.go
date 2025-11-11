@@ -290,7 +290,7 @@ func TestServer_handleLogout(t *testing.T) {
 
 		for _, cookie := range responseCookies {
 			assert.Equal(t, -1, cookie.MaxAge)
-			assert.Equal(t, "", cookie.Value)
+			assert.Empty(t, cookie.Value)
 		}
 	})
 
@@ -602,7 +602,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 		}
 
 		// verify we actually hit rate limit
-		assert.True(t, attempts <= 6, "Rate limiting should kick in within 6 attempts")
+		assert.LessOrEqual(t, attempts, 6, "Rate limiting should kick in within 6 attempts")
 
 		// make one more request to confirm it's still rate limited
 		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))

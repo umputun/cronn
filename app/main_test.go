@@ -57,5 +57,5 @@ func Test_setupLogsToFile(t *testing.T) {
 	assert.Equal(t, 100, logger.MaxSize)
 	assert.Equal(t, 7, logger.MaxBackups)
 	assert.Equal(t, 0, logger.MaxAge)
-	assert.Equal(t, false, logger.Compress)
+	assert.False(t, logger.Compress)
 }

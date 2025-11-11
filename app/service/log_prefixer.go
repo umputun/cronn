@@ -36,19 +36,19 @@ func (p *LogPrefixer) Write(data []byte) (int, error) {
 		// there can be data to write in `line` even if `io.EOF` error is returned.
 		// exit immediately only in case of unexpected error.
 		if err != nil && err != io.EOF {
-			return bytesWritten, err
+			return bytesWritten, fmt.Errorf("failed to read line: %w", err)
 		}
 
 		if len(line) > 0 {
 			_, writeErr := p.writer.Write(p.prefix)
 			if writeErr != nil {
-				return bytesWritten, writeErr
+				return bytesWritten, fmt.Errorf("failed to write prefix: %w", writeErr)
 			}
 
 			n, writeErr := p.writer.Write(line)
 			bytesWritten += n
 			if writeErr != nil {
-				return bytesWritten, writeErr
+				return bytesWritten, fmt.Errorf("failed to write line: %w", writeErr)
 			}
 		}
 

@@ -874,7 +874,9 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 				if resp.StatusCode >= 400 {
 					errors <- fmt.Errorf("client %d request %d to %s got status %d", clientID, j, endpoint.path, resp.StatusCode)
 				}
-				require.NoError(t, resp.Body.Close())
+				if err := resp.Body.Close(); err != nil {
+					errors <- fmt.Errorf("client %d request %d: failed to close response body: %w", clientID, j, err)
+				}
 
 				// tiny random delay
 				time.Sleep(time.Duration(rand.Intn(100)) * time.Microsecond) //nolint:gosec // test only, not security sensitive
@@ -1003,7 +1005,7 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 	finalJobCount := len(server.jobs)
 	server.jobsMu.RUnlock()
 
-	assert.Greater(t, finalJobCount, 0, "should have at least some jobs after concurrent modifications")
+	assert.Positive(t, finalJobCount, "should have at least some jobs after concurrent modifications")
 
 	// verify database consistency - load fresh and check
 	loadedJobs, err := server.store.LoadJobs()
@@ -1012,7 +1014,7 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 	// after all the crontab reloads, we should have jobs from the final crontab
 	// plus any jobs from events that haven't been cleaned up
 	// the important thing is the database has some data and didn't corrupt
-	assert.Greater(t, len(loadedJobs), 0, "database should have jobs")
+	assert.NotEmpty(t, loadedJobs, "database should have jobs")
 
 	// verify loaded jobs are valid
 	for _, job := range loadedJobs {

@@ -17,6 +17,9 @@ linters:
     - unconvert
     - unparam
     - unused
+    - nestif
+    - testifylint
+    - wrapcheck
   settings:
     dupl:
       threshold: 100

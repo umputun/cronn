@@ -2276,3 +2276,49 @@ func TestServer_handleJobHistory(t *testing.T) {
 		assert.Contains(t, body, "No execution history available")
 	})
 }
+
+func Test_shortVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "full version with commit and date",
+			input:    "v1.7.0-abc1234-20241225",
+			expected: "v1.7.0",
+		},
+		{
+			name:     "full version with dev and date",
+			input:    "v1.7.0-dev-20251111",
+			expected: "v1.7.0",
+		},
+		{
+			name:     "simple version without extras",
+			input:    "v1.7.0",
+			expected: "v1.7.0",
+		},
+		{
+			name:     "unknown version",
+			input:    "unknown",
+			expected: "unknown",
+		},
+		{
+			name:     "empty version",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "version with single dash",
+			input:    "v2.0.0-beta",
+			expected: "v2.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := shortVersion(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

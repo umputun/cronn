@@ -853,6 +853,8 @@ code {
     text-align: center;
     color: var(--color-text-secondary);
     font-size: 0.875rem;
+    user-select: none;
+    cursor: default;
 }
 
 .footer-link {
@@ -867,6 +869,10 @@ code {
 .separator {
     margin: 0 var(--spacing-sm);
     color: var(--color-text-muted);
+}
+
+.footer span[title] {
+    cursor: help;
 }
 
 /* Info button */

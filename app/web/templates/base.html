@@ -78,6 +78,10 @@
         <!-- Footer -->
         <footer class="footer">
             <span>© {{.CurrentYear}} Umputun</span>
+            {{if .Version}}
+            <span class="separator">•</span>
+            <span title="{{.FullVersion}}">{{.Version}}</span>
+            {{end}}
             <span class="separator">•</span>
             <a href="https://github.com/umputun/cronn" class="footer-link" data-hx-boost="false">GitHub</a>
             {{if .AuthEnabled}}

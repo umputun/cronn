@@ -101,6 +101,8 @@ type TemplateData struct {
 	TotalCount   int    // total jobs before filtering
 	IsOOB        bool   // for OOB template rendering
 	AuthEnabled  bool   // whether authentication is enabled
+	Version      string // application version (short form)
+	FullVersion  string // full application version
 }
 
 // jobsStats holds statistics about jobs
@@ -537,6 +539,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		NextRunTime:  stats.nextRunTime,
 		TotalCount:   stats.totalCount,
 		AuthEnabled:  s.passwordHash != "",
+		Version:      shortVersion(s.version),
+		FullVersion:  s.version,
 	}
 
 	s.render(w, "base.html", "base", data)
@@ -1439,4 +1443,18 @@ func (s *Server) truncate(str string, n int) string {
 func HashCommand(cmd string) string {
 	h := sha256.Sum256([]byte(cmd))
 	return hex.EncodeToString(h[:])
+}
+
+// shortVersion extracts a short version string from full version
+// for version like "v1.7.0-abc1234-20241225", returns "v1.7.0"
+// for version like "v1.7.0", returns "v1.7.0"
+func shortVersion(fullVer string) string {
+	if fullVer == "" || fullVer == "unknown" {
+		return fullVer
+	}
+	// extract version before first dash
+	if idx := strings.Index(fullVer, "-"); idx > 0 {
+		return fullVer[:idx]
+	}
+	return fullVer
 }

@@ -83,12 +83,14 @@ var opts struct {
 	} `group:"log" namespace:"log" env-namespace:"CRONN_LOG"`
 
 	Web struct {
-		Enabled        bool          `long:"enabled" env:"ENABLED" description:"enable web UI"`
-		Address        string        `long:"address" env:"ADDRESS" default:":8080" description:"web UI address"`
-		DBPath         string        `long:"db-path" env:"DB_PATH" default:"cronn.db" description:"path to SQLite database"`
-		UpdateInterval time.Duration `long:"update-interval" env:"UPDATE_INTERVAL" default:"30s" description:"interval to sync crontab file"`
-		PasswordHash   string        `long:"password-hash" env:"PASSWORD_HASH" description:"bcrypt hash for basic auth (username: cronn)"`
-		LoginTTL       time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
+		Enabled            bool          `long:"enabled" env:"ENABLED" description:"enable web UI"`
+		Address            string        `long:"address" env:"ADDRESS" default:":8080" description:"web UI address"`
+		DBPath             string        `long:"db-path" env:"DB_PATH" default:"cronn.db" description:"path to SQLite database"`
+		UpdateInterval     time.Duration `long:"update-interval" env:"UPDATE_INTERVAL" default:"30s" description:"interval to sync crontab file"`
+		PasswordHash       string        `long:"password-hash" env:"PASSWORD_HASH" description:"bcrypt hash for basic auth (username: cronn)"`
+		LoginTTL           time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
+		DisableManual      bool          `long:"disable-manual" env:"DISABLE_MANUAL" description:"disable manual job execution"`
+		DisableCommandEdit bool          `long:"disable-command-edit" env:"DISABLE_COMMAND_EDIT" description:"disable command editing in manual run dialog"`
 	} `group:"web" namespace:"web" env-namespace:"CRONN_WEB"`
 
 	Version bool `long:"version" description:"show version and exit"`
@@ -157,13 +159,15 @@ func main() {
 	var eventHandler service.JobEventHandler
 	if opts.Web.Enabled {
 		cfg := web.Config{
-			DBPath:         opts.Web.DBPath,
-			UpdateInterval: opts.Web.UpdateInterval,
-			Version:        revision,
-			ManualTrigger:  manualTrigger,
-			JobsProvider:   crontabParser,
-			PasswordHash:   opts.Web.PasswordHash,
-			LoginTTL:       opts.Web.LoginTTL,
+			DBPath:             opts.Web.DBPath,
+			UpdateInterval:     opts.Web.UpdateInterval,
+			Version:            revision,
+			ManualTrigger:      manualTrigger,
+			JobsProvider:       crontabParser,
+			PasswordHash:       opts.Web.PasswordHash,
+			LoginTTL:           opts.Web.LoginTTL,
+			DisableManual:      opts.Web.DisableManual,
+			DisableCommandEdit: opts.Web.DisableCommandEdit,
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {

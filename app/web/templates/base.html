@@ -110,7 +110,7 @@
             <div class="confirm-body">
                 <div class="confirm-field">
                     <label for="confirm-command">Command:</label>
-                    <textarea id="confirm-command" rows="3"></textarea>
+                    <textarea id="confirm-command" rows="3" {{if not .CommandEditEnabled}}readonly{{end}}></textarea>
                 </div>
                 <div class="confirm-field" id="confirm-date-field" style="display: none;">
                     <label for="confirm-date">Date (YYYYMMDD):</label>

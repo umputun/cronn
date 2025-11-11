@@ -590,6 +590,8 @@ web:
       --web.db-path=              SQLite database path (default: cronn.db) [$CRONN_WEB_DB_PATH]
       --web.password-hash=        bcrypt hash for basic auth (username: cronn) [$CRONN_WEB_PASSWORD_HASH]
       --web.login-ttl=            login session TTL (default: 24h) [$CRONN_WEB_LOGIN_TTL]
+      --web.disable-manual        disable manual job execution [$CRONN_WEB_DISABLE_MANUAL]
+      --web.disable-command-edit  disable command editing in manual run dialog [$CRONN_WEB_DISABLE_COMMAND_EDIT]
 
 repeater:
       --repeater.attempts=        how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]

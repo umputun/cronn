@@ -42,21 +42,23 @@ type session struct {
 
 // Server represents the web server
 type Server struct {
-	store          Persistence
-	templates      map[string]*template.Template
-	jobsMu         sync.RWMutex
-	jobs           map[string]persistence.JobInfo // job id -> job info
-	parser         cron.Parser                    // for schedule parsing (NextRun calculations)
-	jobsProvider   JobsProvider                   // for loading job specifications
-	eventChan      chan JobEvent
-	updateInterval time.Duration
-	version        string
-	passwordHash   string                          // bcrypt hash for basic auth
-	loginTTL       time.Duration                   // session TTL
-	manualTrigger  chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
-	csrfProtection *http.CrossOriginProtection     // csrf protection for POST endpoints
-	sessions       map[string]session              // active user sessions
-	sessionsMu     sync.Mutex                      // protects sessions map
+	store              Persistence
+	templates          map[string]*template.Template
+	jobsMu             sync.RWMutex
+	jobs               map[string]persistence.JobInfo // job id -> job info
+	parser             cron.Parser                    // for schedule parsing (NextRun calculations)
+	jobsProvider       JobsProvider                   // for loading job specifications
+	eventChan          chan JobEvent
+	updateInterval     time.Duration
+	version            string
+	passwordHash       string                          // bcrypt hash for basic auth
+	loginTTL           time.Duration                   // session TTL
+	manualTrigger      chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
+	csrfProtection     *http.CrossOriginProtection     // csrf protection for POST endpoints
+	sessions           map[string]session              // active user sessions
+	sessionsMu         sync.Mutex                      // protects sessions map
+	disableManual      bool                            // disable manual job execution
+	disableCommandEdit bool                            // disable command editing in manual run dialog
 }
 
 // JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).
@@ -90,19 +92,32 @@ type JobEvent struct {
 
 // TemplateData holds data for templates
 type TemplateData struct {
-	Jobs         []persistence.JobInfo
-	CurrentYear  int
-	ViewMode     enums.ViewMode
-	Theme        enums.Theme
-	SortMode     enums.SortMode
-	FilterMode   enums.FilterMode
-	RunningCount int    // for stats display
-	NextRunTime  string // formatted next run time for stats
-	TotalCount   int    // total jobs before filtering
-	IsOOB        bool   // for OOB template rendering
-	AuthEnabled  bool   // whether authentication is enabled
-	Version      string // application version (short form)
-	FullVersion  string // full application version
+	Jobs               []persistence.JobInfo
+	CurrentYear        int
+	ViewMode           enums.ViewMode
+	Theme              enums.Theme
+	SortMode           enums.SortMode
+	FilterMode         enums.FilterMode
+	RunningCount       int    // for stats display
+	NextRunTime        string // formatted next run time for stats
+	TotalCount         int    // total jobs before filtering
+	IsOOB              bool   // for OOB template rendering
+	AuthEnabled        bool   // whether authentication is enabled
+	Version            string // application version (short form)
+	FullVersion        string // full application version
+	ManualDisabled     bool   // whether manual job execution is disabled
+	CommandEditEnabled bool   // whether command editing is enabled in manual run dialog
+}
+
+// newTemplateData creates a TemplateData with common fields populated from request
+func (s *Server) newTemplateData(r *http.Request) TemplateData {
+	return TemplateData{
+		ViewMode:           s.getViewMode(r),
+		SortMode:           s.getSortMode(r),
+		FilterMode:         s.getFilterMode(r),
+		ManualDisabled:     s.disableManual,
+		CommandEditEnabled: !s.disableCommandEdit,
+	}
 }
 
 // jobsStats holds statistics about jobs
@@ -115,13 +130,15 @@ type jobsStats struct {
 
 // Config holds server configuration
 type Config struct {
-	DBPath         string
-	UpdateInterval time.Duration
-	Version        string
-	ManualTrigger  chan<- service.ManualJobRequest // channel for sending manual trigger requests
-	JobsProvider   JobsProvider                    // interface for loading job specifications
-	PasswordHash   string                          // bcrypt hash for basic auth (empty to disable)
-	LoginTTL       time.Duration                   // session TTL, defaults to 24h if not set
+	DBPath             string
+	UpdateInterval     time.Duration
+	Version            string
+	ManualTrigger      chan<- service.ManualJobRequest // channel for sending manual trigger requests
+	JobsProvider       JobsProvider                    // interface for loading job specifications
+	PasswordHash       string                          // bcrypt hash for basic auth (empty to disable)
+	LoginTTL           time.Duration                   // session TTL, defaults to 24h if not set
+	DisableManual      bool                            // disable manual job execution
+	DisableCommandEdit bool                            // disable command editing in manual run dialog
 }
 
 // New creates a new web server
@@ -149,17 +166,19 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		store:          store,
-		jobs:           make(map[string]persistence.JobInfo),
-		parser:         parser,
-		jobsProvider:   cfg.JobsProvider,
-		eventChan:      make(chan JobEvent, 1000),
-		updateInterval: cfg.UpdateInterval,
-		version:        cfg.Version,
-		passwordHash:   cfg.PasswordHash,
-		loginTTL:       loginTTL,
-		manualTrigger:  cfg.ManualTrigger,
-		csrfProtection: csrfProtection,
+		store:              store,
+		jobs:               make(map[string]persistence.JobInfo),
+		parser:             parser,
+		jobsProvider:       cfg.JobsProvider,
+		eventChan:          make(chan JobEvent, 1000),
+		updateInterval:     cfg.UpdateInterval,
+		version:            cfg.Version,
+		passwordHash:       cfg.PasswordHash,
+		loginTTL:           loginTTL,
+		manualTrigger:      cfg.ManualTrigger,
+		csrfProtection:     csrfProtection,
+		disableManual:      cfg.DisableManual,
+		disableCommandEdit: cfg.DisableCommandEdit,
 	}
 
 	// parse templates
@@ -521,27 +540,19 @@ func (s *Server) handleJobEvent(event JobEvent) {
 
 // handleDashboard renders the main dashboard
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	viewMode := s.getViewMode(r)
 	theme := s.getTheme(r)
-	sortMode := s.getSortMode(r)
-	filterMode := s.getFilterMode(r)
+	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), "")
 
-	stats := s.getJobsWithStats(sortMode, filterMode, "")
-
-	data := TemplateData{
-		Jobs:         stats.jobs,
-		CurrentYear:  time.Now().Year(),
-		ViewMode:     viewMode,
-		Theme:        theme,
-		SortMode:     sortMode,
-		FilterMode:   filterMode,
-		RunningCount: stats.runningCount,
-		NextRunTime:  stats.nextRunTime,
-		TotalCount:   stats.totalCount,
-		AuthEnabled:  s.passwordHash != "",
-		Version:      shortVersion(s.version),
-		FullVersion:  s.version,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.CurrentYear = time.Now().Year()
+	data.Theme = theme
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
+	data.AuthEnabled = s.passwordHash != ""
+	data.Version = shortVersion(s.version)
+	data.FullVersion = s.version
 
 	s.render(w, "base.html", "base", data)
 }
@@ -600,22 +611,15 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
-	viewMode := s.getViewMode(r)
-	sortMode := s.getSortMode(r)
-	filterMode := s.getFilterMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(sortMode, filterMode, searchTerm)
+	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
 
-	data := TemplateData{
-		Jobs:         stats.jobs,
-		ViewMode:     viewMode,
-		SortMode:     sortMode,
-		FilterMode:   filterMode,
-		RunningCount: stats.runningCount,
-		NextRunTime:  stats.nextRunTime,
-		TotalCount:   stats.totalCount,
-		IsOOB:        true, // enable OOB for stats updates
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
+	data.IsOOB = true // enable OOB for stats updates
 
 	// render jobs partial with stats updates
 	if err := s.renderJobsWithStats(w, data); err != nil {
@@ -694,25 +698,19 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// get sorted jobs for the new view mode
-	sortMode := s.getSortMode(r)
-	filterMode := s.getFilterMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(sortMode, filterMode, searchTerm)
+	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
 
 	// prepare template data
-	theme := s.getTheme(r)
-	data := TemplateData{
-		Jobs:         stats.jobs,
-		ViewMode:     newMode,
-		SortMode:     sortMode,
-		FilterMode:   filterMode,
-		Theme:        theme,
-		TotalCount:   stats.totalCount,
-		RunningCount: stats.runningCount,
-		NextRunTime:  stats.nextRunTime,
-		CurrentYear:  time.Now().Year(),
-		IsOOB:        true,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.ViewMode = newMode
+	data.Theme = s.getTheme(r)
+	data.TotalCount = stats.totalCount
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.CurrentYear = time.Now().Year()
+	data.IsOOB = true
 
 	// get the template
 	tmpl, ok := s.templates["partials/jobs.html"]
@@ -778,21 +776,16 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	s.setSortCookie(w, nextMode)
 
 	// get sorted jobs for the new mode
-	viewMode := s.getViewMode(r)
-	filterMode := s.getFilterMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(nextMode, filterMode, searchTerm)
+	stats := s.getJobsWithStats(nextMode, s.getFilterMode(r), searchTerm)
 
 	// prepare template data
-	data := TemplateData{
-		Jobs:         stats.jobs,
-		ViewMode:     viewMode,
-		SortMode:     nextMode,
-		FilterMode:   filterMode,
-		RunningCount: stats.runningCount,
-		NextRunTime:  stats.nextRunTime,
-		TotalCount:   stats.totalCount,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.SortMode = nextMode
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
 
 	// render jobs and send response with OOB updates
 	if err := s.renderSortedJobs(w, data); err != nil {
@@ -876,21 +869,16 @@ func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
 	s.setFilterCookie(w, nextMode)
 
 	// get filtered jobs for the new mode
-	viewMode := s.getViewMode(r)
-	sortMode := s.getSortMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(sortMode, nextMode, searchTerm)
+	stats := s.getJobsWithStats(s.getSortMode(r), nextMode, searchTerm)
 
 	// prepare template data
-	data := TemplateData{
-		Jobs:         stats.jobs,
-		ViewMode:     viewMode,
-		SortMode:     sortMode,
-		FilterMode:   nextMode,
-		RunningCount: stats.runningCount,
-		NextRunTime:  stats.nextRunTime,
-		TotalCount:   stats.totalCount,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.FilterMode = nextMode
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
 
 	// render jobs and send response with OOB updates
 	if err := s.renderFilteredJobs(w, data); err != nil {
@@ -1005,8 +993,6 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// return the jobs partial with sorted jobs
-	viewMode := s.getViewMode(r)
-
 	s.jobsMu.RLock()
 	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
@@ -1020,14 +1006,12 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	// sort jobs based on selected mode
 	s.sortJobs(jobs, sortMode)
 
-	data := TemplateData{
-		Jobs:     jobs,
-		ViewMode: viewMode,
-		SortMode: sortMode,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = jobs
+	data.SortMode = sortMode
 
 	tmplName := "jobs-cards"
-	if viewMode == enums.ViewModeList {
+	if data.ViewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 
@@ -1043,6 +1027,12 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
 		http.Error(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+
+	// check if manual job execution is disabled
+	if s.disableManual {
+		http.Error(w, "Manual job execution is disabled", http.StatusForbidden)
 		return
 	}
 
@@ -1081,6 +1071,12 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	command := r.FormValue("command")
 	if command == "" {
 		command = job.Command
+	}
+
+	// check if command editing is disabled and command was modified
+	if s.disableCommandEdit && command != job.Command {
+		http.Error(w, "Command editing is disabled", http.StatusForbidden)
+		return
 	}
 
 	// parse custom date if provided

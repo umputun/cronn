@@ -170,7 +170,7 @@
             {{if .LoggingEnabled}}
             <div class="modal-section">
                 <div class="modal-label">Log File</div>
-                <div class="modal-value">{{if .LogFilePath}}<code>{{.LogFilePath}}</code>{{end}}</div>
+                <div class="modal-value">{{if .LogFilePath}}<code>{{.LogFilePath}}</code>{{else}}stdout{{end}}</div>
             </div>
             {{end}}
         </div>

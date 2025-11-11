@@ -331,7 +331,7 @@ func buildSettingsInfo() web.SettingsInfo {
 		WebEnabled:         opts.Web.Enabled,
 		WebAddress:         opts.Web.Address,
 		WebUpdateInterval:  opts.Web.UpdateInterval,
-		AuthEnabled:        len(opts.Web.PasswordHash) > 0,
+		AuthEnabled:        opts.Web.PasswordHash != "",
 		ManualEnabled:      !opts.Web.DisableManual,
 		CommandEditEnabled: !opts.Web.DisableCommandEdit,
 
@@ -356,9 +356,9 @@ func buildSettingsInfo() web.SettingsInfo {
 
 		// notification summary (counts, no secrets)
 		EmailNotifications:  opts.Notify.EnabledError || opts.Notify.EnabledCompletion,
-		SlackIntegration:    len(opts.Notify.SlackToken) > 0,
+		SlackIntegration:    opts.Notify.SlackToken != "",
 		SlackChannelCount:   len(opts.Notify.SlackChannels),
-		TelegramIntegration: len(opts.Notify.TelegramToken) > 0,
+		TelegramIntegration: opts.Notify.TelegramToken != "",
 		TelegramDestCount:   len(opts.Notify.TelegramDestinations),
 		WebhookCount:        len(opts.Notify.WebhookURLs),
 		NotificationTimeout: opts.Notify.TimeOut,

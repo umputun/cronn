@@ -1234,7 +1234,7 @@ func (s *Server) handleJobHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSettingsModal handles settings/about modal requests
-func (s *Server) handleSettingsModal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSettingsModal(w http.ResponseWriter, _ *http.Request) {
 	s.render(w, "partials/jobs.html", "settings-modal", s.settingsInfo)
 }
 

@@ -181,7 +181,8 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 
 // runJobWithCommand executes a job with the specified command string after parsing through template
 // r.Command is used for job identity, commandToParse is what actually gets parsed and executed
-func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, commandToParse string, customTime *time.Time, rptr Repeater) error {
+// isManual indicates whether this is a manual execution (from "Run Now" button)
+func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, commandToParse string, customTime *time.Time, rptr Repeater, isManual bool) error {
 	// use custom time if provided, otherwise use current time
 	templateTime := time.Now()
 	if customTime != nil {
@@ -207,10 +208,15 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	}
 
 	// notify job start after resumer registration
-	// use r.Command for identity, cmd for execution
+	// for manual runs: set executedCommand to the command that will be executed (after template parsing)
+	// for scheduled runs: set executedCommand to empty string
 	startTime := time.Now()
+	executedCommand := ""
+	if isManual {
+		executedCommand = cmd
+	}
 	if s.JobEventHandler != nil {
-		s.JobEventHandler.OnJobStart(r.Command, cmd, r.Spec, startTime)
+		s.JobEventHandler.OnJobStart(r.Command, executedCommand, r.Spec, startTime)
 	}
 
 	err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
@@ -226,7 +232,7 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 				exitCode = 1 // generic error for non-exec errors
 			}
 		}
-		s.JobEventHandler.OnJobComplete(r.Command, cmd, r.Spec, startTime, endTime, exitCode, err)
+		s.JobEventHandler.OnJobComplete(r.Command, executedCommand, r.Spec, startTime, endTime, exitCode, err)
 	}
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
@@ -265,7 +271,7 @@ func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobS
 			}
 		}
 
-		if err := s.runJobWithCommand(ctx, r, editedCmd, customTime, jobRepeater); err != nil {
+		if err := s.runJobWithCommand(ctx, r, editedCmd, customTime, jobRepeater, true); err != nil {
 			log.Printf("[WARN] %v, %s", err, jobDesc)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)
@@ -287,7 +293,7 @@ func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sche
 		}
 
 		log.Printf("[INFO] executing: %s", jobDesc)
-		if err := s.runJobWithCommand(ctx, r, r.Command, customTime, jobRepeater); err != nil {
+		if err := s.runJobWithCommand(ctx, r, r.Command, customTime, jobRepeater, false); err != nil {
 			log.Printf("[WARN] job failed: %s, %v", jobDesc, err)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)

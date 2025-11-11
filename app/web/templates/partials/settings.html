@@ -1,0 +1,195 @@
+{{define "settings-modal"}}
+<div class="settings-modal">
+    <div class="modal-header">
+        <h2>Settings & About</h2>
+        <button class="modal-close" onclick="document.getElementById('settings-modal').style.display='none'">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </button>
+    </div>
+
+    <div class="modal-body">
+        <!-- Application Info -->
+        <div class="modal-section-header">Application</div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Version</div>
+                <div class="modal-value"><code>{{.Version}}</code></div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Uptime</div>
+                <div class="modal-value">{{humanDuration (since .StartTime)}}</div>
+            </div>
+        </div>
+
+        <!-- Web Interface -->
+        <div class="modal-section-header">Web Interface</div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Status</div>
+                <div class="modal-value">{{if .WebEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Address</div>
+                <div class="modal-value"><code>{{.WebAddress}}</code></div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Update Interval</div>
+                <div class="modal-value">{{humanDuration .WebUpdateInterval}}</div>
+            </div>
+        </div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Authentication</div>
+                <div class="modal-value">{{if .AuthEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Manual Execution</div>
+                <div class="modal-value">{{if .ManualEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Command Editing</div>
+                <div class="modal-value">{{if .CommandEditEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+        </div>
+
+        <!-- Scheduler Settings -->
+        <div class="modal-section-header">Scheduler</div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Crontab</div>
+                <div class="modal-value"><code>{{.CrontabPath}}</code></div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Auto-Update</div>
+                <div class="modal-value">{{if .UpdateEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Update Interval</div>
+                <div class="modal-value">{{humanDuration .UpdateInterval}}</div>
+            </div>
+        </div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Jitter</div>
+                <div class="modal-value">{{if .JitterEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">DeDup</div>
+                <div class="modal-value">{{if .DeDupEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Max Concurrent Checks</div>
+                <div class="modal-value">{{.MaxConcurrentChecks}}</div>
+            </div>
+        </div>
+
+        <!-- Advanced Features -->
+        <div class="modal-section-header">Advanced Features</div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Resume</div>
+                <div class="modal-value">{{if .ResumeEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            {{if .ResumeEnabled}}
+            <div class="modal-section">
+                <div class="modal-label">Resume Path</div>
+                <div class="modal-value"><code>{{.ResumePath}}</code></div>
+            </div>
+            {{end}}
+            <div class="modal-section">
+                <div class="modal-label">Alt Template Format</div>
+                <div class="modal-value">{{if .AltTemplateFormat}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+        </div>
+
+        <!-- Repeater Configuration -->
+        <div class="modal-section-header">Repeater Defaults</div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Attempts</div>
+                <div class="modal-value">{{.RepeaterAttempts}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Duration</div>
+                <div class="modal-value">{{humanDuration .RepeaterDuration}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Factor</div>
+                <div class="modal-value">{{printf "%.1f" .RepeaterFactor}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Jitter</div>
+                <div class="modal-value">{{if .RepeaterJitter}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+        </div>
+
+        <!-- Integrations -->
+        <div class="modal-section-header">Integrations</div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Email Notifications</div>
+                <div class="modal-value">{{if .EmailNotifications}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Slack Integration</div>
+                <div class="modal-value">
+                    {{if .SlackIntegration}}Enabled ({{.SlackChannelCount}} channels){{else}}Disabled{{end}}
+                </div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Telegram Integration</div>
+                <div class="modal-value">
+                    {{if .TelegramIntegration}}Enabled ({{.TelegramDestCount}} destinations){{else}}Disabled{{end}}
+                </div>
+            </div>
+        </div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Webhooks</div>
+                <div class="modal-value">{{if .WebhookCount}}{{.WebhookCount}} configured{{else}}None{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Notification Timeout</div>
+                <div class="modal-value">{{humanDuration .NotificationTimeout}}</div>
+            </div>
+        </div>
+
+        <!-- Logging -->
+        <div class="modal-section-header">Logging</div>
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Status</div>
+                <div class="modal-value">{{if .LoggingEnabled}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Debug Mode</div>
+                <div class="modal-value">{{if .DebugMode}}Enabled{{else}}Disabled{{end}}</div>
+            </div>
+            {{if .LoggingEnabled}}
+            <div class="modal-section">
+                <div class="modal-label">Log File</div>
+                <div class="modal-value">{{if .LogFilePath}}<code>{{.LogFilePath}}</code>{{end}}</div>
+            </div>
+            {{end}}
+        </div>
+        {{if .LoggingEnabled}}
+        <div class="modal-row">
+            <div class="modal-section">
+                <div class="modal-label">Max Size</div>
+                <div class="modal-value">{{.LogMaxSize}} MB</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Max Age</div>
+                <div class="modal-value">{{if .LogMaxAge}}{{.LogMaxAge}} days{{else}}Unlimited{{end}}</div>
+            </div>
+            <div class="modal-section">
+                <div class="modal-label">Max Backups</div>
+                <div class="modal-value">{{.LogMaxBackups}}</div>
+            </div>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

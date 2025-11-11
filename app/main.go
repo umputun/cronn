@@ -168,6 +168,7 @@ func main() {
 			LoginTTL:           opts.Web.LoginTTL,
 			DisableManual:      opts.Web.DisableManual,
 			DisableCommandEdit: opts.Web.DisableCommandEdit,
+			Settings:           buildSettingsInfo(),
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {
@@ -313,4 +314,61 @@ func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
 	}()
 	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
 	return hupCh
+}
+
+func buildSettingsInfo() web.SettingsInfo {
+	crontabPath := opts.CrontabFile
+	if opts.Command != "" {
+		crontabPath = "inline command"
+	}
+
+	return web.SettingsInfo{
+		// version & build info
+		Version: revision,
+		StartTime:     time.Now(),
+
+		// web settings
+		WebEnabled:         opts.Web.Enabled,
+		WebAddress:         opts.Web.Address,
+		WebUpdateInterval:  opts.Web.UpdateInterval,
+		AuthEnabled:        len(opts.Web.PasswordHash) > 0,
+		ManualEnabled:      !opts.Web.DisableManual,
+		CommandEditEnabled: !opts.Web.DisableCommandEdit,
+
+		// crontab/scheduler settings
+		CrontabPath:         crontabPath,
+		UpdateEnabled:       opts.UpdateEnable,
+		UpdateInterval:      opts.UpdateInterval,
+		JitterEnabled:       opts.JitterEnable,
+		DeDupEnabled:        opts.DeDup,
+		MaxConcurrentChecks: opts.MaxConcurrentChecks,
+
+		// advanced features
+		ResumeEnabled:     opts.Resume != "",
+		ResumePath:        opts.Resume,
+		AltTemplateFormat: opts.AltTemplate,
+
+		// repeater defaults
+		RepeaterAttempts: opts.Repeater.Attempts,
+		RepeaterDuration: opts.Repeater.Duration,
+		RepeaterFactor:   opts.Repeater.Factor,
+		RepeaterJitter:   opts.Repeater.Jitter,
+
+		// notification summary (counts, no secrets)
+		EmailNotifications:  opts.Notify.EnabledError || opts.Notify.EnabledCompletion,
+		SlackIntegration:    len(opts.Notify.SlackToken) > 0,
+		SlackChannelCount:   len(opts.Notify.SlackChannels),
+		TelegramIntegration: len(opts.Notify.TelegramToken) > 0,
+		TelegramDestCount:   len(opts.Notify.TelegramDestinations),
+		WebhookCount:        len(opts.Notify.WebhookURLs),
+		NotificationTimeout: opts.Notify.TimeOut,
+
+		// logging settings
+		LoggingEnabled: opts.Log.Enabled,
+		DebugMode:      opts.Log.Debug,
+		LogFilePath:    opts.Log.Filename,
+		LogMaxSize:     opts.Log.MaxSize,
+		LogMaxAge:      opts.Log.MaxAge,
+		LogMaxBackups:  opts.Log.MaxBackups,
+	}
 }

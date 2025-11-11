@@ -2483,3 +2483,92 @@ func Test_shortVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestServer_handleSettingsModal(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	settingsInfo := SettingsInfo{
+		Version:   "v1.0.0",
+		StartTime: time.Now().Add(-1 * time.Hour),
+		WebEnabled:          true,
+		WebAddress:          ":8080",
+		WebUpdateInterval:   30 * time.Second,
+		AuthEnabled:         true,
+		ManualEnabled:       true,
+		CommandEditEnabled:  true,
+		CrontabPath:         "test-crontab",
+		UpdateEnabled:       true,
+		UpdateInterval:      10 * time.Second,
+		JitterEnabled:       true,
+		DeDupEnabled:        true,
+		MaxConcurrentChecks: 10,
+		ResumeEnabled:       true,
+		ResumePath:          "/tmp/resume",
+		AltTemplateFormat:   false,
+		RepeaterAttempts:    3,
+		RepeaterDuration:    5 * time.Second,
+		RepeaterFactor:      2.0,
+		RepeaterJitter:      true,
+		EmailNotifications:  true,
+		SlackIntegration:    true,
+		SlackChannelCount:   2,
+		TelegramIntegration: true,
+		TelegramDestCount:   3,
+		WebhookCount:        1,
+		NotificationTimeout: 10 * time.Second,
+		LoggingEnabled:      true,
+		DebugMode:           false,
+		LogFilePath:         "/var/log/cronn.log",
+		LogMaxSize:          100,
+		LogMaxAge:           30,
+		LogMaxBackups:       7,
+	}
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+		Settings:       settingsInfo,
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	req := httptest.NewRequest("GET", "/api/settings/modal", http.NoBody)
+	w := httptest.NewRecorder()
+
+	server.handleSettingsModal(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, w.Body.String(), "Settings & About")
+	assert.Contains(t, w.Body.String(), "v1.0.0")
+	assert.Contains(t, w.Body.String(), ":8080")
+	assert.Contains(t, w.Body.String(), "test-crontab")
+}
+
+func TestServer_since(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	now := time.Now()
+	past := now.Add(-1 * time.Hour)
+
+	duration := server.since(past)
+
+	assert.InDelta(t, time.Hour.Seconds(), duration.Seconds(), 1.0)
+}

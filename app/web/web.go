@@ -109,6 +109,17 @@ type TemplateData struct {
 	CommandEditEnabled bool   // whether command editing is enabled in manual run dialog
 }
 
+// newTemplateData creates a TemplateData with common fields populated from request
+func (s *Server) newTemplateData(r *http.Request) TemplateData {
+	return TemplateData{
+		ViewMode:           s.getViewMode(r),
+		SortMode:           s.getSortMode(r),
+		FilterMode:         s.getFilterMode(r),
+		ManualDisabled:     s.disableManual,
+		CommandEditEnabled: !s.disableCommandEdit,
+	}
+}
+
 // jobsStats holds statistics about jobs
 type jobsStats struct {
 	jobs         []persistence.JobInfo
@@ -529,29 +540,19 @@ func (s *Server) handleJobEvent(event JobEvent) {
 
 // handleDashboard renders the main dashboard
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	viewMode := s.getViewMode(r)
 	theme := s.getTheme(r)
-	sortMode := s.getSortMode(r)
-	filterMode := s.getFilterMode(r)
+	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), "")
 
-	stats := s.getJobsWithStats(sortMode, filterMode, "")
-
-	data := TemplateData{
-		Jobs:               stats.jobs,
-		CurrentYear:        time.Now().Year(),
-		ViewMode:           viewMode,
-		Theme:              theme,
-		SortMode:           sortMode,
-		FilterMode:         filterMode,
-		RunningCount:       stats.runningCount,
-		NextRunTime:        stats.nextRunTime,
-		TotalCount:         stats.totalCount,
-		AuthEnabled:        s.passwordHash != "",
-		Version:            shortVersion(s.version),
-		FullVersion:        s.version,
-		ManualDisabled:     s.disableManual,
-		CommandEditEnabled: !s.disableCommandEdit,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.CurrentYear = time.Now().Year()
+	data.Theme = theme
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
+	data.AuthEnabled = s.passwordHash != ""
+	data.Version = shortVersion(s.version)
+	data.FullVersion = s.version
 
 	s.render(w, "base.html", "base", data)
 }
@@ -610,24 +611,15 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
-	viewMode := s.getViewMode(r)
-	sortMode := s.getSortMode(r)
-	filterMode := s.getFilterMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(sortMode, filterMode, searchTerm)
+	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
 
-	data := TemplateData{
-		Jobs:               stats.jobs,
-		ViewMode:           viewMode,
-		SortMode:           sortMode,
-		FilterMode:         filterMode,
-		RunningCount:       stats.runningCount,
-		NextRunTime:        stats.nextRunTime,
-		TotalCount:         stats.totalCount,
-		IsOOB:              true, // enable OOB for stats updates
-		ManualDisabled:     s.disableManual,
-		CommandEditEnabled: !s.disableCommandEdit,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
+	data.IsOOB = true // enable OOB for stats updates
 
 	// render jobs partial with stats updates
 	if err := s.renderJobsWithStats(w, data); err != nil {
@@ -706,27 +698,19 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// get sorted jobs for the new view mode
-	sortMode := s.getSortMode(r)
-	filterMode := s.getFilterMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(sortMode, filterMode, searchTerm)
+	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
 
 	// prepare template data
-	theme := s.getTheme(r)
-	data := TemplateData{
-		Jobs:               stats.jobs,
-		ViewMode:           newMode,
-		SortMode:           sortMode,
-		FilterMode:         filterMode,
-		Theme:              theme,
-		TotalCount:         stats.totalCount,
-		RunningCount:       stats.runningCount,
-		NextRunTime:        stats.nextRunTime,
-		CurrentYear:        time.Now().Year(),
-		IsOOB:              true,
-		ManualDisabled:     s.disableManual,
-		CommandEditEnabled: !s.disableCommandEdit,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.ViewMode = newMode
+	data.Theme = s.getTheme(r)
+	data.TotalCount = stats.totalCount
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.CurrentYear = time.Now().Year()
+	data.IsOOB = true
 
 	// get the template
 	tmpl, ok := s.templates["partials/jobs.html"]
@@ -792,23 +776,16 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	s.setSortCookie(w, nextMode)
 
 	// get sorted jobs for the new mode
-	viewMode := s.getViewMode(r)
-	filterMode := s.getFilterMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(nextMode, filterMode, searchTerm)
+	stats := s.getJobsWithStats(nextMode, s.getFilterMode(r), searchTerm)
 
 	// prepare template data
-	data := TemplateData{
-		Jobs:               stats.jobs,
-		ViewMode:           viewMode,
-		SortMode:           nextMode,
-		FilterMode:         filterMode,
-		RunningCount:       stats.runningCount,
-		NextRunTime:        stats.nextRunTime,
-		TotalCount:         stats.totalCount,
-		ManualDisabled:     s.disableManual,
-		CommandEditEnabled: !s.disableCommandEdit,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.SortMode = nextMode
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
 
 	// render jobs and send response with OOB updates
 	if err := s.renderSortedJobs(w, data); err != nil {
@@ -892,23 +869,16 @@ func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
 	s.setFilterCookie(w, nextMode)
 
 	// get filtered jobs for the new mode
-	viewMode := s.getViewMode(r)
-	sortMode := s.getSortMode(r)
 	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(sortMode, nextMode, searchTerm)
+	stats := s.getJobsWithStats(s.getSortMode(r), nextMode, searchTerm)
 
 	// prepare template data
-	data := TemplateData{
-		Jobs:               stats.jobs,
-		ViewMode:           viewMode,
-		SortMode:           sortMode,
-		FilterMode:         nextMode,
-		RunningCount:       stats.runningCount,
-		NextRunTime:        stats.nextRunTime,
-		TotalCount:         stats.totalCount,
-		ManualDisabled:     s.disableManual,
-		CommandEditEnabled: !s.disableCommandEdit,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.FilterMode = nextMode
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
 
 	// render jobs and send response with OOB updates
 	if err := s.renderFilteredJobs(w, data); err != nil {
@@ -1023,8 +993,6 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// return the jobs partial with sorted jobs
-	viewMode := s.getViewMode(r)
-
 	s.jobsMu.RLock()
 	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
@@ -1038,16 +1006,12 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	// sort jobs based on selected mode
 	s.sortJobs(jobs, sortMode)
 
-	data := TemplateData{
-		Jobs:               jobs,
-		ViewMode:           viewMode,
-		SortMode:           sortMode,
-		ManualDisabled:     s.disableManual,
-		CommandEditEnabled: !s.disableCommandEdit,
-	}
+	data := s.newTemplateData(r)
+	data.Jobs = jobs
+	data.SortMode = sortMode
 
 	tmplName := "jobs-cards"
-	if viewMode == enums.ViewModeList {
+	if data.ViewMode == enums.ViewModeList {
 		tmplName = "jobs-list"
 	}
 

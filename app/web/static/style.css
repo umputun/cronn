@@ -1245,6 +1245,12 @@ code {
     border-color: var(--color-primary);
 }
 
+.confirm-field textarea[readonly] {
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    cursor: default;
+}
+
 .confirm-field input[type="text"] {
     width: 100%;
     padding: var(--spacing-sm);

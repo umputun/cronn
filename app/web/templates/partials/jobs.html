@@ -55,6 +55,7 @@
                     <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                 </svg>
             </button>
+            {{if not $.ManualDisabled}}
             <button class="btn-compact"
                     {{if and .Enabled (not .IsRunning)}}
                     hx-post="/api/jobs/{{.ID}}/run"
@@ -69,6 +70,7 @@
                 </svg>
                 <span>Run</span>
             </button>
+            {{end}}
         </div>
     </div>
     
@@ -194,6 +196,7 @@
                         <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
                 </button>
+                {{if not $.ManualDisabled}}
                 <button class="btn-compact"
                         {{if and .Enabled (not .IsRunning)}}
                         hx-post="/api/jobs/{{.ID}}/run"
@@ -208,6 +211,7 @@
                     </svg>
                     <span>Run</span>
                 </button>
+                {{end}}
             </td>
         </tr>
         {{end}}

@@ -1132,7 +1132,8 @@ func TestServer_Templates(t *testing.T) {
 		require.NotNil(t, jobsCards)
 
 		data := struct {
-			Jobs []persistence.JobInfo
+			Jobs           []persistence.JobInfo
+			ManualDisabled bool
 		}{
 			Jobs: []persistence.JobInfo{
 				{
@@ -1146,6 +1147,7 @@ func TestServer_Templates(t *testing.T) {
 					Enabled:    true,
 				},
 			},
+			ManualDisabled: false,
 		}
 
 		var buf strings.Builder
@@ -2193,6 +2195,165 @@ func TestServer_handleRunJob(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "Invalid date format")
+	})
+
+	t.Run("manual execution disabled", func(t *testing.T) {
+		// create server with manual execution disabled
+		cfg := Config{
+			DBPath:         filepath.Join(tmpDir, "test4.db"),
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			ManualTrigger:  manualTrigger,
+			JobsProvider:   createTestProvider(t, tmpDir),
+			DisableManual:  true,
+		}
+
+		server4, err := New(cfg)
+		require.NoError(t, err)
+		defer server4.store.Close()
+
+		// add test job
+		server4.jobsMu.Lock()
+		server4.jobs[testJob.ID] = testJob
+		server4.jobsMu.Unlock()
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req.SetPathValue("id", "test-job-id")
+		w := httptest.NewRecorder()
+
+		server4.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "Manual job execution is disabled")
+	})
+
+	t.Run("command editing disabled", func(t *testing.T) {
+		// create server with command editing disabled
+		cfg := Config{
+			DBPath:             filepath.Join(tmpDir, "test5.db"),
+			UpdateInterval:     time.Minute,
+			Version:            "test",
+			ManualTrigger:      manualTrigger,
+			JobsProvider:       createTestProvider(t, tmpDir),
+			DisableCommandEdit: true,
+		}
+
+		server5, err := New(cfg)
+		require.NoError(t, err)
+		defer server5.store.Close()
+
+		// add test job
+		server5.jobsMu.Lock()
+		server5.jobs[testJob.ID] = testJob
+		server5.jobsMu.Unlock()
+
+		// try to run with edited command
+		form := url.Values{}
+		form.Add("command", "echo modified")
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req.SetPathValue("id", "test-job-id")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server5.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "Command editing is disabled")
+	})
+
+	t.Run("command editing disabled but command unchanged", func(t *testing.T) {
+		// create server with command editing disabled
+		cfg := Config{
+			DBPath:             filepath.Join(tmpDir, "test6.db"),
+			UpdateInterval:     time.Minute,
+			Version:            "test",
+			ManualTrigger:      manualTrigger,
+			JobsProvider:       createTestProvider(t, tmpDir),
+			DisableCommandEdit: true,
+		}
+
+		server6, err := New(cfg)
+		require.NoError(t, err)
+		defer server6.store.Close()
+
+		// add test job
+		server6.jobsMu.Lock()
+		server6.jobs[testJob.ID] = testJob
+		server6.jobsMu.Unlock()
+
+		// try to run with same command (should succeed)
+		form := url.Values{}
+		form.Add("command", "echo test")
+
+		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req.SetPathValue("id", "test-job-id")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server6.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+
+		// verify manual trigger was sent with original command
+		select {
+		case trigger := <-manualTrigger:
+			assert.Equal(t, "test-job-id", trigger.JobID)
+			assert.Equal(t, "echo test", trigger.Command)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("manual trigger not received")
+		}
+	})
+
+	t.Run("command editing disabled with templated command", func(t *testing.T) {
+		// create server with command editing disabled
+		cfg := Config{
+			DBPath:             filepath.Join(tmpDir, "test7.db"),
+			UpdateInterval:     time.Minute,
+			Version:            "test",
+			ManualTrigger:      manualTrigger,
+			JobsProvider:       createTestProvider(t, tmpDir),
+			DisableCommandEdit: true,
+		}
+
+		server7, err := New(cfg)
+		require.NoError(t, err)
+		defer server7.store.Close()
+
+		// add test job with template
+		templatedJob := persistence.JobInfo{
+			ID:         "templated-job",
+			Command:    "echo {{.YYYYMMDD}}",
+			Schedule:   "* * * * *",
+			Enabled:    true,
+			IsRunning:  false,
+			LastStatus: enums.JobStatusIdle,
+		}
+		server7.jobsMu.Lock()
+		server7.jobs[templatedJob.ID] = templatedJob
+		server7.jobsMu.Unlock()
+
+		// try to run with same templated command (should succeed)
+		form := url.Values{}
+		form.Add("command", "echo {{.YYYYMMDD}}")
+
+		req := httptest.NewRequest("POST", "/api/jobs/templated-job/run", strings.NewReader(form.Encode()))
+		req.SetPathValue("id", "templated-job")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server7.handleRunJob(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+
+		// verify manual trigger was sent with templated command
+		select {
+		case trigger := <-manualTrigger:
+			assert.Equal(t, "templated-job", trigger.JobID)
+			assert.Equal(t, "echo {{.YYYYMMDD}}", trigger.Command)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("manual trigger not received")
+		}
 	})
 }
 

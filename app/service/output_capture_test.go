@@ -82,10 +82,10 @@ func TestOutputCapture_GetOutput(t *testing.T) {
 	})
 }
 
-func TestOutputCapture_SerError(t *testing.T) {
+func TestOutputCapture_SetError(t *testing.T) {
 	oc := NewOutputCapture(10)
 	testErr := errors.New("test error")
-	oc.SerError(testErr)
+	oc.SetError(testErr)
 	assert.Equal(t, testErr, oc.err)
 }
 
@@ -94,7 +94,7 @@ func TestOutputCapture_Error(t *testing.T) {
 		oc := NewOutputCapture(10)
 		_, err := oc.Write([]byte("line1\nline2\nline3"))
 		require.NoError(t, err)
-		oc.SerError(errors.New("command failed"))
+		oc.SetError(errors.New("command failed"))
 
 		errMsg := oc.Error()
 		assert.Contains(t, errMsg, "command failed")
@@ -106,7 +106,7 @@ func TestOutputCapture_Error(t *testing.T) {
 
 	t.Run("error with no output", func(t *testing.T) {
 		oc := NewOutputCapture(10)
-		oc.SerError(errors.New("command failed"))
+		oc.SetError(errors.New("command failed"))
 
 		errMsg := oc.Error()
 		assert.Equal(t, "command failed\n\n", errMsg)

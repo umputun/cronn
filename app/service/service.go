@@ -343,20 +343,17 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 
 		// build multi-writer with both captures
-		writers := []io.Writer{logWriter, notifyCapture}
+		writers := []io.Writer{notifyCapture}
 		if webCapture != nil {
 			writers = append(writers, webCapture)
 		}
 
-		logWithErr := io.MultiWriter(writers...)
 		if s.EnableLogPrefix {
-			prefixer := NewLogPrefixer(logWriter, command)
-			writers := []io.Writer{prefixer, notifyCapture}
-			if webCapture != nil {
-				writers = append(writers, webCapture)
-			}
-			logWithErr = io.MultiWriter(writers...)
+			writers = append(writers, NewLogPrefixer(logWriter, command))
+		} else {
+			writers = append(writers, logWriter)
 		}
+		logWithErr := io.MultiWriter(writers...)
 
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr

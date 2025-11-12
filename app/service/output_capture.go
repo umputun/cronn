@@ -23,8 +23,8 @@ func (o *OutputCapture) Error() string {
 	return o.err.Error() + "\n\n" + strings.Join(o.log, "\n")
 }
 
-// SerError assigns error to be wrapped with captured output
-func (o *OutputCapture) SerError(err error) {
+// SetError assigns error to be wrapped with captured output
+func (o *OutputCapture) SetError(err error) {
 	o.err = err
 }
 

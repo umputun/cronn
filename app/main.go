@@ -333,8 +333,8 @@ func buildSettingsInfo() web.SettingsInfo {
 
 	return web.SettingsInfo{
 		// version & build info
-		Version: revision,
-		StartTime:     time.Now(),
+		Version:   revision,
+		StartTime: time.Now(),
 
 		// web settings
 		WebEnabled:         opts.Web.Enabled,

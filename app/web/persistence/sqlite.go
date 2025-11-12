@@ -144,9 +144,8 @@ func (s *SQLiteStore) migrate() error {
 
 	// add executed_command column if it doesn't exist
 	if !executedCommandExists {
-		_, err = s.db.Exec("ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''")
-		if err != nil {
-			return fmt.Errorf("failed to add executed_command column: %w", err)
+		if _, execErr := s.db.Exec("ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''"); execErr != nil {
+			return fmt.Errorf("failed to add executed_command column: %w", execErr)
 		}
 	}
 
@@ -163,8 +162,8 @@ func (s *SQLiteStore) migrate() error {
 
 	// add output column if it doesn't exist
 	if !outputExists {
-		if _, err := s.db.Exec("ALTER TABLE executions ADD COLUMN output TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("failed to add output column: %w", err)
+		if _, outErr := s.db.Exec("ALTER TABLE executions ADD COLUMN output TEXT DEFAULT ''"); outErr != nil {
+			return fmt.Errorf("failed to add output column: %w", outErr)
 		}
 	}
 

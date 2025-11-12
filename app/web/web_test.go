@@ -2672,8 +2672,8 @@ func TestServer_handleSettingsModal(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	settingsInfo := SettingsInfo{
-		Version:   "v1.0.0",
-		StartTime: time.Now().Add(-1 * time.Hour),
+		Version:             "v1.0.0",
+		StartTime:           time.Now().Add(-1 * time.Hour),
 		WebEnabled:          true,
 		WebAddress:          ":8080",
 		WebUpdateInterval:   30 * time.Second,

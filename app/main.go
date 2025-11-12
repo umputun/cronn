@@ -80,7 +80,7 @@ var opts struct {
 		MaxAge          int    `long:"max-age" env:"MAX_AGE" default:"0" description:"maximum number of days to retain old log files"`
 		MaxBackups      int    `long:"max-backups" env:"MAX_BACKUPS" default:"7" description:"maximum number of old log files to retain"`
 		EnabledCompress bool   `long:"enabled-compress" env:"ENABLED_COMPRESS" description:"determines if the rotated log files should be compressed using gzip"`
-		ExecMaxLines    int    `long:"exec-max-lines" env:"EXEC_MAX_LINES" default:"0" description:"max log lines stored per execution (0 = disabled)"`
+		ExecMaxLines    int    `long:"exec-max-lines" env:"EXEC_MAX_LINES" default:"100" description:"max log lines stored per execution (0 = disabled)"`
 		ExecMaxHist     int    `long:"exec-max-hist" env:"EXEC_MAX_HIST" default:"50" description:"max executions kept per job"`
 	} `group:"log" namespace:"log" env-namespace:"CRONN_LOG"`
 
@@ -155,6 +155,10 @@ func main() {
 	var manualTrigger chan service.ManualJobRequest
 	if opts.Web.Enabled {
 		manualTrigger = make(chan service.ManualJobRequest, 100)
+	} else {
+		// disable execution history if web is not enabled (no UI to view it)
+		opts.Log.ExecMaxLines = 0
+		opts.Log.ExecMaxHist = 0
 	}
 
 	// initialize web server if enabled

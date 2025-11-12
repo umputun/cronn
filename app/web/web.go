@@ -59,6 +59,7 @@ type Server struct {
 	sessionsMu         sync.Mutex                      // protects sessions map
 	disableManual      bool                            // disable manual job execution
 	disableCommandEdit bool                            // disable command editing in manual run dialog
+	settingsInfo       SettingsInfo                    // runtime configuration for settings/about modal
 }
 
 // JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).
@@ -139,6 +140,58 @@ type Config struct {
 	LoginTTL           time.Duration                   // session TTL, defaults to 24h if not set
 	DisableManual      bool                            // disable manual job execution
 	DisableCommandEdit bool                            // disable command editing in manual run dialog
+	Settings           SettingsInfo                    // runtime configuration for settings/about modal
+}
+
+// SettingsInfo holds safe-to-display runtime configuration for settings/about modal
+type SettingsInfo struct {
+	// version & build info
+	Version   string
+	StartTime time.Time
+
+	// web settings
+	WebEnabled         bool
+	WebAddress         string
+	WebUpdateInterval  time.Duration
+	AuthEnabled        bool
+	ManualEnabled      bool
+	CommandEditEnabled bool
+
+	// crontab/scheduler settings
+	CrontabPath         string // or "command mode" if using --command
+	UpdateEnabled       bool
+	UpdateInterval      time.Duration
+	JitterEnabled       bool
+	DeDupEnabled        bool
+	MaxConcurrentChecks int
+
+	// advanced features
+	ResumeEnabled     bool
+	ResumePath        string
+	AltTemplateFormat bool
+
+	// repeater defaults
+	RepeaterAttempts int
+	RepeaterDuration time.Duration
+	RepeaterFactor   float64
+	RepeaterJitter   bool
+
+	// notification summary (counts, no secrets)
+	EmailNotifications  bool
+	SlackIntegration    bool
+	SlackChannelCount   int
+	TelegramIntegration bool
+	TelegramDestCount   int
+	WebhookCount        int
+	NotificationTimeout time.Duration
+
+	// logging settings
+	LoggingEnabled bool
+	DebugMode      bool
+	LogFilePath    string
+	LogMaxSize     int
+	LogMaxAge      int
+	LogMaxBackups  int
 }
 
 // New creates a new web server
@@ -179,6 +232,7 @@ func New(cfg Config) (*Server, error) {
 		csrfProtection:     csrfProtection,
 		disableManual:      cfg.DisableManual,
 		disableCommandEdit: cfg.DisableCommandEdit,
+		settingsInfo:       cfg.Settings,
 	}
 
 	// parse templates
@@ -279,6 +333,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
 		api.HandleFunc("GET /jobs/{id}/history", s.handleJobHistory)
+		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
 	})
 
 	// static files with proper error handling
@@ -1178,6 +1233,11 @@ func (s *Server) handleJobHistory(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "partials/jobs.html", "history-modal", data)
 }
 
+// handleSettingsModal handles settings/about modal requests
+func (s *Server) handleSettingsModal(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "partials/jobs.html", "settings-modal", s.settingsInfo)
+}
+
 // render renders a template
 func (s *Server) render(w http.ResponseWriter, page, tmplName string, data any) {
 	tmpl, ok := s.templates[page]
@@ -1210,6 +1270,7 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 		"humanDuration": s.humanDuration,
 		"truncate":      s.truncate,
 		"timeUntil":     s.timeUntil,
+		"since":         s.since,
 	}
 
 	// parse base template with all partials
@@ -1424,6 +1485,10 @@ func (s *Server) timeUntil(t time.Time) string {
 		return "Overdue"
 	}
 	return s.humanDuration(d)
+}
+
+func (s *Server) since(t time.Time) time.Duration {
+	return time.Since(t)
 }
 
 func (s *Server) truncate(str string, n int) string {

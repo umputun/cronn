@@ -1054,6 +1054,57 @@ code {
     line-height: 1.5;
 }
 
+/* Settings modal */
+.settings-modal {
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--color-border);
+}
+
+.settings-modal .modal-body {
+    padding: var(--spacing-md);
+}
+
+.settings-modal .modal-row {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.settings-modal .modal-section {
+    gap: 2px;
+}
+
+.settings-modal .modal-label {
+    font-size: var(--text-xs);
+    margin-bottom: 2px;
+}
+
+.settings-modal .modal-value {
+    font-size: var(--text-sm);
+}
+
+#settings-modal .modal-content {
+    max-width: 900px;
+}
+
+.modal-section-header {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--color-text);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: var(--spacing-lg);
+    margin-bottom: var(--spacing-sm);
+    padding-bottom: var(--spacing-xs);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.modal-section-header:first-child {
+    margin-top: 0;
+}
+
 /* History modal */
 .history-modal {
     background: var(--color-surface);

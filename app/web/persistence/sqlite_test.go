@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
 )
 
@@ -132,7 +133,15 @@ func TestSQLiteStore_RecordExecution(t *testing.T) {
 	// record an execution
 	started := time.Now().Add(-5 * time.Second)
 	finished := time.Now()
-	err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0, "echo test")
+	err = store.RecordExecution(request.RecordExecution{
+		JobID:           "job1",
+		StartedAt:       started,
+		FinishedAt:      finished,
+		Status:          enums.JobStatusSuccess,
+		ExitCode:        0,
+		ExecutedCommand: "echo test",
+		Output:          "",
+	})
 	require.NoError(t, err)
 
 	// verify execution was recorded
@@ -166,7 +175,15 @@ func TestSQLiteStore_RecordExecutionWithEditedCommand(t *testing.T) {
 	// record execution with different executed command
 	started := time.Now().Add(-5 * time.Second)
 	finished := time.Now()
-	err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0, "echo edited")
+	err = store.RecordExecution(request.RecordExecution{
+		JobID:           "job1",
+		StartedAt:       started,
+		FinishedAt:      finished,
+		Status:          enums.JobStatusSuccess,
+		ExitCode:        0,
+		ExecutedCommand: "echo edited",
+		Output:          "",
+	})
 	require.NoError(t, err)
 
 	// verify executed command is stored
@@ -221,7 +238,16 @@ func TestSQLiteStore_Migration_ExecutedCommandColumn(t *testing.T) {
 	assert.True(t, columnExists, "executed_command column should exist after migration")
 
 	// verify we can insert with executed_command
-	err = store.RecordExecution("job2", time.Now(), time.Now(), enums.JobStatusSuccess, 0, "echo migrated")
+	now := time.Now()
+	err = store.RecordExecution(request.RecordExecution{
+		JobID:           "job2",
+		StartedAt:       now,
+		FinishedAt:      now,
+		Status:          enums.JobStatusSuccess,
+		ExitCode:        0,
+		ExecutedCommand: "echo migrated",
+		Output:          "",
+	})
 	require.NoError(t, err)
 
 	// verify we can read executions (old one should have empty executed_command)
@@ -369,7 +395,15 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		}
 
 		for _, exec := range executions {
-			err = store.RecordExecution("job1", exec.started, exec.finished, exec.status, exec.exitCode, "echo test")
+			err = store.RecordExecution(request.RecordExecution{
+				JobID:           "job1",
+				StartedAt:       exec.started,
+				FinishedAt:      exec.finished,
+				Status:          exec.status,
+				ExitCode:        exec.exitCode,
+				ExecutedCommand: "echo test",
+				Output:          "",
+			})
 			require.NoError(t, err)
 		}
 
@@ -405,7 +439,15 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
 			finished := started.Add(30 * time.Second)
-			err = store.RecordExecution("job1", started, finished, enums.JobStatusSuccess, 0, "echo test")
+			err = store.RecordExecution(request.RecordExecution{
+				JobID:           "job1",
+				StartedAt:       started,
+				FinishedAt:      finished,
+				Status:          enums.JobStatusSuccess,
+				ExitCode:        0,
+				ExecutedCommand: "echo test",
+				Output:          "",
+			})
 			require.NoError(t, err)
 		}
 
@@ -442,5 +484,288 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to query executions")
 		assert.Nil(t, results)
+	})
+}
+
+func TestSQLiteStore_Migration_OutputColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// create database with old schema (without output column)
+	db, err := sqlx.Open("sqlite", dbPath)
+	require.NoError(t, err)
+
+	// create old schema without output column
+	_, err = db.Exec(`CREATE TABLE executions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		job_id TEXT,
+		started_at DATETIME,
+		finished_at DATETIME,
+		status TEXT,
+		exit_code INTEGER,
+		executed_command TEXT,
+		FOREIGN KEY (job_id) REFERENCES jobs(id)
+	)`)
+	require.NoError(t, err)
+
+	// insert a record with old schema
+	_, err = db.Exec(`INSERT INTO executions (job_id, started_at, finished_at, status, exit_code, executed_command)
+		VALUES (?, ?, ?, ?, ?, ?)`, "job1", time.Now(), time.Now(), "success", 0, "echo test")
+	require.NoError(t, err)
+
+	// close old connection
+	require.NoError(t, db.Close())
+
+	// open with new store (should run migration)
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	// verify output column was added
+	var columnExists bool
+	err = store.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('executions')
+		WHERE name = 'output'
+	`).Scan(&columnExists)
+	require.NoError(t, err)
+	assert.True(t, columnExists, "output column should exist after migration")
+
+	// verify we can insert with output
+	now := time.Now()
+	err = store.RecordExecution(request.RecordExecution{
+		JobID:           "job2",
+		StartedAt:       now,
+		FinishedAt:      now,
+		Status:          enums.JobStatusSuccess,
+		ExitCode:        0,
+		ExecutedCommand: "echo migrated",
+		Output:          "test output",
+	})
+	require.NoError(t, err)
+
+	// verify we can read executions (old one should have empty output)
+	executions, err := store.GetExecutions("job1", 50)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	assert.Empty(t, executions[0].Output, "old execution should have empty output")
+}
+
+func TestSQLiteStore_RecordExecutionWithOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	// record execution with output
+	started := time.Now().Add(-5 * time.Second)
+	finished := time.Now()
+	output := "line 1\nline 2\nline 3"
+	err = store.RecordExecution(request.RecordExecution{
+		JobID:           "job1",
+		StartedAt:       started,
+		FinishedAt:      finished,
+		Status:          enums.JobStatusSuccess,
+		ExitCode:        0,
+		ExecutedCommand: "echo test",
+		Output:          output,
+	})
+	require.NoError(t, err)
+
+	// verify output is stored
+	executions, err := store.GetExecutions("job1", 50)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	assert.Equal(t, output, executions[0].Output)
+	assert.Equal(t, "echo test", executions[0].ExecutedCommand)
+	assert.Equal(t, enums.JobStatusSuccess, executions[0].Status)
+}
+
+func TestSQLiteStore_CleanupOldExecutions(t *testing.T) {
+	t.Run("removes old executions beyond limit", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		// create 10 executions
+		baseTime := time.Now()
+		for i := 0; i < 10; i++ {
+			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
+			finished := started.Add(30 * time.Second)
+			err = store.RecordExecution(request.RecordExecution{
+				JobID:           "job1",
+				StartedAt:       started,
+				FinishedAt:      finished,
+				Status:          enums.JobStatusSuccess,
+				ExitCode:        0,
+				ExecutedCommand: "echo test",
+				Output:          "output",
+			})
+			require.NoError(t, err)
+		}
+
+		// verify 10 executions exist
+		executions, err := store.GetExecutions("job1", 100)
+		require.NoError(t, err)
+		assert.Len(t, executions, 10)
+
+		// cleanup keeping only last 5
+		err = store.CleanupOldExecutions("job1", 5)
+		require.NoError(t, err)
+
+		// verify only 5 remain
+		executions, err = store.GetExecutions("job1", 100)
+		require.NoError(t, err)
+		assert.Len(t, executions, 5)
+
+		// verify the 5 most recent executions are kept
+		for i := 0; i < len(executions)-1; i++ {
+			assert.True(t, executions[i].StartedAt.After(executions[i+1].StartedAt) || executions[i].StartedAt.Equal(executions[i+1].StartedAt))
+		}
+	})
+
+	t.Run("does nothing when executions below limit", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		// create 3 executions
+		baseTime := time.Now()
+		for i := 0; i < 3; i++ {
+			started := baseTime.Add(-time.Duration(3-i) * time.Minute)
+			finished := started.Add(30 * time.Second)
+			err = store.RecordExecution(request.RecordExecution{
+				JobID:           "job1",
+				StartedAt:       started,
+				FinishedAt:      finished,
+				Status:          enums.JobStatusSuccess,
+				ExitCode:        0,
+				ExecutedCommand: "echo test",
+				Output:          "output",
+			})
+			require.NoError(t, err)
+		}
+
+		// cleanup with higher limit
+		err = store.CleanupOldExecutions("job1", 10)
+		require.NoError(t, err)
+
+		// verify all 3 still exist
+		executions, err := store.GetExecutions("job1", 100)
+		require.NoError(t, err)
+		assert.Len(t, executions, 3)
+	})
+
+	t.Run("handles cleanup for specific job only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		// create executions for two different jobs
+		baseTime := time.Now()
+		for i := 0; i < 10; i++ {
+			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
+			finished := started.Add(30 * time.Second)
+			err = store.RecordExecution(request.RecordExecution{
+				JobID:           "job1",
+				StartedAt:       started,
+				FinishedAt:      finished,
+				Status:          enums.JobStatusSuccess,
+				ExitCode:        0,
+				ExecutedCommand: "echo test1",
+				Output:          "output1",
+			})
+			require.NoError(t, err)
+			err = store.RecordExecution(request.RecordExecution{
+				JobID:           "job2",
+				StartedAt:       started,
+				FinishedAt:      finished,
+				Status:          enums.JobStatusSuccess,
+				ExitCode:        0,
+				ExecutedCommand: "echo test2",
+				Output:          "output2",
+			})
+			require.NoError(t, err)
+		}
+
+		// cleanup only job1
+		err = store.CleanupOldExecutions("job1", 5)
+		require.NoError(t, err)
+
+		// verify job1 has 5 executions
+		executions, err := store.GetExecutions("job1", 100)
+		require.NoError(t, err)
+		assert.Len(t, executions, 5)
+
+		// verify job2 still has 10 executions
+		executions, err = store.GetExecutions("job2", 100)
+		require.NoError(t, err)
+		assert.Len(t, executions, 10)
+	})
+}
+
+func TestSQLiteStore_GetExecutionByID(t *testing.T) {
+	t.Run("retrieves execution by ID", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		// create an execution
+		started := time.Now().Add(-5 * time.Second)
+		finished := time.Now()
+		output := "test output"
+
+		err = store.RecordExecution(request.RecordExecution{
+			JobID:           "job1",
+			StartedAt:       started,
+			FinishedAt:      finished,
+			Status:          enums.JobStatusSuccess,
+			ExitCode:        0,
+			ExecutedCommand: "echo test",
+			Output:          output,
+		})
+		require.NoError(t, err)
+
+		// get executions to find the ID
+		executions, err := store.GetExecutions("job1", 10)
+		require.NoError(t, err)
+		require.Len(t, executions, 1)
+		execID := executions[0].ID
+
+		// retrieve by ID
+		execution, err := store.GetExecutionByID(execID)
+		require.NoError(t, err)
+		assert.Equal(t, execID, execution.ID)
+		assert.Equal(t, "job1", execution.JobID)
+		assert.Equal(t, enums.JobStatusSuccess, execution.Status)
+		assert.Equal(t, 0, execution.ExitCode)
+		assert.Equal(t, "echo test", execution.ExecutedCommand)
+		assert.Equal(t, output, execution.Output)
+	})
+
+	t.Run("returns error for non-existent execution", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		store, err := NewSQLiteStore(dbPath)
+		require.NoError(t, err)
+		defer store.Close()
+
+		_, err = store.GetExecutionByID(99999)
+		require.Error(t, err)
 	})
 }

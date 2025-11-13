@@ -535,11 +535,19 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			cmd := cmd
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
-				if _, _, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater); err != nil {
+				notifyOutput, _, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater)
+				if err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 					defer cancel()
-					if e := s.notify(ctxTimeout, r, err.Error()); e != nil {
+					// combine error with notify output for notification emails
+					var errMsg string
+					if notifyOutput != "" {
+						errMsg = err.Error() + "\n\n" + notifyOutput
+					} else {
+						errMsg = err.Error()
+					}
+					if e := s.notify(ctxTimeout, r, errMsg); e != nil {
 						log.Printf("[WARN] failed to notify, %v", e)
 						return
 					}

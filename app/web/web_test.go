@@ -2755,3 +2755,102 @@ func TestServer_since(t *testing.T) {
 
 	assert.InDelta(t, time.Hour.Seconds(), duration.Seconds(), 1.0)
 }
+
+func TestServer_handleExecutionLogs(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{DBPath: dbPath, UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), ExecMaxLogLines: 100, LogExecMaxHist: 50}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// start event processor
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go server.processEvents(ctx)
+
+	// create test execution records
+	jobID := HashCommand("echo test1")
+	startTime := time.Now().Add(-1 * time.Minute)
+	endTime := time.Now()
+
+	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: endTime, ExitCode: 0, Output: "test output line 1\ntest output line 2", Err: nil})
+
+	// wait for event processing
+	require.Eventually(t, func() bool {
+		execs, errGet := server.store.GetExecutions(jobID, 10)
+		return errGet == nil && len(execs) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	// get execution ID from database
+	executions, err := server.store.GetExecutions(jobID, 10)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	execID := executions[0].ID
+
+	t.Run("valid request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req.SetPathValue("id", jobID)
+		req.SetPathValue("exec_id", fmt.Sprint(execID))
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body := w.Body.String()
+		assert.Contains(t, body, "test output line 1")
+		assert.Contains(t, body, "test output line 2")
+	})
+
+	t.Run("missing job id", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs//executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req.SetPathValue("exec_id", fmt.Sprint(execID))
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("invalid execution id", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/invalid/logs", http.NoBody)
+		req.SetPathValue("id", jobID)
+		req.SetPathValue("exec_id", "invalid")
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("non-existent execution", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/99999/logs", http.NoBody)
+		req.SetPathValue("id", jobID)
+		req.SetPathValue("exec_id", "99999")
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("execution belongs to different job", func(t *testing.T) {
+		wrongJobID := HashCommand("echo test2")
+		req := httptest.NewRequest("GET", "/api/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req.SetPathValue("id", wrongJobID)
+		req.SetPathValue("exec_id", fmt.Sprint(execID))
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1751,12 +1752,15 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 		}
 
 		var capturedNotification string
+		var mu sync.Mutex
 		notif := &mocks.NotifierMock{
 			SendFunc:           func(ctx context.Context, destination string, text string) error { return nil },
 			IsOnErrorFunc:      func() bool { return true },
 			IsOnCompletionFunc: func() bool { return false },
 			MakeErrorHTMLFunc: func(spec string, command string, errorLog string) (string, error) {
+				mu.Lock()
 				capturedNotification = errorLog
+				mu.Unlock()
 				return "email msg", nil
 			},
 		}
@@ -1780,9 +1784,12 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 		}, time.Second, 10*time.Millisecond, "notification should be sent")
 
 		// verify notification includes both error message and output
-		assert.Contains(t, capturedNotification, "exit status 1", "notification should contain error")
-		assert.Contains(t, capturedNotification, "line1", "notification should contain command output line1")
-		assert.Contains(t, capturedNotification, "line2", "notification should contain command output line2")
+		mu.Lock()
+		notification := capturedNotification
+		mu.Unlock()
+		assert.Contains(t, notification, "exit status 1", "notification should contain error")
+		assert.Contains(t, notification, "line1", "notification should contain command output line1")
+		assert.Contains(t, notification, "line2", "notification should contain command output line2")
 	})
 
 	t.Run("resume notification without output when command succeeds", func(t *testing.T) {

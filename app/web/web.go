@@ -587,59 +587,44 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusSuccess
 		s.updateNextRun(&job)
-		// save execution to database
-		output := event.Output
-		if s.logExecMaxLines == 0 {
-			output = "" // skip storing output if disabled
-		}
-		if err := s.store.RecordExecution(request.RecordExecution{
-			JobID:           id,
-			StartedAt:       event.StartedAt,
-			FinishedAt:      event.FinishedAt,
-			Status:          job.LastStatus,
-			ExitCode:        event.ExitCode,
-			ExecutedCommand: event.ExecutedCommand,
-			Output:          output,
-		}); err != nil {
-			log.Printf("[WARN] failed to save execution: %v", err)
-		}
-		// cleanup old executions if limit configured
-		if s.logExecMaxHist > 0 {
-			if err := s.store.CleanupOldExecutions(id, s.logExecMaxHist); err != nil {
-				log.Printf("[WARN] failed to cleanup old executions: %v", err)
-			}
-		}
+		s.recordExecutionAndCleanup(id, event, job.LastStatus)
 	case enums.EventTypeFailed:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusFailed
 		s.updateNextRun(&job)
-		// save execution to database
-		output := event.Output
-		if s.logExecMaxLines == 0 {
-			output = "" // skip storing output if disabled
-		}
-		if err := s.store.RecordExecution(request.RecordExecution{
-			JobID:           id,
-			StartedAt:       event.StartedAt,
-			FinishedAt:      event.FinishedAt,
-			Status:          job.LastStatus,
-			ExitCode:        event.ExitCode,
-			ExecutedCommand: event.ExecutedCommand,
-			Output:          output,
-		}); err != nil {
-			log.Printf("[WARN] failed to save execution: %v", err)
-		}
-		// cleanup old executions if limit configured
-		if s.logExecMaxHist > 0 {
-			if err := s.store.CleanupOldExecutions(id, s.logExecMaxHist); err != nil {
-				log.Printf("[WARN] failed to cleanup old executions: %v", err)
-			}
-		}
+		s.recordExecutionAndCleanup(id, event, job.LastStatus)
 	}
 	job.UpdatedAt = time.Now()
 
 	// store the updated job back in the map
 	s.jobs[id] = job
+}
+
+// recordExecutionAndCleanup saves execution to database and cleans up old executions
+func (s *Server) recordExecutionAndCleanup(jobID string, event JobEvent, status enums.JobStatus) {
+	output := event.Output
+	if s.logExecMaxLines == 0 {
+		output = "" // skip storing output if disabled
+	}
+
+	if err := s.store.RecordExecution(request.RecordExecution{
+		JobID:           jobID,
+		StartedAt:       event.StartedAt,
+		FinishedAt:      event.FinishedAt,
+		Status:          status,
+		ExitCode:        event.ExitCode,
+		ExecutedCommand: event.ExecutedCommand,
+		Output:          output,
+	}); err != nil {
+		log.Printf("[WARN] failed to save execution: %v", err)
+	}
+
+	// cleanup old executions if limit configured
+	if s.logExecMaxHist > 0 {
+		if err := s.store.CleanupOldExecutions(jobID, s.logExecMaxHist); err != nil {
+			log.Printf("[WARN] failed to cleanup old executions: %v", err)
+		}
+	}
 }
 
 // handleDashboard renders the main dashboard

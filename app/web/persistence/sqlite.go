@@ -111,8 +111,7 @@ func (s *SQLiteStore) initialize() error {
 			output TEXT,
 			FOREIGN KEY (job_id) REFERENCES jobs(id)
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_executions_job_id ON executions(job_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_executions_started_at ON executions(started_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_executions_job_started ON executions(job_id, started_at DESC)`,
 	}
 
 	for _, query := range queries {

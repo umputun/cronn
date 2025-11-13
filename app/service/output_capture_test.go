@@ -1,7 +1,6 @@
 package service
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +12,6 @@ func TestNewOutputCapture(t *testing.T) {
 	require.NotNil(t, oc)
 	assert.Equal(t, 10, oc.maxLogLines)
 	assert.Empty(t, oc.log)
-	assert.NoError(t, oc.err)
 }
 
 func TestOutputCapture_Write(t *testing.T) {
@@ -79,37 +77,6 @@ func TestOutputCapture_GetOutput(t *testing.T) {
 		_, err := oc.Write([]byte("line1\nline2\nline3"))
 		require.NoError(t, err)
 		assert.Equal(t, "line1\nline2\nline3", oc.GetOutput())
-	})
-}
-
-func TestOutputCapture_SetError(t *testing.T) {
-	oc := NewOutputCapture(10)
-	testErr := errors.New("test error")
-	oc.SetError(testErr)
-	assert.Equal(t, testErr, oc.err)
-}
-
-func TestOutputCapture_Error(t *testing.T) {
-	t.Run("combines error and output", func(t *testing.T) {
-		oc := NewOutputCapture(10)
-		_, err := oc.Write([]byte("line1\nline2\nline3"))
-		require.NoError(t, err)
-		oc.SetError(errors.New("command failed"))
-
-		errMsg := oc.Error()
-		assert.Contains(t, errMsg, "command failed")
-		assert.Contains(t, errMsg, "line1")
-		assert.Contains(t, errMsg, "line2")
-		assert.Contains(t, errMsg, "line3")
-		assert.Equal(t, "command failed\n\nline1\nline2\nline3", errMsg)
-	})
-
-	t.Run("error with no output", func(t *testing.T) {
-		oc := NewOutputCapture(10)
-		oc.SetError(errors.New("command failed"))
-
-		errMsg := oc.Error()
-		assert.Equal(t, "command failed\n\n", errMsg)
 	})
 }
 

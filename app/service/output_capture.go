@@ -3,13 +3,15 @@ package service
 import (
 	"bytes"
 	"strings"
+	"sync"
 )
 
 // OutputCapture captures command output (stdout+stderr combined).
-// it collects last N log lines in a circular buffer. not thread safe.
+// it collects last N log lines in a circular buffer. thread safe for concurrent writes.
 type OutputCapture struct {
 	maxLogLines int
 	log         []string
+	mu          sync.Mutex
 }
 
 // NewOutputCapture creates io.Writer that captures output limited to last max lines
@@ -22,6 +24,8 @@ func (o *OutputCapture) Write(p []byte) (n int, err error) {
 	if o.maxLogLines == 0 {
 		return len(p), nil // disabled, don't capture anything
 	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	for _, line := range bytes.Split(p, []byte("\n")) {
 		if len(line) == 0 {
 			continue
@@ -36,5 +40,7 @@ func (o *OutputCapture) Write(p []byte) (n int, err error) {
 
 // GetOutput returns the captured log output as a single string
 func (o *OutputCapture) GetOutput() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	return strings.Join(o.log, "\n")
 }

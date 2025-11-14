@@ -110,7 +110,7 @@ func TestScheduler_DoIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	out := bytes.NewBuffer(nil)
+	out := &safeWriter{}
 	cr := cron.New()
 	parser := crontab.New("testfiles/crontab", time.Minute, nil)
 	res := resumer.New("/tmp", false)
@@ -1829,6 +1829,25 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 		// verify no notification was sent (success case)
 		assert.Empty(t, notif.MakeErrorHTMLCalls())
 	})
+}
+
+// safeWriter wraps bytes.Buffer with mutex for thread-safe concurrent writes
+type safeWriter struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (w *safeWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err = w.buf.Write(p)
+	return n, err //nolint:wrapcheck // test helper, no need to wrap
+}
+
+func (w *safeWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 // helper function for tests

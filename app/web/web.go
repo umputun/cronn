@@ -554,9 +554,11 @@ func (s *Server) processEvents(ctx context.Context) {
 func (s *Server) handleJobEvent(event JobEvent) {
 	id := HashCommand(event.Command)
 
-	s.jobsMu.Lock()
-	defer s.jobsMu.Unlock()
+	// track if we need to record execution
+	var needsRecord bool
+	var recordStatus enums.JobStatus
 
+	s.jobsMu.Lock()
 	job, exists := s.jobs[id]
 	if !exists {
 		// create new job entry if it doesn't exist
@@ -587,17 +589,25 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusSuccess
 		s.updateNextRun(&job)
-		s.recordExecutionAndCleanup(id, event, job.LastStatus)
+		needsRecord = true
+		recordStatus = job.LastStatus
 	case enums.EventTypeFailed:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusFailed
 		s.updateNextRun(&job)
-		s.recordExecutionAndCleanup(id, event, job.LastStatus)
+		needsRecord = true
+		recordStatus = job.LastStatus
 	}
 	job.UpdatedAt = time.Now()
 
 	// store the updated job back in the map
 	s.jobs[id] = job
+	s.jobsMu.Unlock()
+
+	// perform database operations outside the lock to avoid blocking dashboard reads
+	if needsRecord {
+		s.recordExecutionAndCleanup(id, event, recordStatus)
+	}
 }
 
 // recordExecutionAndCleanup saves execution to database and cleans up old executions

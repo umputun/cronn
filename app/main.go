@@ -80,6 +80,8 @@ var opts struct {
 		MaxAge          int    `long:"max-age" env:"MAX_AGE" default:"0" description:"maximum number of days to retain old log files"`
 		MaxBackups      int    `long:"max-backups" env:"MAX_BACKUPS" default:"7" description:"maximum number of old log files to retain"`
 		EnabledCompress bool   `long:"enabled-compress" env:"ENABLED_COMPRESS" description:"determines if the rotated log files should be compressed using gzip"`
+		ExecMaxLines    int    `long:"exec-max-lines" env:"EXEC_MAX_LINES" default:"100" description:"max log lines stored per execution (0 = disabled)"`
+		ExecMaxHist     int    `long:"exec-max-hist" env:"EXEC_MAX_HIST" default:"50" description:"max executions kept per job"`
 	} `group:"log" namespace:"log" env-namespace:"CRONN_LOG"`
 
 	Web struct {
@@ -153,6 +155,10 @@ func main() {
 	var manualTrigger chan service.ManualJobRequest
 	if opts.Web.Enabled {
 		manualTrigger = make(chan service.ManualJobRequest, 100)
+	} else {
+		// disable execution history if web is not enabled (no UI to view it)
+		opts.Log.ExecMaxLines = 0
+		opts.Log.ExecMaxHist = 0
 	}
 
 	// initialize web server if enabled
@@ -169,6 +175,8 @@ func main() {
 			DisableManual:      opts.Web.DisableManual,
 			DisableCommandEdit: opts.Web.DisableCommandEdit,
 			Settings:           buildSettingsInfo(),
+			ExecMaxLogLines:    opts.Log.ExecMaxLines,
+			LogExecMaxHist:     opts.Log.ExecMaxHist,
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {
@@ -197,7 +205,8 @@ func main() {
 		Notifier:          makeNotifier(),
 		ConditionChecker:  conditions.NewChecker(opts.MaxConcurrentChecks),
 		HostName:          makeHostName(),
-		MaxLogLines:       opts.Notify.MaxLogLines,
+		NotifyMaxLogLines: opts.Notify.MaxLogLines,
+		ExecMaxLogLines:   opts.Log.ExecMaxLines,
 		EnableLogPrefix:   opts.Log.EnablePrefix,
 		Stdout:            stdout,
 		DeDup:             service.NewDeDup(opts.DeDup),
@@ -324,8 +333,8 @@ func buildSettingsInfo() web.SettingsInfo {
 
 	return web.SettingsInfo{
 		// version & build info
-		Version: revision,
-		StartTime:     time.Now(),
+		Version:   revision,
+		StartTime: time.Now(),
 
 		// web settings
 		WebEnabled:         opts.Web.Enabled,

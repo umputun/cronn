@@ -18,6 +18,7 @@ import (
 
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/service"
+	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
@@ -286,7 +287,12 @@ func TestServer_OnJobStart(t *testing.T) {
 	go server.processEvents(ctx)
 
 	startTime := time.Now()
-	server.OnJobStart("echo test", "echo test", "* * * * *", startTime)
+	server.OnJobStart(request.OnJobStart{
+		Command:         "echo test",
+		ExecutedCommand: "echo test",
+		Schedule:        "* * * * *",
+		StartTime:       startTime,
+	})
 
 	// wait for event to be processed
 	require.Eventually(t, func() bool {
@@ -333,7 +339,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 	endTime := startTime.Add(time.Second)
 
 	// first start the job
-	server.OnJobStart("echo test", "echo test", "* * * * *", startTime)
+	server.OnJobStart(request.OnJobStart{Command: "echo test", ExecutedCommand: "echo test", Schedule: "* * * * *", StartTime: startTime})
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -342,7 +348,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	// then complete it successfully
-	server.OnJobComplete("echo test", "echo test", "* * * * *", startTime, endTime, 0, nil)
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test", ExecutedCommand: "echo test", Schedule: "* * * * *", StartTime: startTime, EndTime: endTime, ExitCode: 0, Output: "", Err: nil})
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -360,7 +366,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 	assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
 
 	// test with error
-	server.OnJobStart("echo error", "echo error", "* * * * *", startTime)
+	server.OnJobStart(request.OnJobStart{Command: "echo error", ExecutedCommand: "echo error", Schedule: "* * * * *", StartTime: startTime})
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -368,7 +374,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 		return exists && job.LastStatus == enums.JobStatusRunning
 	}, time.Second, 10*time.Millisecond)
 
-	server.OnJobComplete("echo error", "echo error", "* * * * *", startTime, endTime, 1, fmt.Errorf("test error"))
+	server.OnJobComplete(request.OnJobComplete{Command: "echo error", ExecutedCommand: "echo error", Schedule: "* * * * *", StartTime: startTime, EndTime: endTime, ExitCode: 1, Output: "", Err: fmt.Errorf("test error")})
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -383,6 +389,183 @@ func TestServer_OnJobComplete(t *testing.T) {
 	assert.True(t, exists2)
 	assert.False(t, job2.IsRunning)
 	assert.Equal(t, enums.JobStatusFailed, job2.LastStatus)
+}
+
+func TestServer_OnJobComplete_OutputStorage(t *testing.T) {
+	t.Run("stores output when logExecMaxLines > 0", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		cfg := Config{
+			DBPath:          dbPath,
+			UpdateInterval:  time.Minute,
+			Version:         "test",
+			JobsProvider:    createTestProvider(t, tmpDir),
+			ExecMaxLogLines: 100,
+			LogExecMaxHist:  50,
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go server.processEvents(ctx)
+
+		startTime := time.Now()
+		endTime := startTime.Add(time.Second)
+		output := "line 1\nline 2\nline 3"
+
+		server.OnJobStart(request.OnJobStart{
+			Command:         "echo test",
+			ExecutedCommand: "echo test",
+			Schedule:        "* * * * *",
+			StartTime:       startTime,
+		})
+
+		server.OnJobComplete(request.OnJobComplete{
+			Command:         "echo test",
+			ExecutedCommand: "echo test",
+			Schedule:        "* * * * *",
+			StartTime:       startTime,
+			EndTime:         endTime,
+			ExitCode:        0,
+			Output:          output,
+			Err:             nil,
+		})
+
+		// wait for event processing
+		require.Eventually(t, func() bool {
+			execs, errGet := server.store.GetExecutions(HashCommand("echo test"), 10)
+			return errGet == nil && len(execs) == 1
+		}, time.Second, 10*time.Millisecond)
+
+		// verify output was stored
+		executions, err := server.store.GetExecutions(HashCommand("echo test"), 10)
+		require.NoError(t, err)
+		require.Len(t, executions, 1)
+		assert.Equal(t, output, executions[0].Output)
+	})
+
+	t.Run("skips output storage when logExecMaxLines == 0", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		cfg := Config{
+			DBPath:          dbPath,
+			UpdateInterval:  time.Minute,
+			Version:         "test",
+			JobsProvider:    createTestProvider(t, tmpDir),
+			ExecMaxLogLines: 0, // disabled
+			LogExecMaxHist:  50,
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go server.processEvents(ctx)
+
+		startTime := time.Now()
+		endTime := startTime.Add(time.Second)
+		output := "this should not be stored"
+
+		server.OnJobStart(request.OnJobStart{
+			Command:         "echo test",
+			ExecutedCommand: "echo test",
+			Schedule:        "* * * * *",
+			StartTime:       startTime,
+		})
+
+		server.OnJobComplete(request.OnJobComplete{
+			Command:         "echo test",
+			ExecutedCommand: "echo test",
+			Schedule:        "* * * * *",
+			StartTime:       startTime,
+			EndTime:         endTime,
+			ExitCode:        0,
+			Output:          output,
+			Err:             nil,
+		})
+
+		// wait for event processing
+		require.Eventually(t, func() bool {
+			execs, errGet := server.store.GetExecutions(HashCommand("echo test"), 10)
+			return errGet == nil && len(execs) == 1
+		}, time.Second, 10*time.Millisecond)
+
+		// verify output was NOT stored
+		executions, err := server.store.GetExecutions(HashCommand("echo test"), 10)
+		require.NoError(t, err)
+		require.Len(t, executions, 1)
+		assert.Empty(t, executions[0].Output, "output should be empty when logExecMaxLines is 0")
+	})
+
+	t.Run("cleanup old executions when logExecMaxHist > 0", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		cfg := Config{
+			DBPath:          dbPath,
+			UpdateInterval:  time.Minute,
+			Version:         "test",
+			JobsProvider:    createTestProvider(t, tmpDir),
+			ExecMaxLogLines: 100,
+			LogExecMaxHist:  3, // keep only 3 executions
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go server.processEvents(ctx)
+
+		// create 5 executions
+		baseTime := time.Now()
+		for i := 0; i < 5; i++ {
+			startTime := baseTime.Add(-time.Duration(5-i) * time.Minute)
+			endTime := startTime.Add(time.Second)
+
+			server.OnJobStart(request.OnJobStart{
+				Command:         "echo test",
+				ExecutedCommand: "echo test",
+				Schedule:        "* * * * *",
+				StartTime:       startTime,
+			})
+
+			server.OnJobComplete(request.OnJobComplete{
+				Command:         "echo test",
+				ExecutedCommand: "echo test",
+				Schedule:        "* * * * *",
+				StartTime:       startTime,
+				EndTime:         endTime,
+				ExitCode:        0,
+				Output:          fmt.Sprintf("output %d", i),
+				Err:             nil,
+			})
+		}
+
+		// wait for all events to be processed
+		require.Eventually(t, func() bool {
+			execs, errGet := server.store.GetExecutions(HashCommand("echo test"), 100)
+			return errGet == nil && len(execs) == 3
+		}, 2*time.Second, 10*time.Millisecond)
+
+		// verify only 3 most recent executions remain
+		executions, err := server.store.GetExecutions(HashCommand("echo test"), 100)
+		require.NoError(t, err)
+		assert.Len(t, executions, 3, "should keep only 3 most recent executions")
+
+		// verify they are the most recent ones (outputs 2, 3, 4)
+		assert.Contains(t, executions[0].Output, "output 4")
+		assert.Contains(t, executions[1].Output, "output 3")
+		assert.Contains(t, executions[2].Output, "output 2")
+	})
 }
 
 func TestServer_handleViewModeToggle(t *testing.T) {
@@ -402,10 +585,10 @@ func TestServer_handleViewModeToggle(t *testing.T) {
 
 	// add test jobs
 	startTime := time.Now()
-	server.OnJobStart("echo test1", "echo test1", "* * * * *", startTime)
-	server.OnJobComplete("echo test1", "echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour))
-	server.OnJobComplete("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-59*time.Minute), 1, fmt.Errorf("failed"))
+	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
+	server.OnJobStart(request.OnJobStart{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour)})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour), EndTime: startTime.Add(-59 * time.Minute), ExitCode: 1, Output: "", Err: fmt.Errorf("failed")})
 
 	// start event processor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -536,7 +719,7 @@ func TestServer_OnJobStartEdgeCases(t *testing.T) {
 
 	// test with invalid schedule that will fail to parse
 	startTime := time.Now()
-	server.OnJobStart("echo test", "echo test", "invalid schedule", startTime)
+	server.OnJobStart(request.OnJobStart{Command: "echo test", ExecutedCommand: "echo test", Schedule: "invalid schedule", StartTime: startTime})
 
 	// wait a bit for processing
 	time.Sleep(50 * time.Millisecond)
@@ -553,7 +736,7 @@ func TestServer_OnJobStartEdgeCases(t *testing.T) {
 	assert.Equal(t, enums.JobStatusRunning, job.LastStatus)
 
 	// test updating an existing job - schedule should NOT change from events
-	server.OnJobStart("echo test", "echo test", "* * * * *", startTime.Add(time.Hour))
+	server.OnJobStart(request.OnJobStart{Command: "echo test", ExecutedCommand: "echo test", Schedule: "* * * * *", StartTime: startTime.Add(time.Hour)})
 
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
@@ -642,7 +825,7 @@ func TestServer_handleDashboard(t *testing.T) {
 	go server.processEvents(ctx)
 
 	// add test job
-	server.OnJobStart("echo test", "echo test", "* * * * *", time.Now())
+	server.OnJobStart(request.OnJobStart{Command: "echo test", ExecutedCommand: "echo test", Schedule: "* * * * *", StartTime: time.Now()})
 	require.Eventually(t, func() bool {
 		server.jobsMu.RLock()
 		defer server.jobsMu.RUnlock()
@@ -686,9 +869,9 @@ func TestServer_handleAPIJobs(t *testing.T) {
 
 	// add test jobs
 	startTime := time.Now()
-	server.OnJobStart("echo test1", "echo test1", "* * * * *", startTime)
-	server.OnJobComplete("echo test1", "echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo test2", "echo test2", "@daily", startTime)
+	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
+	server.OnJobStart(request.OnJobStart{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "@daily", StartTime: startTime})
 
 	// wait for all events to be processed
 	require.Eventually(t, func() bool {
@@ -755,10 +938,10 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 
 	// add test jobs with different commands
 	startTime := time.Now()
-	server.OnJobStart("echo backup daily", "echo backup daily", "* * * * *", startTime)
-	server.OnJobComplete("echo backup daily", "echo backup daily", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo cleanup logs", "echo cleanup logs", "@daily", startTime)
-	server.OnJobStart("python backup.py", "python backup.py", "@weekly", startTime)
+	server.OnJobStart(request.OnJobStart{Command: "echo backup daily", ExecutedCommand: "echo backup daily", Schedule: "* * * * *", StartTime: startTime})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo backup daily", ExecutedCommand: "echo backup daily", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
+	server.OnJobStart(request.OnJobStart{Command: "echo cleanup logs", ExecutedCommand: "echo cleanup logs", Schedule: "@daily", StartTime: startTime})
+	server.OnJobStart(request.OnJobStart{Command: "python backup.py", ExecutedCommand: "python backup.py", Schedule: "@weekly", StartTime: startTime})
 
 	// wait for all events to be processed
 	require.Eventually(t, func() bool {
@@ -1178,10 +1361,10 @@ func TestServer_handleSortToggle(t *testing.T) {
 
 	// add test jobs with different schedules
 	startTime := time.Now()
-	server.OnJobStart("echo test1", "echo test1", "* * * * *", startTime)
-	server.OnJobComplete("echo test1", "echo test1", "* * * * *", startTime, startTime.Add(time.Second), 0, nil)
-	server.OnJobStart("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour))
-	server.OnJobComplete("echo test2", "echo test2", "0 * * * *", startTime.Add(-time.Hour), startTime.Add(-time.Hour).Add(time.Second), 0, nil)
+	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
+	server.OnJobStart(request.OnJobStart{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour)})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour), EndTime: startTime.Add(-time.Hour).Add(time.Second), ExitCode: 0, Output: "", Err: nil})
 
 	// start event processor to handle the job events
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2378,9 +2561,9 @@ func TestServer_handleJobHistory(t *testing.T) {
 
 	t.Run("successful retrieval with executions", func(t *testing.T) {
 		baseTime := time.Now()
-		err = server.store.RecordExecution("test-job-id", baseTime.Add(-5*time.Minute), baseTime.Add(-4*time.Minute), enums.JobStatusSuccess, 0, "echo test1")
+		err = server.store.RecordExecution(request.RecordExecution{JobID: "test-job-id", StartedAt: baseTime.Add(-5 * time.Minute), FinishedAt: baseTime.Add(-4 * time.Minute), Status: enums.JobStatusSuccess, ExitCode: 0, ExecutedCommand: "echo test1", Output: ""})
 		require.NoError(t, err)
-		err = server.store.RecordExecution("test-job-id", baseTime.Add(-2*time.Minute), baseTime.Add(-1*time.Minute), enums.JobStatusFailed, 1, "echo test2")
+		err = server.store.RecordExecution(request.RecordExecution{JobID: "test-job-id", StartedAt: baseTime.Add(-2 * time.Minute), FinishedAt: baseTime.Add(-1 * time.Minute), Status: enums.JobStatusFailed, ExitCode: 1, ExecutedCommand: "echo test2", Output: ""})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/jobs/test-job-id/history", http.NoBody)
@@ -2489,8 +2672,8 @@ func TestServer_handleSettingsModal(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	settingsInfo := SettingsInfo{
-		Version:   "v1.0.0",
-		StartTime: time.Now().Add(-1 * time.Hour),
+		Version:             "v1.0.0",
+		StartTime:           time.Now().Add(-1 * time.Hour),
 		WebEnabled:          true,
 		WebAddress:          ":8080",
 		WebUpdateInterval:   30 * time.Second,
@@ -2571,4 +2754,103 @@ func TestServer_since(t *testing.T) {
 	duration := server.since(past)
 
 	assert.InDelta(t, time.Hour.Seconds(), duration.Seconds(), 1.0)
+}
+
+func TestServer_handleExecutionLogs(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{DBPath: dbPath, UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), ExecMaxLogLines: 100, LogExecMaxHist: 50}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// start event processor
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go server.processEvents(ctx)
+
+	// create test execution records
+	jobID := HashCommand("echo test1")
+	startTime := time.Now().Add(-1 * time.Minute)
+	endTime := time.Now()
+
+	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
+	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: endTime, ExitCode: 0, Output: "test output line 1\ntest output line 2", Err: nil})
+
+	// wait for event processing
+	require.Eventually(t, func() bool {
+		execs, errGet := server.store.GetExecutions(jobID, 10)
+		return errGet == nil && len(execs) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	// get execution ID from database
+	executions, err := server.store.GetExecutions(jobID, 10)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	execID := executions[0].ID
+
+	t.Run("valid request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req.SetPathValue("id", jobID)
+		req.SetPathValue("exec_id", fmt.Sprint(execID))
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body := w.Body.String()
+		assert.Contains(t, body, "test output line 1")
+		assert.Contains(t, body, "test output line 2")
+	})
+
+	t.Run("missing job id", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs//executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req.SetPathValue("exec_id", fmt.Sprint(execID))
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("invalid execution id", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/invalid/logs", http.NoBody)
+		req.SetPathValue("id", jobID)
+		req.SetPathValue("exec_id", "invalid")
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("non-existent execution", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/99999/logs", http.NoBody)
+		req.SetPathValue("id", jobID)
+		req.SetPathValue("exec_id", "99999")
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("execution belongs to different job", func(t *testing.T) {
+		wrongJobID := HashCommand("echo test2")
+		req := httptest.NewRequest("GET", "/api/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req.SetPathValue("id", wrongJobID)
+		req.SetPathValue("exec_id", fmt.Sprint(execID))
+		w := httptest.NewRecorder()
+
+		server.handleExecutionLogs(w, req)
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
 }

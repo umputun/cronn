@@ -9,6 +9,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite" // sqlite driver
 
+	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
 )
 
@@ -36,6 +37,7 @@ type ExecutionInfo struct {
 	Status          enums.JobStatus `db:"status"`
 	ExitCode        int             `db:"exit_code"`
 	ExecutedCommand string          `db:"executed_command"`
+	Output          string          `db:"output"`
 }
 
 // SQLiteStore implements persistence using SQLite
@@ -106,10 +108,10 @@ func (s *SQLiteStore) initialize() error {
 			status TEXT,
 			exit_code INTEGER,
 			executed_command TEXT,
+			output TEXT,
 			FOREIGN KEY (job_id) REFERENCES jobs(id)
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_executions_job_id ON executions(job_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_executions_started_at ON executions(started_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_executions_job_started ON executions(job_id, started_at DESC)`,
 	}
 
 	for _, query := range queries {
@@ -129,20 +131,38 @@ func (s *SQLiteStore) initialize() error {
 // migrate performs schema migrations for existing databases
 func (s *SQLiteStore) migrate() error {
 	// check if executed_command column exists
-	var columnExists bool
+	var executedCommandExists bool
 	err := s.db.QueryRow(`
 		SELECT COUNT(*) > 0
 		FROM pragma_table_info('executions')
 		WHERE name = 'executed_command'
-	`).Scan(&columnExists)
+	`).Scan(&executedCommandExists)
 	if err != nil {
 		return fmt.Errorf("failed to check for executed_command column: %w", err)
 	}
 
 	// add executed_command column if it doesn't exist
-	if !columnExists {
-		if _, err := s.db.Exec("ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("failed to add executed_command column: %w", err)
+	if !executedCommandExists {
+		if _, execErr := s.db.Exec("ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''"); execErr != nil {
+			return fmt.Errorf("failed to add executed_command column: %w", execErr)
+		}
+	}
+
+	// check if output column exists
+	var outputExists bool
+	err = s.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('executions')
+		WHERE name = 'output'
+	`).Scan(&outputExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for output column: %w", err)
+	}
+
+	// add output column if it doesn't exist
+	if !outputExists {
+		if _, outErr := s.db.Exec("ALTER TABLE executions ADD COLUMN output TEXT DEFAULT ''"); outErr != nil {
+			return fmt.Errorf("failed to add output column: %w", outErr)
 		}
 	}
 
@@ -205,7 +225,7 @@ func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
 }
 
 // RecordExecution logs a job execution event
-func (s *SQLiteStore) RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int, executedCommand string) error {
+func (s *SQLiteStore) RecordExecution(req request.RecordExecution) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -213,9 +233,9 @@ func (s *SQLiteStore) RecordExecution(jobID string, started, finished time.Time,
 	defer cancel()
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO executions (job_id, started_at, finished_at, status, exit_code, executed_command)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		jobID, started, finished, status.String(), exitCode, executedCommand)
+		INSERT INTO executions (job_id, started_at, finished_at, status, exit_code, executed_command, output)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		req.JobID, req.StartedAt, req.FinishedAt, req.Status.String(), req.ExitCode, req.ExecutedCommand, req.Output)
 
 	if err != nil {
 		return fmt.Errorf("failed to record execution: %w", err)
@@ -231,7 +251,7 @@ func (s *SQLiteStore) GetExecutions(jobID string, limit int) ([]ExecutionInfo, e
 
 	var executions []ExecutionInfo
 	err := s.db.Select(&executions, `
-		SELECT id, job_id, started_at, finished_at, status, exit_code, executed_command
+		SELECT id, job_id, started_at, finished_at, status, exit_code, executed_command, output
 		FROM executions
 		WHERE job_id = ?
 		ORDER BY started_at DESC
@@ -248,6 +268,52 @@ func (s *SQLiteStore) GetExecutions(jobID string, limit int) ([]ExecutionInfo, e
 	}
 
 	return executions, nil
+}
+
+// GetExecutionByID retrieves a specific execution by its ID
+func (s *SQLiteStore) GetExecutionByID(execID int) (ExecutionInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var execution ExecutionInfo
+	err := s.db.Get(&execution, `
+		SELECT id, job_id, started_at, finished_at, status, exit_code, executed_command, output
+		FROM executions
+		WHERE id = ?`,
+		execID)
+
+	if err != nil {
+		return ExecutionInfo{}, fmt.Errorf("failed to query execution: %w", err)
+	}
+
+	return execution, nil
+}
+
+// CleanupOldExecutions removes old executions beyond the limit for a job
+func (s *SQLiteStore) CleanupOldExecutions(jobID string, limit int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// delete executions beyond the limit, keeping the most recent ones
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM executions
+		WHERE job_id = ?
+		AND id NOT IN (
+			SELECT id FROM executions
+			WHERE job_id = ?
+			ORDER BY started_at DESC
+			LIMIT ?
+		)`,
+		jobID, jobID, limit)
+
+	if err != nil {
+		return fmt.Errorf("failed to cleanup old executions: %w", err)
+	}
+
+	return nil
 }
 
 // Close closes the database connection

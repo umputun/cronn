@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/cronn/app/crontab"
+	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
@@ -62,13 +63,15 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// simulate some job events
-	server.OnJobStart("echo hourly", "echo hourly", "0 * * * *", time.Now())
+	startTimeHourly := time.Now()
+	server.OnJobStart(request.OnJobStart{Command: "echo hourly", ExecutedCommand: "echo hourly", Schedule: "0 * * * *", StartTime: startTimeHourly})
 	time.Sleep(10 * time.Millisecond)
-	server.OnJobComplete("echo hourly", "echo hourly", "0 * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
+	server.OnJobComplete(request.OnJobComplete{Command: "echo hourly", ExecutedCommand: "echo hourly", Schedule: "0 * * * *", StartTime: startTimeHourly.Add(-time.Second), EndTime: startTimeHourly, ExitCode: 0, Output: "", Err: nil})
 
-	server.OnJobStart("echo five-minutes", "echo five-minutes", "*/5 * * * *", time.Now())
+	startTimeFiveMin := time.Now()
+	server.OnJobStart(request.OnJobStart{Command: "echo five-minutes", ExecutedCommand: "echo five-minutes", Schedule: "*/5 * * * *", StartTime: startTimeFiveMin})
 	time.Sleep(10 * time.Millisecond)
-	server.OnJobComplete("echo five-minutes", "echo five-minutes", "*/5 * * * *", time.Now().Add(-time.Second), time.Now(), 1, fmt.Errorf("test error"))
+	server.OnJobComplete(request.OnJobComplete{Command: "echo five-minutes", ExecutedCommand: "echo five-minutes", Schedule: "*/5 * * * *", StartTime: startTimeFiveMin.Add(-time.Second), EndTime: startTimeFiveMin, ExitCode: 1, Output: "", Err: fmt.Errorf("test error")})
 
 	t.Run("dashboard", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", http.NoBody)
@@ -414,11 +417,11 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 
 	// simulate job execution events
 	now := time.Now()
-	server1.OnJobStart("echo test1", "echo test1", "* * * * *", now)
-	server1.OnJobComplete("echo test1", "echo test1", "* * * * *", now, now.Add(time.Second), 0, nil)
+	server1.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: now})
+	server1.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: now, EndTime: now.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
 
-	server1.OnJobStart("echo test2", "echo test2", "0 * * * *", now.Add(-time.Hour))
-	server1.OnJobComplete("echo test2", "echo test2", "0 * * * *", now.Add(-time.Hour), now.Add(-time.Hour).Add(time.Second), 1, fmt.Errorf("test error"))
+	server1.OnJobStart(request.OnJobStart{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: now.Add(-time.Hour)})
+	server1.OnJobComplete(request.OnJobComplete{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: now.Add(-time.Hour), EndTime: now.Add(-time.Hour).Add(time.Second), ExitCode: 1, Output: "", Err: fmt.Errorf("test error")})
 
 	// wait for events to be processed
 	require.Eventually(t, func() bool {
@@ -720,13 +723,24 @@ func TestServer_ConcurrentJobEvents(t *testing.T) {
 				// randomly send start or complete events
 				if j%2 == 0 {
 					// send start event
-					server.OnJobStart(jobCmd, jobCmd, "* * * * *", startTime.Add(time.Duration(j)*time.Millisecond))
+					server.OnJobStart(request.OnJobStart{
+						Command:         jobCmd,
+						ExecutedCommand: jobCmd,
+						Schedule:        "* * * * *",
+						StartTime:       startTime.Add(time.Duration(j) * time.Millisecond),
+					})
 				} else {
 					// send complete event
-					server.OnJobComplete(jobCmd, jobCmd, "* * * * *",
-						startTime.Add(time.Duration(j-1)*time.Millisecond),
-						startTime.Add(time.Duration(j)*time.Millisecond),
-						0, nil)
+					server.OnJobComplete(request.OnJobComplete{
+						Command:         jobCmd,
+						ExecutedCommand: jobCmd,
+						Schedule:        "* * * * *",
+						StartTime:       startTime.Add(time.Duration(j-1) * time.Millisecond),
+						EndTime:         startTime.Add(time.Duration(j) * time.Millisecond),
+						ExitCode:        0,
+						Output:          "",
+						Err:             nil,
+					})
 				}
 
 				// small random delay to increase chance of actual concurrency
@@ -956,9 +970,10 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 		for i := 0; i < 50; i++ {
 			jobCmd := fmt.Sprintf("echo job%d", i%10)
 			if i%2 == 0 {
-				server.OnJobStart(jobCmd, jobCmd, "* * * * *", time.Now())
+				server.OnJobStart(request.OnJobStart{Command: jobCmd, ExecutedCommand: jobCmd, Schedule: "* * * * *", StartTime: time.Now()})
 			} else {
-				server.OnJobComplete(jobCmd, jobCmd, "* * * * *", time.Now().Add(-time.Second), time.Now(), 0, nil)
+				endTime := time.Now()
+				server.OnJobComplete(request.OnJobComplete{Command: jobCmd, ExecutedCommand: jobCmd, Schedule: "* * * * *", StartTime: endTime.Add(-time.Second), EndTime: endTime, ExitCode: 0, Output: "", Err: nil})
 			}
 			time.Sleep(2 * time.Millisecond)
 		}

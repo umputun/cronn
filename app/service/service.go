@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -22,6 +23,7 @@ import (
 	"github.com/umputun/cronn/app/conditions"
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/resumer"
+	"github.com/umputun/cronn/app/service/request"
 )
 
 //go:generate moq -out mocks/resumer.go -pkg mocks -skip-ensure -fmt goimports . Resumer
@@ -47,7 +49,8 @@ type Scheduler struct {
 	DeDup             Dedupper
 	ConditionChecker  ConditionChecker
 	HostName          string
-	MaxLogLines       int
+	NotifyMaxLogLines int // controls notification output capture buffer size
+	ExecMaxLogLines   int // controls web log output capture buffer size (0 = disabled)
 	EnableLogPrefix   bool
 	Repeater          Repeater
 	RepeaterDefaults  struct {
@@ -127,8 +130,8 @@ type ConditionChecker interface {
 
 // JobEventHandler defines interface for handling job execution events
 type JobEventHandler interface {
-	OnJobStart(command, executedCommand, schedule string, startTime time.Time)
-	OnJobComplete(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error)
+	OnJobStart(req request.OnJobStart)
+	OnJobComplete(req request.OnJobComplete)
 }
 
 // Do runs blocking scheduler
@@ -216,30 +219,50 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 		executedCommand = cmd
 	}
 	if s.JobEventHandler != nil {
-		s.JobEventHandler.OnJobStart(r.Command, executedCommand, r.Spec, startTime)
+		s.JobEventHandler.OnJobStart(request.OnJobStart{
+			Command:         r.Command,
+			ExecutedCommand: executedCommand,
+			Schedule:        r.Spec,
+			StartTime:       startTime,
+		})
 	}
 
-	err = s.executeCommand(ctx, cmd, s.Stdout, rptr)
+	notifyOutput, webOutput, err := s.executeCommand(ctx, cmd, s.Stdout, rptr)
 
 	// notify job complete
 	endTime := time.Now()
 	if s.JobEventHandler != nil {
 		exitCode := 0
 		if err != nil {
-			if exitError, ok := err.(*exec.ExitError); ok {
+			var exitError *exec.ExitError
+			if errors.As(err, &exitError) {
 				exitCode = exitError.ExitCode()
 			} else {
 				exitCode = 1 // generic error for non-exec errors
 			}
 		}
-		s.JobEventHandler.OnJobComplete(r.Command, executedCommand, r.Spec, startTime, endTime, exitCode, err)
+		s.JobEventHandler.OnJobComplete(request.OnJobComplete{
+			Command:         r.Command,
+			ExecutedCommand: executedCommand,
+			Schedule:        r.Spec,
+			StartTime:       startTime,
+			EndTime:         endTime,
+			ExitCode:        exitCode,
+			Output:          webOutput, // use web-specific output
+			Err:             err,
+		})
 	}
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 	defer cancel()
 	var errMsg string
 	if err != nil {
-		errMsg = err.Error()
+		// combine error with notify output for notification emails
+		if notifyOutput != "" {
+			errMsg = err.Error() + "\n\n" + notifyOutput
+		} else {
+			errMsg = err.Error()
+		}
 	}
 	if e := s.notify(ctxTimeout, r, errMsg); e != nil {
 		return fmt.Errorf("failed to notify: %w", e)
@@ -302,32 +325,53 @@ func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sche
 	}
 }
 
-func (s *Scheduler) executeCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater) error {
+func (s *Scheduler) executeCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater) (notifyOutput, webOutput string, err error) {
 	if s.Jitter > 0 {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
 
-	err := rptr.Do(ctx, func() error {
+	// create output capture for notifications
+	notifyCapture := NewOutputCapture(s.NotifyMaxLogLines)
+
+	// create output capture for web logs if enabled (0 = disabled)
+	var webCapture *OutputCapture
+	if s.ExecMaxLogLines > 0 {
+		webCapture = NewOutputCapture(s.ExecMaxLogLines)
+	}
+
+	execErr := rptr.Do(ctx, func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
-		serr := NewErrorWriter(s.MaxLogLines)
-		logWithErr := io.MultiWriter(logWriter, serr)
-		if s.EnableLogPrefix {
-			prefixer := NewLogPrefixer(logWriter, command)
-			logWithErr = io.MultiWriter(prefixer, serr)
+
+		// build multi-writer with both captures
+		writers := []io.Writer{notifyCapture}
+		if webCapture != nil {
+			writers = append(writers, webCapture)
 		}
+
+		if s.EnableLogPrefix {
+			writers = append(writers, NewLogPrefixer(logWriter, command))
+		} else {
+			writers = append(writers, logWriter)
+		}
+		logWithErr := io.MultiWriter(writers...)
+
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
 		if e := cmd.Run(); e != nil {
-			serr.SerError(fmt.Errorf("failed to execute command %s: %w", command, e))
-			return serr
+			return fmt.Errorf("failed to execute command %s: %w", command, e)
 		}
 		return nil
 	})
 
-	if err != nil {
-		return fmt.Errorf("command execution failed: %w", err)
+	notifyOutput = notifyCapture.GetOutput()
+	if webCapture != nil {
+		webOutput = webCapture.GetOutput()
 	}
-	return nil
+
+	if execErr != nil {
+		return notifyOutput, webOutput, fmt.Errorf("command execution failed: %w", execErr)
+	}
+	return notifyOutput, webOutput, nil
 }
 
 func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string) error {
@@ -491,11 +535,19 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 			cmd := cmd
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
-				if err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater); err != nil {
+				notifyOutput, _, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater)
+				if err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
 					defer cancel()
-					if e := s.notify(ctxTimeout, r, err.Error()); e != nil {
+					// combine error with notify output for notification emails
+					var errMsg string
+					if notifyOutput != "" {
+						errMsg = err.Error() + "\n\n" + notifyOutput
+					} else {
+						errMsg = err.Error()
+					}
+					if e := s.notify(ctxTimeout, r, errMsg); e != nil {
 						log.Printf("[WARN] failed to notify, %v", e)
 						return
 					}

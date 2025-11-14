@@ -979,6 +979,24 @@ code {
     margin: 0;
 }
 
+.modal-back {
+    background: transparent;
+    border: none;
+    padding: var(--spacing-xs);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.modal-back:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+}
+
 .modal-close {
     background: transparent;
     border: none;
@@ -1022,6 +1040,21 @@ code {
 
 .modal-section-full {
     margin-top: var(--spacing-sm);
+}
+
+.logs-info-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.logs-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
 }
 
 .modal-label {
@@ -1764,4 +1797,77 @@ code {
 .htmx-request.btn-run-now {
     opacity: 0.6;
     pointer-events: none;
+}
+
+/* Logs UI */
+.history-logs-cell {
+    text-align: center;
+}
+
+.btn-logs {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-logs:hover {
+    background: var(--hover-bg);
+    border-color: var(--accent-color);
+}
+
+.btn-logs svg {
+    flex-shrink: 0;
+}
+
+.logs-empty {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.logs-output {
+    margin-top: 8px;
+    max-height: 500px;
+    overflow: auto;
+    background: var(--code-bg, #f5f5f5);
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+}
+
+.logs-output pre {
+    margin: 0;
+    padding: 12px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.logs-output code {
+    font-family: inherit;
+    color: var(--text-color);
+}
+
+.logs-empty-message {
+    padding: 12px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Dark theme adjustments for logs */
+[data-theme="dark"] .logs-output {
+    background: #1a1a1a;
+}
+
+[data-theme="dark"] .logs-output code {
+    color: #e0e0e0;
 }

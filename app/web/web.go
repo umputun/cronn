@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/service"
+	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
@@ -60,6 +62,8 @@ type Server struct {
 	disableManual      bool                            // disable manual job execution
 	disableCommandEdit bool                            // disable command editing in manual run dialog
 	settingsInfo       SettingsInfo                    // runtime configuration for settings/about modal
+	logExecMaxLines    int                             // max log lines to store per execution (0 = disabled)
+	logExecMaxHist     int                             // max executions to keep per job
 }
 
 // JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).
@@ -74,8 +78,10 @@ type JobsProvider interface {
 type Persistence interface {
 	LoadJobs() ([]persistence.JobInfo, error)
 	SaveJobs(jobs []persistence.JobInfo) error
-	RecordExecution(jobID string, started, finished time.Time, status enums.JobStatus, exitCode int, executedCommand string) error
+	RecordExecution(req request.RecordExecution) error
 	GetExecutions(jobID string, limit int) ([]persistence.ExecutionInfo, error)
+	GetExecutionByID(execID int) (persistence.ExecutionInfo, error)
+	CleanupOldExecutions(jobID string, limit int) error
 	Close() error
 }
 
@@ -87,6 +93,7 @@ type JobEvent struct {
 	Schedule        string
 	EventType       enums.EventType
 	ExitCode        int
+	Output          string
 	StartedAt       time.Time
 	FinishedAt      time.Time
 }
@@ -141,6 +148,8 @@ type Config struct {
 	DisableManual      bool                            // disable manual job execution
 	DisableCommandEdit bool                            // disable command editing in manual run dialog
 	Settings           SettingsInfo                    // runtime configuration for settings/about modal
+	ExecMaxLogLines    int                             // max log lines to store per execution (0 = disabled)
+	LogExecMaxHist     int                             // max executions to keep per job
 }
 
 // SettingsInfo holds safe-to-display runtime configuration for settings/about modal
@@ -233,6 +242,8 @@ func New(cfg Config) (*Server, error) {
 		disableManual:      cfg.DisableManual,
 		disableCommandEdit: cfg.DisableCommandEdit,
 		settingsInfo:       cfg.Settings,
+		logExecMaxLines:    cfg.ExecMaxLogLines,
+		logExecMaxHist:     cfg.LogExecMaxHist,
 	}
 
 	// parse templates
@@ -334,6 +345,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
 		api.HandleFunc("GET /jobs/{id}/history", s.handleJobHistory)
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
+		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/logs", s.handleExecutionLogs)
 	})
 
 	// static files with proper error handling
@@ -350,14 +362,14 @@ func (s *Server) routes() http.Handler {
 }
 
 // OnJobStart implements service.JobEventHandler interface
-func (s *Server) OnJobStart(command, executedCommand, schedule string, startTime time.Time) {
+func (s *Server) OnJobStart(req request.OnJobStart) {
 	event := JobEvent{
-		JobID:           HashCommand(command),
-		Command:         command,
-		ExecutedCommand: executedCommand,
-		Schedule:        schedule,
+		JobID:           HashCommand(req.Command),
+		Command:         req.Command,
+		ExecutedCommand: req.ExecutedCommand,
+		Schedule:        req.Schedule,
 		EventType:       enums.EventTypeStarted,
-		StartedAt:       startTime,
+		StartedAt:       req.StartTime,
 	}
 	select {
 	case s.eventChan <- event:
@@ -367,20 +379,21 @@ func (s *Server) OnJobStart(command, executedCommand, schedule string, startTime
 }
 
 // OnJobComplete implements service.JobEventHandler interface
-func (s *Server) OnJobComplete(command, executedCommand, schedule string, startTime, endTime time.Time, exitCode int, err error) {
+func (s *Server) OnJobComplete(req request.OnJobComplete) {
 	eventType := enums.EventTypeCompleted
-	if err != nil {
+	if req.Err != nil {
 		eventType = enums.EventTypeFailed
 	}
 	event := JobEvent{
-		JobID:           HashCommand(command),
-		Command:         command,
-		ExecutedCommand: executedCommand,
-		Schedule:        schedule,
+		JobID:           HashCommand(req.Command),
+		Command:         req.Command,
+		ExecutedCommand: req.ExecutedCommand,
+		Schedule:        req.Schedule,
 		EventType:       eventType,
-		ExitCode:        exitCode,
-		StartedAt:       startTime,
-		FinishedAt:      endTime,
+		ExitCode:        req.ExitCode,
+		Output:          req.Output,
+		StartedAt:       req.StartTime,
+		FinishedAt:      req.EndTime,
 	}
 	select {
 	case s.eventChan <- event:
@@ -574,23 +587,44 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusSuccess
 		s.updateNextRun(&job)
-		// save execution to database
-		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode, event.ExecutedCommand); err != nil {
-			log.Printf("[WARN] failed to save execution: %v", err)
-		}
+		s.recordExecutionAndCleanup(id, event, job.LastStatus)
 	case enums.EventTypeFailed:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusFailed
 		s.updateNextRun(&job)
-		// save execution to database
-		if err := s.store.RecordExecution(id, event.StartedAt, event.FinishedAt, job.LastStatus, event.ExitCode, event.ExecutedCommand); err != nil {
-			log.Printf("[WARN] failed to save execution: %v", err)
-		}
+		s.recordExecutionAndCleanup(id, event, job.LastStatus)
 	}
 	job.UpdatedAt = time.Now()
 
 	// store the updated job back in the map
 	s.jobs[id] = job
+}
+
+// recordExecutionAndCleanup saves execution to database and cleans up old executions
+func (s *Server) recordExecutionAndCleanup(jobID string, event JobEvent, status enums.JobStatus) {
+	output := event.Output
+	if s.logExecMaxLines == 0 {
+		output = "" // skip storing output if disabled
+	}
+
+	if err := s.store.RecordExecution(request.RecordExecution{
+		JobID:           jobID,
+		StartedAt:       event.StartedAt,
+		FinishedAt:      event.FinishedAt,
+		Status:          status,
+		ExitCode:        event.ExitCode,
+		ExecutedCommand: event.ExecutedCommand,
+		Output:          output,
+	}); err != nil {
+		log.Printf("[WARN] failed to save execution: %v", err)
+	}
+
+	// cleanup old executions if limit configured
+	if s.logExecMaxHist > 0 {
+		if err := s.store.CleanupOldExecutions(jobID, s.logExecMaxHist); err != nil {
+			log.Printf("[WARN] failed to cleanup old executions: %v", err)
+		}
+	}
 }
 
 // handleDashboard renders the main dashboard
@@ -1236,6 +1270,49 @@ func (s *Server) handleJobHistory(w http.ResponseWriter, r *http.Request) {
 // handleSettingsModal handles settings/about modal requests
 func (s *Server) handleSettingsModal(w http.ResponseWriter, _ *http.Request) {
 	s.render(w, "partials/jobs.html", "settings-modal", s.settingsInfo)
+}
+
+// handleExecutionLogs handles requests for execution log output
+func (s *Server) handleExecutionLogs(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	execIDStr := r.PathValue("exec_id")
+
+	if jobID == "" || execIDStr == "" {
+		http.Error(w, "Job ID and Execution ID required", http.StatusBadRequest)
+		return
+	}
+
+	// parse execution ID
+	execID, err := strconv.Atoi(execIDStr)
+	if err != nil {
+		http.Error(w, "Invalid execution ID", http.StatusBadRequest)
+		return
+	}
+
+	// get execution from database
+	execution, err := s.store.GetExecutionByID(execID)
+	if err != nil {
+		log.Printf("[ERROR] failed to get execution %d: %v", execID, err)
+		http.Error(w, "Execution not found", http.StatusNotFound)
+		return
+	}
+
+	// verify execution belongs to the requested job
+	if execution.JobID != jobID {
+		http.Error(w, "Execution does not belong to this job", http.StatusForbidden)
+		return
+	}
+
+	// prepare data for template
+	data := struct {
+		Execution persistence.ExecutionInfo
+		JobID     string
+	}{
+		Execution: execution,
+		JobID:     jobID,
+	}
+
+	s.render(w, "partials/jobs.html", "logs-modal", data)
 }
 
 // render renders a template

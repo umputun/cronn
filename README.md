@@ -358,8 +358,13 @@ cronn -f crontab --web.enabled --web.address=:8080 --web.base-url=/cronn
 
 Example nginx configuration:
 ```nginx
+# redirect /cronn to /cronn/ for consistency
+location = /cronn {
+    return 301 /cronn/;
+}
+
 location /cronn/ {
-    proxy_pass http://localhost:8080/cronn/;
+    proxy_pass http://localhost:8080/;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -59,3 +59,20 @@ func Test_setupLogsToFile(t *testing.T) {
 	assert.Equal(t, 0, logger.MaxAge)
 	assert.False(t, logger.Compress)
 }
+
+func Test_validateBaseURL(t *testing.T) {
+	tests := []struct{ name, input, want string }{
+		{"empty string", "", ""},
+		{"root path", "/", ""},
+		{"path without trailing slash", "/cronn", "/cronn"},
+		{"path with trailing slash", "/cronn/", "/cronn"},
+		{"multi-segment path", "/app/cronn", "/app/cronn"},
+		{"multi-segment with trailing slash", "/app/cronn/", "/app/cronn"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, validateBaseURL(tt.input))
+		})
+	}
+}

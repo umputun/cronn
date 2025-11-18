@@ -850,6 +850,24 @@ func TestServer_BaseURL(t *testing.T) {
 		assert.Equal(t, "/app/cronn/api/jobs", server.url("/api/jobs"))
 		assert.Equal(t, "/app/cronn/", server.cookiePath())
 	})
+
+	t.Run("base URL without trailing slash redirects", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test10.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/cronn"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		ts := httptest.NewServer(server.handler())
+		defer ts.Close()
+
+		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := client.Get(ts.URL + "/cronn")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
+		assert.Equal(t, "/cronn/", resp.Header.Get("Location"))
+	})
 }
 
 // createTestProvider creates a dummy JobsProvider for testing

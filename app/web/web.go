@@ -273,15 +273,9 @@ func (s *Server) Run(ctx context.Context, address string) error {
 	// start event processor
 	go s.processEvents(ctx)
 
-	// wrap handler with StripPrefix if base URL is set
-	handler := s.routes()
-	if s.baseURL != "" {
-		handler = http.StripPrefix(s.baseURL, handler)
-	}
-
 	server := &http.Server{
 		Addr:              address,
-		Handler:           handler,
+		Handler:           s.handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -301,6 +295,24 @@ func (s *Server) Run(ctx context.Context, address string) error {
 		return fmt.Errorf("web server failed: %w", err)
 	}
 	return nil
+}
+
+// handler returns the http.Handler with base URL wrapping applied
+func (s *Server) handler() http.Handler {
+	routes := s.routes()
+	if s.baseURL == "" {
+		return routes
+	}
+
+	// create a mux that handles the redirect and then the stripped routes
+	mux := http.NewServeMux()
+	// handle base URL without trailing slash - redirect to with trailing slash
+	mux.HandleFunc(s.baseURL, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, s.baseURL+"/", http.StatusMovedPermanently)
+	})
+	// handle all other routes under base URL with StripPrefix
+	mux.Handle(s.baseURL+"/", http.StripPrefix(s.baseURL, routes))
+	return mux
 }
 
 // routes returns the http.Handler with all routes configured

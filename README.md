@@ -315,6 +315,9 @@ cronn -f crontab --web.enabled --web.address=0.0.0.0:8080
 # Custom update interval (default: 30s)
 cronn -f crontab --web.enabled --web.update-interval=10s
 
+# Behind reverse proxy at subpath
+cronn -f crontab --web.enabled --web.base-url=/cronn
+
 # With basic authentication (optional)
 export CRONN_WEB_PASSWORD_HASH='$2y$10$...' # bcrypt hash
 cronn -f crontab --web.enabled
@@ -343,6 +346,28 @@ To protect the web dashboard with a password:
 3. Access the dashboard with username `cronn` and your password
 
 The dashboard is accessible via web browser at the configured address. Job data updates automatically using HTMX for smooth, JavaScript-free interactions.
+
+### Reverse Proxy Configuration
+
+To run Cronn behind a reverse proxy at a subpath (e.g., `https://example.com/cronn`), use the `--web.base-url` flag:
+
+```bash
+# Run Cronn with base URL
+cronn -f crontab --web.enabled --web.address=:8080 --web.base-url=/cronn
+```
+
+Example nginx configuration:
+```nginx
+location /cronn/ {
+    proxy_pass http://localhost:8080/cronn/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+**Note**: The base URL must start with `/` and should not end with a trailing slash (e.g., `/cronn` not `/cronn/`). The application will automatically normalize it.
 
 <details markdown>
   <summary>Screenshots</summary>
@@ -586,6 +611,7 @@ When enabled, notifications are sent to the specified destinations on job failur
 web:
       --web.enabled               enable web dashboard [$CRONN_WEB_ENABLED]
       --web.address=              web server address (default: :8080) [$CRONN_WEB_ADDRESS]
+      --web.base-url=             base URL path for reverse proxy (e.g., /cronn) [$CRONN_WEB_BASE_URL]
       --web.update-interval=      dashboard update interval (default: 30s) [$CRONN_WEB_UPDATE_INTERVAL]
       --web.db-path=              SQLite database path (default: cronn.db) [$CRONN_WEB_DB_PATH]
       --web.password-hash=        bcrypt hash for basic auth (username: cronn) [$CRONN_WEB_PASSWORD_HASH]

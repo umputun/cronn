@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <title>Cronn - Login</title>
     <meta name="description" content="Login to Cronn Dashboard">
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="{{url "/static/style.css"}}">
+    <link rel="icon" href="{{url "/static/favicon.svg"}}" type="image/svg+xml">
     <style>
         .login-container {
             min-height: 100vh;
@@ -120,7 +120,7 @@
                 <p class="login-subtitle">Enter password to access dashboard</p>
             </div>
             
-            <form class="login-form" method="POST" action="/login">
+            <form class="login-form" method="POST" action="{{url "/login"}}">
                 {{if .Error}}
                 <div class="error-message">{{.Error}}</div>
                 {{end}}

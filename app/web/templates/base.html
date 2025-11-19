@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <title>Cronn Dashboard</title>
     <meta name="description" content="Monitor and manage cron jobs with Cronn">
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="{{url "/static/style.css"}}">
+    <link rel="icon" href="{{url "/static/favicon.svg"}}" type="image/svg+xml">
 </head>
 <body hx-boost="true">
     <div class="app">
@@ -32,7 +32,7 @@
                         <input type="search"
                                name="search"
                                placeholder="Search commands..."
-                               hx-get="/api/jobs"
+                               hx-get="{{url "/api/jobs"}}"
                                hx-trigger="input changed delay:500ms, search"
                                hx-target="#jobs-container"
                                hx-swap="innerHTML"
@@ -49,7 +49,7 @@
                     {{template "view-mode-button" .}}
 
                     <!-- Settings button -->
-                    <button hx-get="/api/settings/modal"
+                    <button hx-get="{{url "/api/settings/modal"}}"
                             hx-target="#settings-content"
                             hx-trigger="click"
                             onclick="document.getElementById('settings-modal').style.display='flex'"
@@ -62,7 +62,7 @@
                     </button>
 
                     <!-- Theme toggle -->
-                    <button hx-post="/api/theme"
+                    <button hx-post="{{url "/api/theme"}}"
                             hx-trigger="click"
                             class="control-btn theme-toggle"
                             title="Toggle theme">
@@ -99,7 +99,7 @@
             <a href="https://github.com/umputun/cronn" class="footer-link" data-hx-boost="false">GitHub</a>
             {{if .AuthEnabled}}
             <span class="separator">•</span>
-            <a href="/logout" class="footer-link" data-hx-boost="false">Logout</a>
+            <a href="{{url "/logout"}}" class="footer-link" data-hx-boost="false">Logout</a>
             {{end}}
         </footer>
     </div>
@@ -146,8 +146,9 @@
     </div>
 
     <!-- HTMX -->
-    <script src="/static/htmx.min.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="{{url "/static/htmx.min.js"}}"></script>
+    <script>window.BASE_URL = "{{.BaseURL}}";</script>
+    <script src="{{url "/static/app.js"}}"></script>
 </body>
 </html>
 {{end}}

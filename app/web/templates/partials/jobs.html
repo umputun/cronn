@@ -44,7 +44,7 @@
                     disabled
                     title="No execution history"
                     {{else}}
-                    hx-get="/api/jobs/{{.ID}}/history"
+                    hx-get="{{url (printf "/api/jobs/%s/history" .ID)}}"
                     hx-target="#history-content"
                     hx-swap="innerHTML"
                     hx-on::after-request="document.getElementById('history-modal').style.display='flex'"
@@ -58,7 +58,7 @@
             {{if not $.ManualDisabled}}
             <button class="btn-compact"
                     {{if and .Enabled (not .IsRunning)}}
-                    hx-post="/api/jobs/{{.ID}}/run"
+                    hx-post="{{url (printf "/api/jobs/%s/run" .ID)}}"
                     hx-swap="none"
                     hx-confirm='{{.Command}}'
                     hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
@@ -76,7 +76,7 @@
     
     <div class="job-command">
         <button class="info-btn"
-                hx-get="/api/jobs/{{.ID}}/modal"
+                hx-get="{{url (printf "/api/jobs/%s/modal" .ID)}}"
                 hx-target="#modal-content"
                 hx-swap="innerHTML"
                 hx-on::after-request="document.getElementById('job-modal').style.display='flex'"
@@ -156,7 +156,7 @@
             
             <td class="td-command command">
                 <button class="info-btn"
-                        hx-get="/api/jobs/{{.ID}}/modal"
+                        hx-get="{{url (printf "/api/jobs/%s/modal" .ID)}}"
                         hx-target="#modal-content"
                         hx-swap="innerHTML"
                         hx-on::after-request="document.getElementById('job-modal').style.display='flex'"
@@ -185,7 +185,7 @@
                         disabled
                         title="No execution history"
                         {{else}}
-                        hx-get="/api/jobs/{{.ID}}/history"
+                        hx-get="{{url (printf "/api/jobs/%s/history" .ID)}}"
                         hx-target="#history-content"
                         hx-swap="innerHTML"
                         hx-on::after-request="document.getElementById('history-modal').style.display='flex'"
@@ -199,7 +199,7 @@
                 {{if not $.ManualDisabled}}
                 <button class="btn-compact"
                         {{if and .Enabled (not .IsRunning)}}
-                        hx-post="/api/jobs/{{.ID}}/run"
+                        hx-post="{{url (printf "/api/jobs/%s/run" .ID)}}"
                         hx-swap="none"
                         hx-confirm='{{.Command}}'
                         hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
@@ -221,7 +221,7 @@
 
 {{define "filter-button"}}
 <button {{if .IsOOB}}hx-swap-oob="outerHTML:.filter-button"{{end}}
-        hx-post="/api/filter-toggle"
+        hx-post="{{url "/api/filter-toggle"}}"
         hx-target="#jobs-container"
         hx-swap="innerHTML"
         hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
@@ -241,7 +241,7 @@
 
 {{define "sort-button"}}
 <button {{if .IsOOB}}hx-swap-oob="outerHTML:.sort-button"{{end}}
-        hx-post="/api/sort-toggle"
+        hx-post="{{url "/api/sort-toggle"}}"
         hx-target="#jobs-container"
         hx-swap="innerHTML"
         hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
@@ -258,7 +258,7 @@
 
 {{define "jobs-container"}}
 <div id="jobs-container"
-     hx-get="/api/jobs"
+     hx-get="{{url "/api/jobs"}}"
      hx-trigger="load, every 5s"
      hx-swap="innerHTML settle:0ms"
      hx-include="[name='search']"
@@ -272,7 +272,7 @@
 {{end}}
 
 {{define "view-mode-button"}}
-<button hx-post="/api/view-mode"
+<button hx-post="{{url "/api/view-mode"}}"
         hx-trigger="click"
         hx-target="#jobs-container"
         hx-swap="outerHTML"
@@ -478,7 +478,7 @@
                         <td class="history-logs-cell">
                             {{if .Output}}
                             <button class="btn-logs"
-                                    hx-get="/api/jobs/{{$.Job.ID}}/executions/{{.ID}}/logs"
+                                    hx-get="{{url (printf "/api/jobs/%s/executions/%s/logs" $.Job.ID .ID)}}"
                                     hx-target="#history-content"
                                     hx-swap="innerHTML">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -512,7 +512,7 @@
 <div class="history-modal">
     <div class="modal-header">
         <button class="modal-back"
-                hx-get="/api/jobs/{{.JobID}}/history"
+                hx-get="{{url (printf "/api/jobs/%s/history" .JobID)}}"
                 hx-target="#history-content"
                 hx-swap="innerHTML"
                 title="Back to history">

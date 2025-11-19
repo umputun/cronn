@@ -393,10 +393,14 @@ func TestServer_OnJobComplete_OutputStorage(t *testing.T) {
 			})
 		}
 
-		// wait for all events to be processed
+		// wait for all events to be processed - check that newest execution exists and count is 3
 		require.Eventually(t, func() bool {
 			execs, errGet := server.store.GetExecutions(HashCommand("echo test"), 100)
-			return errGet == nil && len(execs) == 3
+			if errGet != nil || len(execs) != 3 {
+				return false
+			}
+			// verify newest execution (output 4) is present
+			return execs[0].Output == "output 4"
 		}, 2*time.Second, 10*time.Millisecond)
 
 		// verify only 3 most recent executions remain

@@ -87,6 +87,7 @@ var opts struct {
 	Web struct {
 		Enabled            bool          `long:"enabled" env:"ENABLED" description:"enable web UI"`
 		Address            string        `long:"address" env:"ADDRESS" default:":8080" description:"web UI address"`
+		BaseURL            string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /cronn)"`
 		DBPath             string        `long:"db-path" env:"DB_PATH" default:"cronn.db" description:"path to SQLite database"`
 		UpdateInterval     time.Duration `long:"update-interval" env:"UPDATE_INTERVAL" default:"30s" description:"interval to sync crontab file"`
 		PasswordHash       string        `long:"password-hash" env:"PASSWORD_HASH" description:"bcrypt hash for basic auth (username: cronn)"`
@@ -164,9 +165,12 @@ func main() {
 	// initialize web server if enabled
 	var eventHandler service.JobEventHandler
 	if opts.Web.Enabled {
+		baseURL := validateBaseURL(opts.Web.BaseURL)
+
 		cfg := web.Config{
 			DBPath:             opts.Web.DBPath,
 			UpdateInterval:     opts.Web.UpdateInterval,
+			BaseURL:            baseURL,
 			Version:            revision,
 			ManualTrigger:      manualTrigger,
 			JobsProvider:       crontabParser,
@@ -269,6 +273,21 @@ func makeHostName() string {
 		return "unknown"
 	}
 	return host
+}
+
+// validateBaseURL validates and normalizes base URL
+func validateBaseURL(baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+	if baseURL[0] != '/' {
+		log.Printf("[ERROR] base URL must start with /")
+		os.Exit(1)
+	}
+	if baseURL[len(baseURL)-1] == '/' {
+		return baseURL[:len(baseURL)-1]
+	}
+	return baseURL
 }
 
 func setupLogs() io.Writer {

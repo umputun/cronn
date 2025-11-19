@@ -18,7 +18,7 @@
 
     <!-- Jobs container with auto-refresh -->
     <div id="jobs-container"
-         hx-get="/api/jobs"
+         hx-get="{{url "/api/jobs"}}"
          hx-trigger="load, every 5s"
          hx-swap="innerHTML settle:0ms"
          hx-include="[name='search']"

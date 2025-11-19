@@ -168,7 +168,7 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "view-mode",
 		Value:    newMode.String(),
-		Path:     "/",
+		Path:     s.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -235,7 +235,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "theme",
 		Value:    nextTheme.String(),
-		Path:     "/",
+		Path:     s.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -409,7 +409,7 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sort-mode",
 		Value:    sortMode.String(),
-		Path:     "/",
+		Path:     s.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,

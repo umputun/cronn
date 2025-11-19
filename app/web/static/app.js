@@ -2,7 +2,8 @@
 document.body.addEventListener('refresh-jobs', function(evt) {
     const searchInput = document.querySelector('[name="search"]');
     const searchParam = searchInput && searchInput.value ? '?search=' + encodeURIComponent(searchInput.value) : '';
-    htmx.ajax('GET', '/api/jobs' + searchParam, {target: '#jobs-container', swap: 'innerHTML'});
+    const baseURL = window.BASE_URL || '';
+    htmx.ajax('GET', baseURL + '/api/jobs' + searchParam, {target: '#jobs-container', swap: 'innerHTML'});
 });
 
 // close modal on ESC key and confirm on Enter

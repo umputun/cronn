@@ -59,17 +59,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// use __Host- prefix for enhanced security over HTTPS
+	// use __Host- prefix for enhanced security over HTTPS (__Host- requires Path="/", so only use when no baseURL)
 	cookieName := "cronn-auth"
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	if secure {
+	if secure && s.baseURL == "" {
 		cookieName = "__Host-cronn-auth"
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    token,
-		Path:     "/",
+		Path:     s.cookiePath(),
 		MaxAge:   24 * 60 * 60, // 24 hours
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
@@ -77,7 +77,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// redirect to dashboard
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, s.url("/"), http.StatusSeeOther)
 }
 
 // handleLogout logs the user out by clearing the auth cookie
@@ -97,7 +97,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "cronn-auth",
 		Value:    "",
-		Path:     "/",
+		Path:     s.cookiePath(),
 		MaxAge:   -1, // delete cookie
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
@@ -120,7 +120,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Refresh", "true")
 
 	// redirect to login page
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	http.Redirect(w, r, s.url("/login"), http.StatusSeeOther)
 }
 
 // renderLoginError renders the login form with an error message
@@ -186,7 +186,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// no valid auth, redirect to login
 		if r.Header.Get("Accept") == "" || strings.Contains(r.Header.Get("Accept"), "text/html") {
 			// browser request, redirect to login
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, s.url("/login"), http.StatusSeeOther)
 		} else {
 			// API request, return 401
 			w.Header().Set("WWW-Authenticate", `Basic realm="Cronn Dashboard"`)

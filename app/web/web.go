@@ -50,6 +50,7 @@ type Server struct {
 	jobsProvider       JobsProvider                   // for loading job specifications
 	eventChan          chan JobEvent
 	updateInterval     time.Duration
+	baseURL            string // base URL path for reverse proxy (e.g., /cronn), empty for root
 	version            string
 	passwordHash       string                          // bcrypt hash for basic auth
 	loginTTL           time.Duration                   // session TTL
@@ -100,6 +101,7 @@ type JobEvent struct {
 type TemplateData struct {
 	Jobs               []persistence.JobInfo
 	CurrentYear        int
+	BaseURL            string // base URL path for reverse proxy (e.g., /cronn)
 	ViewMode           enums.ViewMode
 	Theme              enums.Theme
 	SortMode           enums.SortMode
@@ -118,6 +120,7 @@ type TemplateData struct {
 // newTemplateData creates a TemplateData with common fields populated from request
 func (s *Server) newTemplateData(r *http.Request) TemplateData {
 	return TemplateData{
+		BaseURL:            s.baseURL,
 		ViewMode:           s.getViewMode(r),
 		SortMode:           s.getSortMode(r),
 		FilterMode:         s.getFilterMode(r),
@@ -138,6 +141,7 @@ type jobsStats struct {
 type Config struct {
 	DBPath             string
 	UpdateInterval     time.Duration
+	BaseURL            string // base URL path for reverse proxy (e.g., /cronn), empty for root
 	Version            string
 	ManualTrigger      chan<- service.ManualJobRequest // channel for sending manual trigger requests
 	JobsProvider       JobsProvider                    // interface for loading job specifications
@@ -232,6 +236,7 @@ func New(cfg Config) (*Server, error) {
 		jobsProvider:       cfg.JobsProvider,
 		eventChan:          make(chan JobEvent, 1000),
 		updateInterval:     cfg.UpdateInterval,
+		baseURL:            cfg.BaseURL,
 		version:            cfg.Version,
 		passwordHash:       cfg.PasswordHash,
 		loginTTL:           loginTTL,
@@ -270,7 +275,7 @@ func (s *Server) Run(ctx context.Context, address string) error {
 
 	server := &http.Server{
 		Addr:              address,
-		Handler:           s.routes(),
+		Handler:           s.handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -290,6 +295,24 @@ func (s *Server) Run(ctx context.Context, address string) error {
 		return fmt.Errorf("web server failed: %w", err)
 	}
 	return nil
+}
+
+// handler returns the http.Handler with base URL wrapping applied
+func (s *Server) handler() http.Handler {
+	routes := s.routes()
+	if s.baseURL == "" {
+		return routes
+	}
+
+	// create a mux that handles the redirect and then the stripped routes
+	mux := http.NewServeMux()
+	// handle base URL without trailing slash - redirect to with trailing slash
+	mux.HandleFunc(s.baseURL, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, s.baseURL+"/", http.StatusMovedPermanently)
+	})
+	// handle all other routes under base URL with StripPrefix
+	mux.Handle(s.baseURL+"/", http.StripPrefix(s.baseURL, routes))
+	return mux
 }
 
 // routes returns the http.Handler with all routes configured
@@ -392,6 +415,7 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 		"truncate":      s.truncate,
 		"timeUntil":     s.timeUntil,
 		"since":         s.since,
+		"url":           s.url,
 	}
 
 	// parse base template with all partials
@@ -411,7 +435,7 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	templates["partials/jobs.html"] = partials
 
 	// parse login template (standalone, doesn't use base)
-	login, err := template.New("login.html").ParseFS(templatesFS, "templates/login.html")
+	login, err := template.New("login.html").Funcs(funcMap).ParseFS(templatesFS, "templates/login.html")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse login template: %w", err)
 	}
@@ -493,7 +517,7 @@ func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sort-mode",
 		Value:    mode.String(),
-		Path:     "/",
+		Path:     s.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -521,7 +545,7 @@ func (s *Server) setFilterCookie(w http.ResponseWriter, mode enums.FilterMode) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "filter-mode",
 		Value:    mode.String(),
-		Path:     "/",
+		Path:     s.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -570,6 +594,19 @@ func (s *Server) truncate(str string, n int) string {
 		return str
 	}
 	return str[:n] + "..."
+}
+
+// url prepends the base URL to a path for reverse proxy support
+func (s *Server) url(path string) string {
+	return s.baseURL + path
+}
+
+// cookiePath returns the cookie path with base URL support
+func (s *Server) cookiePath() string {
+	if s.baseURL == "" {
+		return "/"
+	}
+	return s.baseURL + "/"
 }
 
 // helper functions

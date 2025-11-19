@@ -714,6 +714,162 @@ func TestServer_since(t *testing.T) {
 	assert.InDelta(t, time.Hour.Seconds(), duration.Seconds(), 1.0)
 }
 
+func TestServer_BaseURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	t.Run("url helper without baseURL", func(t *testing.T) {
+		cfg := Config{DBPath: dbPath, UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: ""}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		assert.Equal(t, "/", server.url("/"))
+		assert.Equal(t, "/api/jobs", server.url("/api/jobs"))
+		assert.Equal(t, "/static/style.css", server.url("/static/style.css"))
+	})
+
+	t.Run("url helper with baseURL", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test2.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/cronn"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		assert.Equal(t, "/cronn/", server.url("/"))
+		assert.Equal(t, "/cronn/api/jobs", server.url("/api/jobs"))
+		assert.Equal(t, "/cronn/static/style.css", server.url("/static/style.css"))
+	})
+
+	t.Run("cookiePath without baseURL", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test3.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: ""}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		assert.Equal(t, "/", server.cookiePath())
+	})
+
+	t.Run("cookiePath with baseURL", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test4.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/cronn"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		assert.Equal(t, "/cronn/", server.cookiePath())
+	})
+
+	t.Run("routing with baseURL", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test5.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/cronn"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		// start server to test routing
+		srv := &http.Server{Addr: ":0", Handler: server.routes(), ReadHeaderTimeout: time.Second}
+		handler := srv.Handler
+		if server.baseURL != "" {
+			handler = http.StripPrefix(server.baseURL, handler)
+		}
+
+		// test request to /cronn/api/jobs should work
+		req := httptest.NewRequest("GET", "/cronn/api/jobs", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		// test request to /api/jobs (without prefix) should fail with baseURL
+		req = httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("cookie paths with baseURL", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test6.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/cronn"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		// test view mode toggle sets cookie with correct path
+		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
+		rec := httptest.NewRecorder()
+		server.handleViewModeToggle(rec, req)
+
+		cookies := rec.Result().Cookies()
+		require.Len(t, cookies, 1)
+		assert.Equal(t, "view-mode", cookies[0].Name)
+		assert.Equal(t, "/cronn/", cookies[0].Path)
+	})
+
+	t.Run("redirects with baseURL", func(t *testing.T) {
+		passwordHash := "$2a$10$test" // bcrypt hash placeholder
+		cfg := Config{
+			DBPath:         filepath.Join(tmpDir, "test7.db"),
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   createTestProvider(t, tmpDir),
+			BaseURL:        "/cronn",
+			PasswordHash:   passwordHash,
+		}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		// test auth redirect to login uses correct base URL
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		server.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		location := rec.Header().Get("Location")
+		assert.Equal(t, "/cronn/login", location)
+	})
+
+	t.Run("template data includes baseURL", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test8.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/myapp"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		req := httptest.NewRequest("GET", "/", http.NoBody)
+		data := server.newTemplateData(req)
+
+		assert.Equal(t, "/myapp", data.BaseURL)
+	})
+
+	t.Run("base URL with multiple segments", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test9.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/app/cronn"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		assert.Equal(t, "/app/cronn/api/jobs", server.url("/api/jobs"))
+		assert.Equal(t, "/app/cronn/", server.cookiePath())
+	})
+
+	t.Run("base URL without trailing slash redirects", func(t *testing.T) {
+		cfg := Config{DBPath: filepath.Join(tmpDir, "test10.db"), UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), BaseURL: "/cronn"}
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		ts := httptest.NewServer(server.handler())
+		defer ts.Close()
+
+		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := client.Get(ts.URL + "/cronn")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
+		assert.Equal(t, "/cronn/", resp.Header.Get("Location"))
+	})
+}
+
 // createTestProvider creates a dummy JobsProvider for testing
 func createTestProvider(t *testing.T, tmpDir string) JobsProvider {
 	t.Helper()

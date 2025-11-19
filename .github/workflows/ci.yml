@@ -20,6 +20,13 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          docker system prune -af
+
       - name: build and test
         run: |
           go test -timeout=3m -covermode=count -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp ./...

@@ -1,10 +1,10 @@
 {{define "jobs-cards"}}
 {{range .Jobs}}
-<div class="job-card" 
+<div class="job-card"
      data-job-id="{{.ID}}"
      data-job-status="{{.LastStatus}}"
      data-next-run="{{.NextRun.Unix}}">
-    
+
     <!-- Status indicator -->
     <div class="job-status status-{{.LastStatus}}">
         {{if .IsRunning}}
@@ -27,7 +27,7 @@
         <div class="status-indicator idle"></div>
         {{end}}
     </div>
-    
+
     <!-- Schedule and command -->
     <div class="job-header">
         <div class="job-schedule" title="{{.Schedule}}">
@@ -73,7 +73,7 @@
             {{end}}
         </div>
     </div>
-    
+
     <div class="job-command">
         <button class="info-btn"
                 hx-get="{{url (printf "/api/jobs/%s/modal" .ID)}}"
@@ -88,7 +88,7 @@
         </button>
         <code title="{{.Command}}">{{truncate .Command 60}}</code>
     </div>
-    
+
     <!-- Timing info -->
     <div class="job-timing">
         <div class="timing-item">
@@ -102,7 +102,7 @@
             <span class="timing-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
         </div>
     </div>
-    
+
 </div>
 {{end}}
 {{end}}
@@ -121,11 +121,11 @@
     </thead>
     <tbody>
         {{range .Jobs}}
-        <tr class="job-row" 
+        <tr class="job-row"
             data-job-id="{{.ID}}"
             data-job-status="{{.LastStatus}}"
             data-next-run="{{.NextRun.Unix}}">
-            
+
             <td class="td-status">
                 {{if .IsRunning}}
                 <div class="status-badge running">
@@ -149,11 +149,11 @@
                 </div>
                 {{end}}
             </td>
-            
+
             <td class="td-schedule">
                 <code class="schedule-code">{{.Schedule}}</code>
             </td>
-            
+
             <td class="td-command command">
                 <button class="info-btn"
                         hx-get="{{url (printf "/api/jobs/%s/modal" .ID)}}"
@@ -168,17 +168,17 @@
                 </button>
                 <code class="command-text" title="{{.Command}}">{{truncate .Command 80}}</code>
             </td>
-            
+
             <td class="td-next numeric">
                 <span class="time-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
                     {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
                 </span>
             </td>
-            
+
             <td class="td-last numeric">
                 <span class="time-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
             </td>
-            
+
             <td class="td-actions">
                 <button class="history-btn"
                         {{if eq .LastStatus.String "idle"}}
@@ -478,7 +478,7 @@
                         <td class="history-logs-cell">
                             {{if .Output}}
                             <button class="btn-logs"
-                                    hx-get="{{url (printf "/api/jobs/%s/executions/%s/logs" $.Job.ID .ID)}}"
+                                    hx-get="{{url (printf "/api/jobs/%s/executions/%d/logs" $.Job.ID .ID)}}"
                                     hx-target="#history-content"
                                     hx-swap="innerHTML">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none">

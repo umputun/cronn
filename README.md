@@ -315,6 +315,9 @@ cronn -f crontab --web.enabled --web.address=0.0.0.0:8080
 # Custom update interval (default: 30s)
 cronn -f crontab --web.enabled --web.update-interval=10s
 
+# Custom hostname display (defaults to os.Hostname())
+cronn -f crontab --web.enabled --web.hostname=production-server
+
 # Behind reverse proxy at subpath
 cronn -f crontab --web.enabled --web.base-url=/cronn
 

@@ -76,3 +76,11 @@ func Test_validateBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func Test_resolveHostname(t *testing.T) {
+	assert.Equal(t, "test-host", resolveHostname("test-host"))
+
+	exp, err := os.Hostname()
+	require.NoError(t, err)
+	assert.Equal(t, exp, resolveHostname(""))
+}

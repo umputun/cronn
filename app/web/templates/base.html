@@ -19,7 +19,7 @@
                         <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
                         <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
-                    <h1 class="logo-text">Cronn Dashboard</h1>
+                    <h1 class="logo-text">Cronn{{if .Hostname}} <span class="hostname-badge">{{.Hostname}}</span>{{end}}</h1>
                 </div>
                 
                 <div class="header-controls">

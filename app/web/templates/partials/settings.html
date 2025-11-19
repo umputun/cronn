@@ -34,6 +34,12 @@
                 <div class="modal-label">Address</div>
                 <div class="modal-value"><code>{{.WebAddress}}</code></div>
             </div>
+            {{if .WebHostname}}
+            <div class="modal-section">
+                <div class="modal-label">Hostname</div>
+                <div class="modal-value"><code>{{.WebHostname}}</code></div>
+            </div>
+            {{end}}
             <div class="modal-section">
                 <div class="modal-label">Update Interval</div>
                 <div class="modal-value">{{humanDuration .WebUpdateInterval}}</div>

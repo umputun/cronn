@@ -88,6 +88,7 @@ var opts struct {
 		Enabled            bool          `long:"enabled" env:"ENABLED" description:"enable web UI"`
 		Address            string        `long:"address" env:"ADDRESS" default:":8080" description:"web UI address"`
 		BaseURL            string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /cronn)"`
+		Hostname           string        `long:"hostname" env:"HOSTNAME" description:"hostname to display in UI (defaults to os.Hostname())"`
 		DBPath             string        `long:"db-path" env:"DB_PATH" default:"cronn.db" description:"path to SQLite database"`
 		UpdateInterval     time.Duration `long:"update-interval" env:"UPDATE_INTERVAL" default:"30s" description:"interval to sync crontab file"`
 		PasswordHash       string        `long:"password-hash" env:"PASSWORD_HASH" description:"bcrypt hash for basic auth (username: cronn)"`
@@ -167,10 +168,14 @@ func main() {
 	if opts.Web.Enabled {
 		baseURL := validateBaseURL(opts.Web.BaseURL)
 
+		// determine hostname for display
+		hostname := resolveHostname(opts.Web.Hostname)
+
 		cfg := web.Config{
 			DBPath:             opts.Web.DBPath,
 			UpdateInterval:     opts.Web.UpdateInterval,
 			BaseURL:            baseURL,
+			Hostname:           hostname,
 			Version:            revision,
 			ManualTrigger:      manualTrigger,
 			JobsProvider:       crontabParser,
@@ -178,7 +183,7 @@ func main() {
 			LoginTTL:           opts.Web.LoginTTL,
 			DisableManual:      opts.Web.DisableManual,
 			DisableCommandEdit: opts.Web.DisableCommandEdit,
-			Settings:           buildSettingsInfo(),
+			Settings:           buildSettingsInfo(hostname),
 			ExecMaxLogLines:    opts.Log.ExecMaxLines,
 			LogExecMaxHist:     opts.Log.ExecMaxHist,
 		}
@@ -290,6 +295,17 @@ func validateBaseURL(baseURL string) string {
 	return baseURL
 }
 
+// resolveHostname returns configured hostname or OS hostname if not configured
+func resolveHostname(configuredHostname string) string {
+	if configuredHostname != "" {
+		return configuredHostname
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return ""
+}
+
 func setupLogs() io.Writer {
 	if !opts.Log.Enabled {
 		log.Setup(log.Out(io.Discard), log.Err(io.Discard))
@@ -344,7 +360,7 @@ func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
 	return hupCh
 }
 
-func buildSettingsInfo() web.SettingsInfo {
+func buildSettingsInfo(hostname string) web.SettingsInfo {
 	crontabPath := opts.CrontabFile
 	if opts.Command != "" {
 		crontabPath = "inline command"
@@ -358,6 +374,7 @@ func buildSettingsInfo() web.SettingsInfo {
 		// web settings
 		WebEnabled:         opts.Web.Enabled,
 		WebAddress:         opts.Web.Address,
+		WebHostname:        hostname,
 		WebUpdateInterval:  opts.Web.UpdateInterval,
 		AuthEnabled:        opts.Web.PasswordHash != "",
 		ManualEnabled:      !opts.Web.DisableManual,

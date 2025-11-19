@@ -51,6 +51,7 @@ type Server struct {
 	eventChan          chan JobEvent
 	updateInterval     time.Duration
 	baseURL            string // base URL path for reverse proxy (e.g., /cronn), empty for root
+	hostname           string // hostname to display in UI
 	version            string
 	passwordHash       string                          // bcrypt hash for basic auth
 	loginTTL           time.Duration                   // session TTL
@@ -102,6 +103,7 @@ type TemplateData struct {
 	Jobs               []persistence.JobInfo
 	CurrentYear        int
 	BaseURL            string // base URL path for reverse proxy (e.g., /cronn)
+	Hostname           string // hostname to display in UI
 	ViewMode           enums.ViewMode
 	Theme              enums.Theme
 	SortMode           enums.SortMode
@@ -121,6 +123,7 @@ type TemplateData struct {
 func (s *Server) newTemplateData(r *http.Request) TemplateData {
 	return TemplateData{
 		BaseURL:            s.baseURL,
+		Hostname:           s.hostname,
 		ViewMode:           s.getViewMode(r),
 		SortMode:           s.getSortMode(r),
 		FilterMode:         s.getFilterMode(r),
@@ -142,6 +145,7 @@ type Config struct {
 	DBPath             string
 	UpdateInterval     time.Duration
 	BaseURL            string // base URL path for reverse proxy (e.g., /cronn), empty for root
+	Hostname           string // hostname to display in UI
 	Version            string
 	ManualTrigger      chan<- service.ManualJobRequest // channel for sending manual trigger requests
 	JobsProvider       JobsProvider                    // interface for loading job specifications
@@ -163,6 +167,7 @@ type SettingsInfo struct {
 	// web settings
 	WebEnabled         bool
 	WebAddress         string
+	WebHostname        string
 	WebUpdateInterval  time.Duration
 	AuthEnabled        bool
 	ManualEnabled      bool
@@ -237,6 +242,7 @@ func New(cfg Config) (*Server, error) {
 		eventChan:          make(chan JobEvent, 1000),
 		updateInterval:     cfg.UpdateInterval,
 		baseURL:            cfg.BaseURL,
+		hostname:           cfg.Hostname,
 		version:            cfg.Version,
 		passwordHash:       cfg.PasswordHash,
 		loginTTL:           loginTTL,

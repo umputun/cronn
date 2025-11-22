@@ -64,6 +64,10 @@ type Server struct {
 	settingsInfo       SettingsInfo                    // runtime configuration for settings/about modal
 	logExecMaxLines    int                             // max log lines to store per execution (0 = disabled)
 	logExecMaxHist     int                             // max executions to keep per job
+	neighborsURL       string                          // URL to fetch neighbor instances JSON
+	neighborsMu        sync.RWMutex                    // protects neighbors cache
+	neighborsCache     []NeighborInstance              // cached neighbor instances
+	neighborsCacheTime time.Time                       // when neighbors were last fetched
 }
 
 // JobsProvider loads job specifications from a configured source (e.g., crontab file, YAML/JSON config).
@@ -117,6 +121,7 @@ type TemplateData struct {
 	FullVersion        string // full application version
 	ManualDisabled     bool   // whether manual job execution is disabled
 	CommandEditEnabled bool   // whether command editing is enabled in manual run dialog
+	NeighborsEnabled   bool   // whether neighbor instances selector is enabled
 }
 
 // newTemplateData creates a TemplateData with common fields populated from request
@@ -129,6 +134,7 @@ func (s *Server) newTemplateData(r *http.Request) TemplateData {
 		FilterMode:         s.getFilterMode(r),
 		ManualDisabled:     s.disableManual,
 		CommandEditEnabled: !s.disableCommandEdit,
+		NeighborsEnabled:   s.neighborsURL != "",
 	}
 }
 
@@ -156,6 +162,7 @@ type Config struct {
 	Settings           SettingsInfo                    // runtime configuration for settings/about modal
 	ExecMaxLogLines    int                             // max log lines to store per execution (0 = disabled)
 	LogExecMaxHist     int                             // max executions to keep per job
+	NeighborsURL       string                          // URL to fetch neighbor instances JSON
 }
 
 // SettingsInfo holds safe-to-display runtime configuration for settings/about modal
@@ -253,6 +260,7 @@ func New(cfg Config) (*Server, error) {
 		settingsInfo:       cfg.Settings,
 		logExecMaxLines:    cfg.ExecMaxLogLines,
 		logExecMaxHist:     cfg.LogExecMaxHist,
+		neighborsURL:       cfg.NeighborsURL,
 	}
 
 	// parse templates
@@ -373,6 +381,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("GET /jobs/{id}/history", s.handleJobHistory)
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
 		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/logs", s.handleExecutionLogs)
+		api.HandleFunc("GET /neighbors", s.handleNeighbors)
 	})
 
 	// static files with proper error handling

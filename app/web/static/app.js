@@ -177,3 +177,20 @@ document.getElementById('history-modal').addEventListener('click', function(e) {
         }
     }
 });
+
+// close neighbors dropdown on click outside or ESC
+document.addEventListener('click', function(e) {
+    const details = document.querySelector('.neighbors-selector');
+    if (details && details.open && !details.contains(e.target)) {
+        details.open = false;
+    }
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const details = document.querySelector('.neighbors-selector');
+        if (details && details.open) {
+            details.open = false;
+        }
+    }
+});

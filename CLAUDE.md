@@ -67,6 +67,7 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 - **Auto-refresh polling**: `hx-trigger="load, every 5s"` for JavaScript-free real-time updates
 - **Response coordination**: `HX-Refresh: true` header triggers full page refresh when needed
 - **Event coordination**: Custom events like `refresh-jobs` coordinate updates between components
+- **Lazy-load dropdowns**: Native `<details>/<summary>` with `hx-trigger="toggle once"` for dropdowns that fetch content on first open (used in neighbors selector)
 
 ### Event-Driven Architecture
 - Server implements `JobEventHandler` interface to receive job events

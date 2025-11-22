@@ -215,7 +215,7 @@ code {
     transition: transform 0.2s ease;
 }
 
-.neighbors-selector.open .dropdown-arrow {
+.neighbors-selector[open] .dropdown-arrow {
     transform: rotate(180deg);
 }
 

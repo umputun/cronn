@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -18,10 +20,21 @@ type NeighborInstance struct {
 	URL  string `json:"url"`
 }
 
-// handleNeighbors returns the list of neighbor instances fetched from external URL
+// neighborsTemplateData holds data for neighbors template
+type neighborsTemplateData struct {
+	Neighbors []NeighborInstance
+	Error     string
+}
+
+// handleNeighbors returns HTML fragment with list of neighbor instances
 func (s *Server) handleNeighbors(w http.ResponseWriter, _ *http.Request) {
+	tmpl := s.templates["partials/jobs.html"]
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
 	if s.neighborsURL == "" {
-		http.Error(w, "Neighbors not configured", http.StatusNotFound)
+		if err := tmpl.ExecuteTemplate(w, "neighbors-error", neighborsTemplateData{Error: "Neighbors not configured"}); err != nil {
+			log.Printf("[ERROR] failed to execute neighbors-error template: %v", err)
+		}
 		return
 	}
 
@@ -30,10 +43,7 @@ func (s *Server) handleNeighbors(w http.ResponseWriter, _ *http.Request) {
 	if s.neighborsCache != nil && time.Since(s.neighborsCacheTime) < 5*time.Minute {
 		neighbors := s.neighborsCache
 		s.neighborsMu.RUnlock()
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(neighbors); err != nil {
-			log.Printf("[ERROR] failed to encode neighbors: %v", err)
-		}
+		s.renderNeighbors(w, tmpl, neighbors)
 		return
 	}
 	s.neighborsMu.RUnlock()
@@ -42,7 +52,9 @@ func (s *Server) handleNeighbors(w http.ResponseWriter, _ *http.Request) {
 	neighbors, err := s.fetchNeighbors()
 	if err != nil {
 		log.Printf("[ERROR] failed to fetch neighbors from %s: %v", s.neighborsURL, err)
-		http.Error(w, "Failed to fetch neighbors", http.StatusBadGateway)
+		if err := tmpl.ExecuteTemplate(w, "neighbors-error", neighborsTemplateData{Error: "Failed to load neighbors"}); err != nil {
+			log.Printf("[ERROR] failed to execute neighbors-error template: %v", err)
+		}
 		return
 	}
 
@@ -52,9 +64,24 @@ func (s *Server) handleNeighbors(w http.ResponseWriter, _ *http.Request) {
 	s.neighborsCacheTime = time.Now()
 	s.neighborsMu.Unlock()
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(neighbors); err != nil {
-		log.Printf("[ERROR] failed to encode neighbors: %v", err)
+	s.renderNeighbors(w, tmpl, neighbors)
+}
+
+// renderNeighbors filters neighbors by valid URL and renders the template
+func (s *Server) renderNeighbors(w http.ResponseWriter, tmpl *template.Template, neighbors []NeighborInstance) {
+	// filter neighbors with valid http/https URLs to prevent XSS
+	valid := make([]NeighborInstance, 0, len(neighbors))
+	for _, n := range neighbors {
+		u, err := url.Parse(n.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			log.Printf("[WARN] skipping neighbor with invalid URL: %s", n.URL)
+			continue
+		}
+		valid = append(valid, n)
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "neighbors-list", neighborsTemplateData{Neighbors: valid}); err != nil {
+		log.Printf("[ERROR] failed to execute neighbors-list template: %v", err)
 	}
 }
 
@@ -63,19 +90,24 @@ func (s *Server) fetchNeighbors() ([]NeighborInstance, error) {
 	var body []byte
 	var err error
 
-	// handle file:// uRLs by reading from local filesystem
-	if len(s.neighborsURL) > 7 && s.neighborsURL[:7] == "file://" {
-		filePath := s.neighborsURL[7:]
-		body, err = readNeighborsFile(filePath)
+	u, parseErr := url.Parse(s.neighborsURL)
+	if parseErr != nil {
+		return nil, fmt.Errorf("invalid neighbors URL %q: %w", s.neighborsURL, parseErr)
+	}
+
+	switch u.Scheme {
+	case "file":
+		body, err = readNeighborsFile(u.Path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read neighbors file %s: %w", filePath, err)
+			return nil, fmt.Errorf("failed to read neighbors file %s: %w", u.Path, err)
 		}
-	} else {
-		// http/https URL
+	case "http", "https":
 		body, err = s.fetchNeighborsHTTP()
 		if err != nil {
 			return nil, err
 		}
+	default:
+		return nil, fmt.Errorf("unsupported scheme in neighbors URL: %q", u.Scheme)
 	}
 
 	var neighbors []NeighborInstance

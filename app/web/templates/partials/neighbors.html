@@ -1,0 +1,15 @@
+{{define "neighbors-list"}}
+{{if .Neighbors}}
+<div class="neighbors-list">
+    {{range .Neighbors}}
+    <a href="{{.URL}}" class="neighbor-item">{{.Name}}</a>
+    {{end}}
+</div>
+{{else}}
+<div class="neighbors-error">No neighbors configured</div>
+{{end}}
+{{end}}
+
+{{define "neighbors-error"}}
+<div class="neighbors-error">{{.Error}}</div>
+{{end}}

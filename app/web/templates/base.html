@@ -21,17 +21,20 @@
                     </svg>
                     <h1 class="logo-text">Cronn{{if .Hostname}}
                         {{if .NeighborsEnabled}}
-                        <div class="neighbors-selector">
-                            <button class="hostname-badge hostname-badge-clickable" onclick="toggleNeighborsDropdown(event)">
+                        <details class="neighbors-selector">
+                            <summary class="hostname-badge hostname-badge-clickable">
                                 {{.Hostname}}
                                 <svg class="dropdown-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
-                            </button>
-                            <div id="neighbors-dropdown" class="neighbors-dropdown" style="display: none;">
+                            </summary>
+                            <div class="neighbors-dropdown"
+                                 hx-get="{{url "/api/neighbors"}}"
+                                 hx-trigger="toggle once from:closest details"
+                                 hx-swap="innerHTML">
                                 <div class="neighbors-loading">Loading...</div>
                             </div>
-                        </div>
+                        </details>
                         {{else}}
                         <span class="hostname-badge">{{.Hostname}}</span>
                         {{end}}

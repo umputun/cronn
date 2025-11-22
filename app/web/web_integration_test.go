@@ -1140,7 +1140,13 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
+
+		buf := make([]byte, 1024)
+		n, _ := resp.Body.Read(buf)
+		body := string(buf[:n])
+		assert.Contains(t, body, "Neighbors not configured")
 	})
 
 	t.Run("returns neighbors from HTTP source via full route", func(t *testing.T) {
@@ -1184,12 +1190,15 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+		assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
 
-		var result []NeighborInstance
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		require.NoError(t, err)
-		assert.Equal(t, neighbors, result)
+		buf := make([]byte, 4096)
+		n, _ := resp.Body.Read(buf)
+		body := string(buf[:n])
+		assert.Contains(t, body, "neighbors-list")
+		assert.Contains(t, body, "server-1")
+		assert.Contains(t, body, "server-2")
+		assert.Contains(t, body, "http://server1.example.com")
 	})
 
 	t.Run("returns neighbors from file source via full route", func(t *testing.T) {
@@ -1232,11 +1241,13 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
 
-		var result []NeighborInstance
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		require.NoError(t, err)
-		assert.Equal(t, neighbors, result)
+		buf := make([]byte, 4096)
+		n, _ := resp.Body.Read(buf)
+		body := string(buf[:n])
+		assert.Contains(t, body, "file-server-1")
+		assert.Contains(t, body, "file-server-2")
 	})
 
 	t.Run("caches neighbors with TTL", func(t *testing.T) {
@@ -1338,7 +1349,7 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		body := string(buf[:n])
 
 		assert.Contains(t, body, "neighbors-selector", "dashboard should contain neighbors-selector when configured")
-		assert.Contains(t, body, "toggleNeighborsDropdown", "dashboard should contain dropdown toggle function")
+		assert.Contains(t, body, "<details", "dashboard should use details element for dropdown")
 	})
 
 	t.Run("dashboard excludes neighbors selector when not configured", func(t *testing.T) {
@@ -1378,6 +1389,6 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		body := string(buf[:n])
 
 		assert.NotContains(t, body, "neighbors-selector", "dashboard should not contain neighbors-selector when not configured")
-		assert.NotContains(t, body, "toggleNeighborsDropdown", "dashboard should not contain dropdown toggle when not configured")
+		assert.NotContains(t, body, "hx-get=\"/api/neighbors\"", "dashboard should not have neighbors HTMX call when not configured")
 	})
 }

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,18 +15,26 @@ import (
 )
 
 func TestServer_handleNeighbors(t *testing.T) {
-	t.Run("returns 404 when neighbors not configured", func(t *testing.T) {
-		srv := &Server{neighborsURL: ""}
+	// create minimal templates for testing
+	tmpl := template.Must(template.New("neighbors").Parse(`
+		{{define "neighbors-list"}}{{if .Neighbors}}<div class="neighbors-list">{{range .Neighbors}}<a href="{{.URL}}" class="neighbor-item">{{.Name}}</a>{{end}}</div>{{else}}<div class="neighbors-error">No neighbors configured</div>{{end}}{{end}}
+		{{define "neighbors-error"}}<div class="neighbors-error">{{.Error}}</div>{{end}}
+	`))
+	templates := map[string]*template.Template{"partials/jobs.html": tmpl}
+
+	t.Run("returns error message when neighbors not configured", func(t *testing.T) {
+		srv := &Server{neighborsURL: "", templates: templates}
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 
 		srv.handleNeighbors(w, req)
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "text/html; charset=utf-8", w.Header().Get("Content-Type"))
 		assert.Contains(t, w.Body.String(), "Neighbors not configured")
 	})
 
-	t.Run("fetches from HTTP URL and caches", func(t *testing.T) {
+	t.Run("fetches from HTTP URL and returns HTML", func(t *testing.T) {
 		neighbors := []NeighborInstance{
 			{Name: "server1", URL: "http://server1.example.com"},
 			{Name: "server2", URL: "http://server2.example.com"},
@@ -37,20 +46,20 @@ func TestServer_handleNeighbors(t *testing.T) {
 		}))
 		defer mockServer.Close()
 
-		srv := &Server{neighborsURL: mockServer.URL}
+		srv := &Server{neighborsURL: mockServer.URL, templates: templates}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+		assert.Equal(t, "text/html; charset=utf-8", w.Header().Get("Content-Type"))
+		assert.Contains(t, w.Body.String(), "neighbors-list")
+		assert.Contains(t, w.Body.String(), "server1")
+		assert.Contains(t, w.Body.String(), "server2")
+		assert.Contains(t, w.Body.String(), "http://server1.example.com")
 
-		var result []NeighborInstance
-		err := json.Unmarshal(w.Body.Bytes(), &result)
-		require.NoError(t, err)
-		assert.Equal(t, neighbors, result)
-
+		// verify caching
 		assert.NotNil(t, srv.neighborsCache)
 		assert.Equal(t, neighbors, srv.neighborsCache)
 	})
@@ -64,6 +73,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 			neighborsURL:       "http://should-not-be-called.example.com",
 			neighborsCache:     cachedNeighbors,
 			neighborsCacheTime: time.Now(),
+			templates:          templates,
 		}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
@@ -71,11 +81,8 @@ func TestServer_handleNeighbors(t *testing.T) {
 		srv.handleNeighbors(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-
-		var result []NeighborInstance
-		err := json.Unmarshal(w.Body.Bytes(), &result)
-		require.NoError(t, err)
-		assert.Equal(t, cachedNeighbors, result)
+		assert.Contains(t, w.Body.String(), "cached")
+		assert.Contains(t, w.Body.String(), "http://cached.example.com")
 	})
 
 	t.Run("fetches from file:// URL", func(t *testing.T) {
@@ -90,68 +97,79 @@ func TestServer_handleNeighbors(t *testing.T) {
 		err = os.WriteFile(filePath, data, 0o600)
 		require.NoError(t, err)
 
-		srv := &Server{neighborsURL: "file://" + filePath}
+		srv := &Server{neighborsURL: "file://" + filePath, templates: templates}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-
-		var result []NeighborInstance
-		err = json.Unmarshal(w.Body.Bytes(), &result)
-		require.NoError(t, err)
-		assert.Equal(t, neighbors, result)
+		assert.Contains(t, w.Body.String(), "file-server1")
 	})
 
-	t.Run("returns 502 when HTTP fetch fails", func(t *testing.T) {
-		srv := &Server{neighborsURL: "http://nonexistent.invalid"}
+	t.Run("returns error HTML when HTTP fetch fails", func(t *testing.T) {
+		srv := &Server{neighborsURL: "http://nonexistent.invalid", templates: templates}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
-		assert.Equal(t, http.StatusBadGateway, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "Failed to load neighbors")
 	})
 
-	t.Run("returns 502 when file read fails", func(t *testing.T) {
-		srv := &Server{neighborsURL: "file:///nonexistent/path/neighbors.json"}
+	t.Run("returns error HTML when file read fails", func(t *testing.T) {
+		srv := &Server{neighborsURL: "file:///nonexistent/path/neighbors.json", templates: templates}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
-		assert.Equal(t, http.StatusBadGateway, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "Failed to load neighbors")
 	})
 
-	t.Run("returns 502 when JSON is invalid", func(t *testing.T) {
+	t.Run("returns error HTML when JSON is invalid", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		filePath := filepath.Join(tmpDir, "invalid.json")
 		err := os.WriteFile(filePath, []byte("not valid json"), 0o600)
 		require.NoError(t, err)
 
-		srv := &Server{neighborsURL: "file://" + filePath}
+		srv := &Server{neighborsURL: "file://" + filePath, templates: templates}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
-		assert.Equal(t, http.StatusBadGateway, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "Failed to load neighbors")
 	})
 
-	t.Run("returns 502 when HTTP server returns non-200", func(t *testing.T) {
+	t.Run("filters out invalid URLs", func(t *testing.T) {
+		neighbors := []NeighborInstance{
+			{Name: "valid", URL: "http://valid.example.com"},
+			{Name: "javascript-xss", URL: "javascript:alert('xss')"},
+			{Name: "also-valid", URL: "https://also-valid.example.com"},
+		}
+
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(neighbors)
 		}))
 		defer mockServer.Close()
 
-		srv := &Server{neighborsURL: mockServer.URL}
+		srv := &Server{neighborsURL: mockServer.URL, templates: templates}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
-		assert.Equal(t, http.StatusBadGateway, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "valid")
+		assert.Contains(t, body, "also-valid")
+		assert.NotContains(t, body, "javascript")
+		assert.NotContains(t, body, "xss")
 	})
 }
 
@@ -212,5 +230,13 @@ func TestServer_fetchNeighbors(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to read neighbors file")
+	})
+
+	t.Run("returns error for unsupported scheme", func(t *testing.T) {
+		srv := &Server{neighborsURL: "ftp://server.example.com/neighbors.json"}
+		_, err := srv.fetchNeighbors()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported scheme")
 	})
 }

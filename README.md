@@ -324,6 +324,9 @@ cronn -f crontab --web.enabled --web.base-url=/cronn
 # With basic authentication (optional)
 export CRONN_WEB_PASSWORD_HASH='$2y$10$...' # bcrypt hash
 cronn -f crontab --web.enabled
+
+# With neighbor instances selector (for multi-server setups)
+cronn -f crontab --web.enabled --web.neighbors-url=http://api.example.com/cronn/instances
 ```
 
 ### Basic Authentication (Optional)
@@ -376,6 +379,46 @@ location /cronn/ {
 ```
 
 **Note**: The base URL must start with `/` and should not end with a trailing slash (e.g., `/cronn` not `/cronn/`). The application will automatically normalize it.
+
+### Neighbor Instances Selector
+
+When running multiple cronn instances across different servers, you can enable a server selector dropdown in the web UI. This allows quick navigation between different cronn dashboards.
+
+#### Configuration
+
+Enable the neighbor selector by providing a URL that returns a JSON array of instances:
+
+```bash
+# From HTTP/HTTPS endpoint
+cronn -f crontab --web.enabled --web.neighbors-url=http://api.example.com/cronn/instances
+
+# From local JSON file
+cronn -f crontab --web.enabled --web.neighbors-url=file:///etc/cronn/neighbors.json
+
+# Via environment variable
+export CRONN_WEB_NEIGHBORS_URL=http://api.example.com/cronn/instances
+cronn -f crontab --web.enabled
+```
+
+#### Expected JSON Format
+
+The URL (or file) must return a JSON array with `name` and `url` fields:
+
+```json
+[
+  {"name": "prod-server-1", "url": "https://prod1.example.com:8080"},
+  {"name": "prod-server-2", "url": "https://prod2.example.com:8080"},
+  {"name": "staging", "url": "https://staging.example.com:8080"}
+]
+```
+
+#### Features
+
+- **Click to open**: When configured, the hostname badge becomes clickable and shows a dropdown
+- **Lazy loading**: Neighbors are fetched only when the dropdown is opened
+- **Caching**: Results are cached for 5 minutes to reduce API calls
+- **Error handling**: Shows appropriate messages if fetch fails
+- **File support**: Can read from local JSON file using `file://` URL scheme
 
 <details markdown>
   <summary>Screenshots</summary>
@@ -620,12 +663,14 @@ web:
       --web.enabled               enable web dashboard [$CRONN_WEB_ENABLED]
       --web.address=              web server address (default: :8080) [$CRONN_WEB_ADDRESS]
       --web.base-url=             base URL path for reverse proxy (e.g., /cronn) [$CRONN_WEB_BASE_URL]
+      --web.hostname=             hostname to display in UI (defaults to os.Hostname()) [$CRONN_WEB_HOSTNAME]
       --web.update-interval=      dashboard update interval (default: 30s) [$CRONN_WEB_UPDATE_INTERVAL]
       --web.db-path=              SQLite database path (default: cronn.db) [$CRONN_WEB_DB_PATH]
       --web.password-hash=        bcrypt hash for basic auth (username: cronn) [$CRONN_WEB_PASSWORD_HASH]
       --web.login-ttl=            login session TTL (default: 24h) [$CRONN_WEB_LOGIN_TTL]
       --web.disable-manual        disable manual job execution [$CRONN_WEB_DISABLE_MANUAL]
       --web.disable-command-edit  disable command editing in manual run dialog [$CRONN_WEB_DISABLE_COMMAND_EDIT]
+      --web.neighbors-url=        URL to fetch neighbor instances JSON ([{name, url}]) [$CRONN_WEB_NEIGHBORS_URL]
 
 repeater:
       --repeater.attempts=        how many time repeat failed job (default: 1) [$CRONN_REPEATER_ATTEMPTS]

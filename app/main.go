@@ -95,6 +95,7 @@ var opts struct {
 		LoginTTL           time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
 		DisableManual      bool          `long:"disable-manual" env:"DISABLE_MANUAL" description:"disable manual job execution"`
 		DisableCommandEdit bool          `long:"disable-command-edit" env:"DISABLE_COMMAND_EDIT" description:"disable command editing in manual run dialog"`
+		NeighborsURL       string        `long:"neighbors-url" env:"NEIGHBORS_URL" description:"URL to fetch neighbor instances JSON ([{name, url}])"`
 	} `group:"web" namespace:"web" env-namespace:"CRONN_WEB"`
 
 	Version bool `long:"version" description:"show version and exit"`
@@ -186,6 +187,7 @@ func main() {
 			Settings:           buildSettingsInfo(hostname),
 			ExecMaxLogLines:    opts.Log.ExecMaxLines,
 			LogExecMaxHist:     opts.Log.ExecMaxHist,
+			NeighborsURL:       opts.Web.NeighborsURL,
 		}
 		webServer, err := web.New(cfg)
 		if err != nil {

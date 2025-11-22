@@ -177,3 +177,83 @@ document.getElementById('history-modal').addEventListener('click', function(e) {
         }
     }
 });
+
+// neighbors dropdown functionality
+let neighborsLoaded = false;
+
+window.toggleNeighborsDropdown = function(event) {
+    event.stopPropagation();
+    const selector = document.querySelector('.neighbors-selector');
+    const dropdown = document.getElementById('neighbors-dropdown');
+    if (!selector || !dropdown) return;
+
+    const isOpen = dropdown.style.display !== 'none';
+    if (isOpen) {
+        dropdown.style.display = 'none';
+        selector.classList.remove('open');
+    } else {
+        dropdown.style.display = 'block';
+        selector.classList.add('open');
+        if (!neighborsLoaded) {
+            loadNeighbors();
+        }
+    }
+};
+
+function loadNeighbors() {
+    const dropdown = document.getElementById('neighbors-dropdown');
+    if (!dropdown) return;
+
+    const baseURL = window.BASE_URL || '';
+    fetch(baseURL + '/api/neighbors')
+        .then(function(response) {
+            if (!response.ok) throw new Error('failed to load');
+            return response.json();
+        })
+        .then(function(neighbors) {
+            neighborsLoaded = true;
+            if (neighbors.length === 0) {
+                dropdown.innerHTML = '<div class="neighbors-error">No neighbors configured</div>';
+                return;
+            }
+            let html = '<div class="neighbors-list">';
+            neighbors.forEach(function(n) {
+                html += '<a href="' + escapeHtml(n.url) + '" class="neighbor-item">' + escapeHtml(n.name) + '</a>';
+            });
+            html += '</div>';
+            dropdown.innerHTML = html;
+        })
+        .catch(function() {
+            dropdown.innerHTML = '<div class="neighbors-error">Failed to load neighbors</div>';
+        });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// close neighbors dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    const selector = document.querySelector('.neighbors-selector');
+    const dropdown = document.getElementById('neighbors-dropdown');
+    if (!selector || !dropdown) return;
+
+    if (!selector.contains(e.target)) {
+        dropdown.style.display = 'none';
+        selector.classList.remove('open');
+    }
+});
+
+// close neighbors dropdown on ESC
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const selector = document.querySelector('.neighbors-selector');
+        const dropdown = document.getElementById('neighbors-dropdown');
+        if (selector && dropdown && dropdown.style.display !== 'none') {
+            dropdown.style.display = 'none';
+            selector.classList.remove('open');
+        }
+    }
+});

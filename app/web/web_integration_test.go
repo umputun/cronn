@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -1106,4 +1107,277 @@ func TestServer_EventChannelStress(t *testing.T) {
 	server.jobsMu.RUnlock()
 
 	assert.GreaterOrEqual(t, jobCount, 0, "server should still be functional after stress test")
+}
+
+func TestServer_NeighborsIntegration(t *testing.T) {
+	t.Run("returns 404 when neighbors not configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+		crontabFile := filepath.Join(tmpDir, "crontab")
+
+		err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
+		require.NoError(t, err)
+
+		parser := crontab.New(crontabFile, 0, nil)
+		cfg := Config{
+			DBPath:         dbPath,
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   parser,
+			NeighborsURL:   "", // not configured
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		// create test server with routes
+		router := server.routes()
+		ts := httptest.NewServer(router)
+		defer ts.Close()
+
+		resp, err := http.Get(ts.URL + "/api/neighbors")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("returns neighbors from HTTP source via full route", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+		crontabFile := filepath.Join(tmpDir, "crontab")
+
+		err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
+		require.NoError(t, err)
+
+		// create mock neighbors server
+		neighbors := []NeighborInstance{
+			{Name: "server-1", URL: "http://server1.example.com"},
+			{Name: "server-2", URL: "http://server2.example.com"},
+		}
+		mockNeighborsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(neighbors)
+		}))
+		defer mockNeighborsServer.Close()
+
+		parser := crontab.New(crontabFile, 0, nil)
+		cfg := Config{
+			DBPath:         dbPath,
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   parser,
+			NeighborsURL:   mockNeighborsServer.URL,
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		router := server.routes()
+		ts := httptest.NewServer(router)
+		defer ts.Close()
+
+		resp, err := http.Get(ts.URL + "/api/neighbors")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+
+		var result []NeighborInstance
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+		assert.Equal(t, neighbors, result)
+	})
+
+	t.Run("returns neighbors from file source via full route", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+		crontabFile := filepath.Join(tmpDir, "crontab")
+		neighborsFile := filepath.Join(tmpDir, "neighbors.json")
+
+		err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
+		require.NoError(t, err)
+
+		neighbors := []NeighborInstance{
+			{Name: "file-server-1", URL: "http://file1.example.com"},
+			{Name: "file-server-2", URL: "http://file2.example.com"},
+		}
+		neighborsJSON, err := json.Marshal(neighbors)
+		require.NoError(t, err)
+		err = os.WriteFile(neighborsFile, neighborsJSON, 0o600)
+		require.NoError(t, err)
+
+		parser := crontab.New(crontabFile, 0, nil)
+		cfg := Config{
+			DBPath:         dbPath,
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   parser,
+			NeighborsURL:   "file://" + neighborsFile,
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		router := server.routes()
+		ts := httptest.NewServer(router)
+		defer ts.Close()
+
+		resp, err := http.Get(ts.URL + "/api/neighbors")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result []NeighborInstance
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+		assert.Equal(t, neighbors, result)
+	})
+
+	t.Run("caches neighbors with TTL", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+		crontabFile := filepath.Join(tmpDir, "crontab")
+
+		err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
+		require.NoError(t, err)
+
+		// track how many times mock server is called
+		var callCount int
+		var mu sync.Mutex
+		mockNeighborsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			callCount++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]NeighborInstance{{Name: "server", URL: "http://test.com"}})
+		}))
+		defer mockNeighborsServer.Close()
+
+		parser := crontab.New(crontabFile, 0, nil)
+		cfg := Config{
+			DBPath:         dbPath,
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   parser,
+			NeighborsURL:   mockNeighborsServer.URL,
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		router := server.routes()
+		ts := httptest.NewServer(router)
+		defer ts.Close()
+
+		// first request - should hit the mock server
+		resp, err := http.Get(ts.URL + "/api/neighbors")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// second request - should use cache (within 5 min TTL)
+		resp, err = http.Get(ts.URL + "/api/neighbors")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// third request - should still use cache
+		resp, err = http.Get(ts.URL + "/api/neighbors")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// verify mock server was only called once due to caching
+		mu.Lock()
+		assert.Equal(t, 1, callCount, "mock server should be called only once due to caching")
+		mu.Unlock()
+	})
+
+	t.Run("dashboard includes NeighborsEnabled when configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+		crontabFile := filepath.Join(tmpDir, "crontab")
+
+		err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
+		require.NoError(t, err)
+
+		parser := crontab.New(crontabFile, 0, nil)
+		cfg := Config{
+			DBPath:         dbPath,
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   parser,
+			Hostname:       "test-host",
+			NeighborsURL:   "http://example.com/neighbors", // configured
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		router := server.routes()
+		ts := httptest.NewServer(router)
+		defer ts.Close()
+
+		resp, err := http.Get(ts.URL + "/")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// read body and check for neighbors-selector class (only present when NeighborsEnabled)
+		buf := make([]byte, 64*1024)
+		n, _ := resp.Body.Read(buf)
+		body := string(buf[:n])
+
+		assert.Contains(t, body, "neighbors-selector", "dashboard should contain neighbors-selector when configured")
+		assert.Contains(t, body, "toggleNeighborsDropdown", "dashboard should contain dropdown toggle function")
+	})
+
+	t.Run("dashboard excludes neighbors selector when not configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+		crontabFile := filepath.Join(tmpDir, "crontab")
+
+		err := os.WriteFile(crontabFile, []byte("* * * * * echo test"), 0o600)
+		require.NoError(t, err)
+
+		parser := crontab.New(crontabFile, 0, nil)
+		cfg := Config{
+			DBPath:         dbPath,
+			UpdateInterval: time.Minute,
+			Version:        "test",
+			JobsProvider:   parser,
+			Hostname:       "test-host",
+			NeighborsURL:   "", // not configured
+		}
+
+		server, err := New(cfg)
+		require.NoError(t, err)
+		defer server.store.Close()
+
+		router := server.routes()
+		ts := httptest.NewServer(router)
+		defer ts.Close()
+
+		resp, err := http.Get(ts.URL + "/")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		buf := make([]byte, 64*1024)
+		n, _ := resp.Body.Read(buf)
+		body := string(buf[:n])
+
+		assert.NotContains(t, body, "neighbors-selector", "dashboard should not contain neighbors-selector when not configured")
+		assert.NotContains(t, body, "toggleNeighborsDropdown", "dashboard should not contain dropdown toggle when not configured")
+	})
 }

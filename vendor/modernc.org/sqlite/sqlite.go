@@ -648,6 +648,9 @@ func (s *stmt) query(ctx context.Context, args []driver.NamedValue) (r driver.Ro
 
 	defer func() {
 		if ctx != nil && atomic.LoadInt32(&done) != 0 {
+			if r != nil {
+				r.Close()
+			}
 			r, err = nil, ctx.Err()
 		} else if r == nil && err == nil {
 			r, err = newRows(s.c, pstmt, allocs, true)

@@ -9,28 +9,34 @@
 
 Cronn is a crontab jobs scheduler with some nice extras. It allows to run commands on specified time intervals and can be used directly as well as from a container.
 
+## Why cronn?
+
+Simple cron scheduling with visibility. Single binary, embedded SQLite, no external dependencies.
+
+**What you get**:
+- crontab and YAML formats (auto-detected by extension)
+- web dashboard with job history and manual execution
+- hot reload on config changes (+ SIGHUP support)
+- graceful shutdown waits for running jobs
+- auto-resume after container/process restart
+- date templates including business day support
+- conditional execution (CPU/memory/disk thresholds, custom scripts)
+- per-job settings override global config in YAML
+- notifications (Slack, Telegram, email, webhook)
+- retry with backoff, jitter, deduplication, log rotation
+
+**What you won't deal with**:
+- silent failures with logs scattered across system files
+- environment differences between shell and scheduler
+- multiple config files per job
+- Node.js or Python runtime requirements
+- external database setup
+
 ## Use cases
 
 - Run any job with easy to use cli scheduler
 - Schedule tasks in containers (`cronn` can be used as CMD or ENTRYPOINT)
-- Use `umputun/cronn` as a base image
-
-In addition `cronn` provides:
-
-- Both single-job scheduler and more traditional crontab file with multiple jobs
-- Runs as an ordinary process or the entry point of a container
-- Web dashboard with real-time monitoring, job history, manual execution, and modern UI
-- Supports wide range of date templates
-- Optional notification on failed or/and passed jobs using email, Slack, Telegram, or webhook
-- Optional jitter adding a random delay prior to execution of a job
-- Automatic resume (restart) of jobs in cronn service or container failed unexpectedly
-- Reload crontab file on changes
-- Optional repeater for failed jobs
-- Optional de-duplication preventing the same jobs to run in parallel
-- Conditional execution based on system resources (CPU, memory, disk, load average)
-- Job postponement with configurable deadlines when conditions aren't met
-- Custom condition scripts for advanced scheduling logic
-- Rotated logs
+- Use `ghcr.io/umputun/cronn` as a base image
 
 ## Installation
 
@@ -71,8 +77,8 @@ sudo apk add --allow-untrusted cronn_<version>_linux_amd64.apk
 ### Docker
 
 ```bash
-docker pull umputun/cronn:latest
-docker run -v $(pwd)/crontab:/srv/crontab umputun/cronn -f /srv/crontab
+docker pull ghcr.io/umputun/cronn:latest
+docker run -v $(pwd)/crontab:/srv/crontab ghcr.io/umputun/cronn -f /srv/crontab
 ```
 
 releases are automated via GitHub Actions. to create a new release, push a tag:

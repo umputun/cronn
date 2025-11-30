@@ -51,8 +51,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	defer server.store.Close()
 
 	// start server in background
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() {
 		if runErr := server.Run(ctx, ":0"); runErr != nil && runErr != http.ErrServerClosed {
@@ -179,8 +178,7 @@ func TestServer_ProcessEvents(t *testing.T) {
 	defer server.store.Close()
 
 	// test event processing
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// start event processor
 	go server.processEvents(ctx)
@@ -354,8 +352,7 @@ func TestServer_SyncJobs(t *testing.T) {
 	require.NoError(t, err)
 	defer server.store.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// start sync in background
 	go server.syncJobs(ctx)
@@ -412,8 +409,7 @@ func TestServer_PersistenceRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server1.processEvents(ctx)
 
 	// simulate job execution events
@@ -698,8 +694,7 @@ func TestServer_ConcurrentJobEvents(t *testing.T) {
 	require.NoError(t, err)
 	defer server.store.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// start processing events
 	go server.processEvents(ctx)
@@ -712,12 +707,9 @@ func TestServer_ConcurrentJobEvents(t *testing.T) {
 	// track all events sent
 	startTime := time.Now()
 
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			for j := 0; j < eventsPerGoroutine; j++ {
+	for range numGoroutines {
+		wg.Go(func() {
+			for j := range eventsPerGoroutine {
 				jobNum := (j % 5) + 1
 				jobCmd := fmt.Sprintf("echo job%d", jobNum)
 
@@ -747,7 +739,7 @@ func TestServer_ConcurrentJobEvents(t *testing.T) {
 				// small random delay to increase chance of actual concurrency
 				time.Sleep(time.Duration(rand.Intn(5)) * time.Microsecond) //nolint:gosec // test only, not security sensitive
 			}
-		}()
+		})
 	}
 
 	// wait for all goroutines to finish sending events
@@ -855,21 +847,22 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 
 	errors := make(chan error, numClients*requestsPerClient)
 
-	for i := 0; i < numClients; i++ {
+	for i := range numClients {
 		wg.Add(1)
 		go func(clientID int) {
 			defer wg.Done()
 
 			client := &http.Client{Timeout: 5 * time.Second}
 
-			for j := 0; j < requestsPerClient; j++ {
+			for j := range requestsPerClient {
 				endpoint := endpoints[j%len(endpoints)]
 
 				var resp *http.Response
 				var err error
+				var req *http.Request
 
 				if endpoint.method == "GET" {
-					resp, err = client.Get(ts.URL + endpoint.path)
+					req, err = http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+endpoint.path, http.NoBody)
 				} else {
 					var body *strings.Reader
 					if endpoint.body != "" {
@@ -877,8 +870,16 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 					} else {
 						body = strings.NewReader("")
 					}
-					resp, err = client.Post(ts.URL+endpoint.path, "application/x-www-form-urlencoded", body)
+					req, err = http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+endpoint.path, body)
+					if req != nil {
+						req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+					}
 				}
+				if err != nil {
+					errors <- fmt.Errorf("client %d request %d: failed to create request: %w", clientID, j, err)
+					continue
+				}
+				resp, err = client.Do(req)
 
 				if err != nil {
 					errors <- fmt.Errorf("client %d request %d failed: %w", clientID, j, err)
@@ -936,8 +937,7 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 	require.NoError(t, err)
 	defer server.store.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// start event processing
 	go server.processEvents(ctx)
@@ -945,10 +945,8 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// goroutine 1: continuously reload crontab
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 10; i++ {
+	wg.Go(func() {
+		for i := range 10 {
 			// modify crontab
 			newCrontab := fmt.Sprintf("* * * * * echo job%d\n*/2 * * * * echo task%d", i, i)
 			writeErr := os.WriteFile(crontabFile, []byte(newCrontab), 0o600)
@@ -962,13 +960,11 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-	}()
+	})
 
 	// goroutine 2: continuously send job events
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 50; i++ {
+	wg.Go(func() {
+		for i := range 50 {
 			jobCmd := fmt.Sprintf("echo job%d", i%10)
 			if i%2 == 0 {
 				server.OnJobStart(request.OnJobStart{Command: jobCmd, ExecutedCommand: jobCmd, Schedule: "* * * * *", StartTime: time.Now()})
@@ -978,23 +974,19 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 			}
 			time.Sleep(2 * time.Millisecond)
 		}
-	}()
+	})
 
 	// goroutine 3: continuously persist to database
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 20; i++ {
+	wg.Go(func() {
+		for range 20 {
 			server.persistJobs()
 			time.Sleep(5 * time.Millisecond)
 		}
-	}()
+	})
 
 	// goroutine 4: continuously read state
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100; i++ {
+	wg.Go(func() {
+		for range 100 {
 			server.jobsMu.RLock()
 			// just iterate to simulate reads
 			count := 0
@@ -1005,7 +997,7 @@ func TestServer_ConcurrentModifications(t *testing.T) {
 			assert.GreaterOrEqual(t, count, 0, "jobs count should be non-negative")
 			time.Sleep(1 * time.Millisecond)
 		}
-	}()
+	})
 
 	// wait for all operations to complete
 	wg.Wait()
@@ -1069,7 +1061,7 @@ func TestServer_EventChannelStress(t *testing.T) {
 	const numEvents = 1000
 	startTime := time.Now()
 
-	for i := 0; i < numEvents; i++ {
+	for i := range numEvents {
 		// send events as fast as possible without blocking
 		// rotate through event types
 		var eventType enums.EventType
@@ -1136,7 +1128,9 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		ts := httptest.NewServer(router)
 		defer ts.Close()
 
-		resp, err := http.Get(ts.URL + "/api/neighbors")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/api/neighbors", http.NoBody)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -1185,7 +1179,9 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		ts := httptest.NewServer(router)
 		defer ts.Close()
 
-		resp, err := http.Get(ts.URL + "/api/neighbors")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/api/neighbors", http.NoBody)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -1236,7 +1232,9 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		ts := httptest.NewServer(router)
 		defer ts.Close()
 
-		resp, err := http.Get(ts.URL + "/api/neighbors")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/api/neighbors", http.NoBody)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -1288,19 +1286,25 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		defer ts.Close()
 
 		// first request - should hit the mock server
-		resp, err := http.Get(ts.URL + "/api/neighbors")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/api/neighbors", http.NoBody)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		// second request - should use cache (within 5 min TTL)
-		resp, err = http.Get(ts.URL + "/api/neighbors")
+		req, err = http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/api/neighbors", http.NoBody)
+		require.NoError(t, err)
+		resp, err = http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		// third request - should still use cache
-		resp, err = http.Get(ts.URL + "/api/neighbors")
+		req, err = http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/api/neighbors", http.NoBody)
+		require.NoError(t, err)
+		resp, err = http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -1337,7 +1341,9 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		ts := httptest.NewServer(router)
 		defer ts.Close()
 
-		resp, err := http.Get(ts.URL + "/")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/", http.NoBody)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -1378,7 +1384,9 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		ts := httptest.NewServer(router)
 		defer ts.Close()
 
-		resp, err := http.Get(ts.URL + "/")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/", http.NoBody)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 

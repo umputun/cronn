@@ -51,7 +51,7 @@ type RepeaterConfig struct {
 // JobSpec for spec and cmd + params
 type JobSpec struct {
 	Spec       string             `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string"`
-	Sched      Schedule           `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"`
+	Sched      Schedule           `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"` //nolint:modernize // yaml.v3 doesn't support omitzero
 	Command    string             `yaml:"command" json:"command" jsonschema:"required,description=Command to execute"`
 	Name       string             `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description"`
 	Repeater   *RepeaterConfig    `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration"`
@@ -95,8 +95,7 @@ func (p Parser) List() (result []JobSpec, err error) {
 	}
 
 	// parse as traditional crontab
-	lines := strings.Split(string(bs), "\n")
-	for _, l := range lines {
+	for l := range strings.SplitSeq(string(bs), "\n") {
 		if js, err := Parse(l); err == nil {
 			result = append(result, js)
 		}

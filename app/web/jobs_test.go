@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,8 +124,7 @@ func TestServer_OnJobStart(t *testing.T) {
 	defer server.store.Close()
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	startTime := time.Now()
@@ -174,8 +172,7 @@ func TestServer_OnJobComplete(t *testing.T) {
 	defer server.store.Close()
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	startTime := time.Now()
@@ -252,8 +249,7 @@ func TestServer_OnJobComplete_OutputStorage(t *testing.T) {
 		require.NoError(t, err)
 		defer server.store.Close()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		go server.processEvents(ctx)
 
 		startTime := time.Now()
@@ -308,8 +304,7 @@ func TestServer_OnJobComplete_OutputStorage(t *testing.T) {
 		require.NoError(t, err)
 		defer server.store.Close()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		go server.processEvents(ctx)
 
 		startTime := time.Now()
@@ -364,13 +359,12 @@ func TestServer_OnJobComplete_OutputStorage(t *testing.T) {
 		require.NoError(t, err)
 		defer server.store.Close()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		go server.processEvents(ctx)
 
 		// create 5 executions
 		baseTime := time.Now()
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			startTime := baseTime.Add(-time.Duration(5-i) * time.Minute)
 			endTime := startTime.Add(time.Second)
 
@@ -431,8 +425,7 @@ func TestServer_OnJobStartEdgeCases(t *testing.T) {
 	defer server.store.Close()
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	// test with invalid schedule that will fail to parse

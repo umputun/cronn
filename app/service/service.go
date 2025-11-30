@@ -532,7 +532,6 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 	go func() {
 		gr := syncs.NewSizedGroup(concur)
 		for _, cmd := range cmds {
-			cmd := cmd
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
 				notifyOutput, _, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater)

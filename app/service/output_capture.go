@@ -26,7 +26,7 @@ func (o *OutputCapture) Write(p []byte) (n int, err error) {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	for _, line := range bytes.Split(p, []byte("\n")) {
+	for line := range bytes.SplitSeq(p, []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}

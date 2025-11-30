@@ -20,6 +20,9 @@ linters:
     - nestif
     - testifylint
     - wrapcheck
+    - modernize
+    - nilerr
+    - noctx
   settings:
     dupl:
       threshold: 100
@@ -52,10 +55,10 @@ linters:
         text: should have a package comment, unless it's in another file for this package
       - linters:
           - gocritic
-        text: 'exitAfterDefer:'
+        text: "exitAfterDefer:"
       - linters:
           - gocritic
-        text: 'whyNoLint: include an explanation for nolint directive'
+        text: "whyNoLint: include an explanation for nolint directive"
       - linters:
           - govet
         text: go.mongodb.org/mongo-driver/bson/primitive.E
@@ -70,13 +73,13 @@ linters:
         text: at least one file in a package should have a package comment
       - linters:
           - gocritic
-        text: 'commentedOutCode: may want to remove commented-out code'
+        text: "commentedOutCode: may want to remove commented-out code"
       - linters:
           - gocritic
-        text: 'unnamedResult: consider giving a name to these results'
+        text: "unnamedResult: consider giving a name to these results"
       - linters:
           - revive
-        text: 'var-naming: don''t use an underscore in package name'
+        text: "var-naming: don't use an underscore in package name"
       - linters:
           - staticcheck
         text: should not use underscores in package names

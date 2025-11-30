@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"text/template"
 	"time"
 )
@@ -140,12 +141,7 @@ func (p DayParser) weekdayBackward(day time.Time) time.Time {
 		if p.holidayChecker.IsHoliday(day) {
 			return false
 		}
-		for _, wd := range p.skipWeekDays {
-			if day.Weekday() == wd {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(p.skipWeekDays, day.Weekday())
 	}
 
 	for d := day; ; d = d.AddDate(0, 0, -1) {

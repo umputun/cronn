@@ -861,7 +861,9 @@ func TestServer_BaseURL(t *testing.T) {
 		defer ts.Close()
 
 		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
-		resp, err := client.Get(ts.URL + "/cronn")
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/cronn", http.NoBody)
+		require.NoError(t, err)
+		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 

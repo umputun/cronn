@@ -467,7 +467,7 @@ func TestServer_handleLoginEdgeCases(t *testing.T) {
 	t.Run("handleLogin createSession error", func(t *testing.T) {
 		// fill up sessions to trigger error
 		server.sessionsMu.Lock()
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			server.sessions[fmt.Sprintf("token-%d", i)] = session{createdAt: time.Now()}
 		}
 		server.sessionsMu.Unlock()
@@ -620,7 +620,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 	t.Run("successful login still works within rate limit", func(t *testing.T) {
 		// use a different remote addr to simulate different IP for rate limiting
 		// make a few failed attempts (within limit)
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("Sec-Fetch-Site", "same-origin")

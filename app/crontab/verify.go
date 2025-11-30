@@ -188,8 +188,7 @@ func validateRange(value string, minVal, maxVal int) error {
 
 // validateList validates comma-separated lists like 1,5,10
 func validateList(value string, minVal, maxVal int, fieldName string) error {
-	parts := strings.Split(value, ",")
-	for _, part := range parts {
+	for part := range strings.SplitSeq(value, ",") {
 		part = strings.TrimSpace(part)
 		if strings.Contains(part, "-") {
 			if err := validateCronField(part, minVal, maxVal, fieldName); err != nil {

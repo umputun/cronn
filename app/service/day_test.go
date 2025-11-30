@@ -33,7 +33,6 @@ func TestDayParser_Parse(t *testing.T) {
 	}
 
 	for i, tt := range tbl {
-		tt := tt
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			d := NewDayTemplate(tt.day, TimeZone(nytz))
 			res, err := d.Parse(tt.src)
@@ -72,7 +71,6 @@ func TestDayParser_ParseWithAltTemplate(t *testing.T) {
 	}
 
 	for i, tt := range tbl {
-		tt := tt
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			d := NewDayTemplate(tt.day, TimeZone(nytz), AltTemplateFormat(true))
 			res, err := d.Parse(tt.src)
@@ -161,7 +159,6 @@ func TestDayParser_weekdayBackward(t *testing.T) {
 	}
 
 	for i, tt := range tbl {
-		tt := tt
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			d := NewDayTemplate(tt.src, TimeZone(nytz), SkipWeekDays(tt.skip...))
 			assert.Equal(t, tt.res, d.weekdayBackward(tt.src))
@@ -184,7 +181,6 @@ func TestDayParser_weekend(t *testing.T) {
 	}
 
 	for i, tt := range tbl {
-		tt := tt
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			d := NewDayTemplate(tt.day, TimeZone(nytz))
 			res, err := d.Parse(tt.src)
@@ -209,7 +205,6 @@ func TestDayParser_eod(t *testing.T) {
 	}
 
 	for i, tt := range tbl {
-		tt := tt
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			d := NewDayTemplate(tt.day, TimeZone(nytz), EndOfDay(tt.eod))
 			res, err := d.Parse(tt.src)

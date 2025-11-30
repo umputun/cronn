@@ -1161,8 +1161,7 @@ func TestScheduler_JobEventHandler(t *testing.T) {
 
 func TestScheduler_ManualTrigger(t *testing.T) {
 	t.Run("successful manual trigger", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		// create test mocks
 		mockCron := &mocks.CronMock{
@@ -1233,8 +1232,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 	})
 
 	t.Run("manual trigger with invalid schedule", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		mockCron := &mocks.CronMock{
 			StartFunc:   func() {},
@@ -1337,8 +1335,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 	})
 
 	t.Run("manual trigger with custom date for template parsing", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		mockCron := &mocks.CronMock{
 			StartFunc:   func() {},
@@ -1401,8 +1398,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 	})
 
 	t.Run("manual trigger with edited command", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		mockCron := &mocks.CronMock{
 			StartFunc:   func() {},
@@ -1464,8 +1460,7 @@ func TestScheduler_ManualTrigger(t *testing.T) {
 	})
 
 	t.Run("manual trigger preserves repeater settings", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		mockCron := &mocks.CronMock{
 			StartFunc:   func() {},
@@ -1565,8 +1560,7 @@ func TestScheduler_reload(t *testing.T) {
 			Repeater:      repeater.New(&strategy.Once{}),
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		// start reload in background
 		go s.reload(ctx)
@@ -1710,8 +1704,7 @@ func TestScheduler_reload(t *testing.T) {
 			Repeater:      repeater.New(&strategy.Once{}),
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		// start reload in background
 		go s.reload(ctx)

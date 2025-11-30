@@ -436,7 +436,7 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		defer store.Close()
 
 		baseTime := time.Now()
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
 			finished := started.Add(30 * time.Second)
 			err = store.RecordExecution(request.RecordExecution{
@@ -594,7 +594,7 @@ func TestSQLiteStore_CleanupOldExecutions(t *testing.T) {
 
 		// create 10 executions
 		baseTime := time.Now()
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
 			finished := started.Add(30 * time.Second)
 			err = store.RecordExecution(request.RecordExecution{
@@ -639,7 +639,7 @@ func TestSQLiteStore_CleanupOldExecutions(t *testing.T) {
 
 		// create 3 executions
 		baseTime := time.Now()
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			started := baseTime.Add(-time.Duration(3-i) * time.Minute)
 			finished := started.Add(30 * time.Second)
 			err = store.RecordExecution(request.RecordExecution{
@@ -674,7 +674,7 @@ func TestSQLiteStore_CleanupOldExecutions(t *testing.T) {
 
 		// create executions for two different jobs
 		baseTime := time.Now()
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			started := baseTime.Add(-time.Duration(10-i) * time.Minute)
 			finished := started.Add(30 * time.Second)
 			err = store.RecordExecution(request.RecordExecution{

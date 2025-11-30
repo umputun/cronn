@@ -510,7 +510,7 @@ func TestMaxConcurrentChecks(t *testing.T) {
 	start := make(chan struct{})
 	done := make(chan struct{}, numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			<-start // wait for signal to start
 
@@ -551,7 +551,7 @@ func TestMaxConcurrentChecks(t *testing.T) {
 	close(start)
 
 	// wait for all to complete
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		<-done
 	}
 

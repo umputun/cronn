@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -94,8 +93,7 @@ func TestServer_handleViewModeToggle(t *testing.T) {
 	server.OnJobComplete(request.OnJobComplete{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour), EndTime: startTime.Add(-59 * time.Minute), ExitCode: 1, Output: "", Err: fmt.Errorf("failed")})
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	// wait for events to be processed
@@ -216,8 +214,7 @@ func TestServer_handleDashboard(t *testing.T) {
 	defer server.store.Close()
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	// add test job
@@ -259,8 +256,7 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	defer server.store.Close()
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	// add test jobs
@@ -328,8 +324,7 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 	defer server.store.Close()
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	// add test jobs with different commands
@@ -537,8 +532,7 @@ func TestServer_handleSortToggle(t *testing.T) {
 	server.OnJobComplete(request.OnJobComplete{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour), EndTime: startTime.Add(-time.Hour).Add(time.Second), ExitCode: 0, Output: "", Err: nil})
 
 	// start event processor to handle the job events
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	// wait for events to be processed
@@ -1336,8 +1330,7 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 	defer server.store.Close()
 
 	// start event processor
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go server.processEvents(ctx)
 
 	// create test execution records

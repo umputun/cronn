@@ -116,6 +116,19 @@ jobs:
           pattern: digests-dockerhub-*
           merge-multiple: true
 
+      - name: verify all digests present
+        run: |
+          expected=2
+          for registry in ghcr dockerhub; do
+            actual=$(ls /tmp/digests/$registry | wc -l)
+            if [ "$actual" -ne "$expected" ]; then
+              echo "Expected $expected digests for $registry, found $actual"
+              ls -la /tmp/digests/$registry
+              exit 1
+            fi
+          done
+          echo "All digests present for both registries"
+
       - name: set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

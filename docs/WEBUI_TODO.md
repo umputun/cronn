@@ -272,6 +272,7 @@
    - Playwright UI testing
 
 ### Architecture Decisions:
+
 - Used direct JobEventHandler implementation instead of adapter pattern (simpler)
 - Event-driven updates via channels for real-time status
 - Cookie-based preferences for user settings

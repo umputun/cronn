@@ -23,6 +23,7 @@ The web UI provides a browser-based interface for managing cron jobs without tou
 
 ### Live Output Streaming
 When a job is running:
+
 - Click on the running job to open a live console view
 - See stdout and stderr as they happen (color-coded)
 - Output auto-scrolls but can be paused to read
@@ -38,6 +39,7 @@ When a job is running:
 
 ### Main Dashboard
 Shows a table with:
+
 - Cron expression (e.g., "*/5 * * * *") with human-readable tooltip on hover
   - Shows "Every 5 minutes" or "At 2:30 AM on weekdays"
 - Command (e.g., "backup.sh /data")
@@ -50,6 +52,7 @@ Shows a table with:
 
 ### Adding a Job
 Simple form with:
+
 - Schedule field with examples (tooltips showing common patterns)
 - Live preview showing human-readable schedule as you type
   - "Invalid expression" → "Every day at midnight" → "Every hour on weekends"
@@ -83,22 +86,26 @@ app/
 ### Key Design Decisions
 
 **No WebSockets/SSE**: Simple HTMX polling is sufficient:
+
 - Job status refreshes every 5 seconds
 - Live output refreshes every 1 second when viewing
 - Reduces complexity significantly
 
 **SQLite for Persistence**: Execution history must survive restarts:
+
 - Single file database (`cronn.db`)
 - WAL mode for better concurrency
 - Configurable retention policy (days/size)
 - Output written incrementally during execution
 
 **File Locking**: Prevent crontab corruption:
+
 - Exclusive lock when writing crontab file
 - Read-modify-write in atomic operation
 - Prevents race conditions with CLI edits
 
 **Minimal Frontend**: Pure HTMX, no custom JavaScript:
+
 - All interactions via HTMX attributes
 - Server returns HTML fragments
 - One inline onclick for UI toggle (output viewer)
@@ -110,6 +117,7 @@ app/
 - Events update both memory cache and database
 
 **With CLI**:
+
 - Both read/write same crontab file
 - Web UI changes trigger file reload
 - No breaking changes to existing CLI usage
@@ -117,11 +125,13 @@ app/
 ### HTTP Endpoints
 
 Pages (return full HTML):
+
 - `GET /` - Dashboard
 - `GET /jobs` - Job management
 - `GET /history` - Execution history
 
 HTMX partials (return HTML fragments):
+
 - `GET /partials/jobs` - Job list table
 - `POST /partials/jobs` - Create job
 - `DELETE /partials/jobs/{id}` - Delete job
@@ -327,6 +337,7 @@ cronn --web.enabled \
 ## Integration with CLI
 
 The web UI works alongside the existing CLI:
+
 - Both read/write the same crontab file
 - Changes in web UI are visible to CLI users
 - Auto-reload ensures both stay in sync
@@ -343,6 +354,7 @@ The web UI works alongside the existing CLI:
 
 ### Simple But Safe
 The architecture stays minimal while addressing all critical concerns:
+
 - No SSE/WebSockets complexity
 - No external dependencies beyond SQLite
 - Single server.go file keeps it maintainable

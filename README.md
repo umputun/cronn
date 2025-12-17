@@ -14,6 +14,7 @@ Cronn is a crontab jobs scheduler with some nice extras. It allows to run comman
 Simple cron scheduling with visibility. Single binary, embedded SQLite, no external dependencies.
 
 **What you get**:
+
 - crontab and YAML formats (auto-detected by extension)
 - web dashboard with job history and manual execution
 - hot reload on config changes (+ SIGHUP support)
@@ -26,6 +27,7 @@ Simple cron scheduling with visibility. Single binary, embedded SQLite, no exter
 - retry with backoff, jitter, deduplication, log rotation
 
 **What you won't deal with**:
+
 - silent failures with logs scattered across system files
 - environment differences between shell and scheduler
 - multiple config files per job
@@ -104,6 +106,7 @@ Scheduling can be defined as:
 Cronn also understands various day-realted templates evaluated at the time of job's execution:
 
 **Standard Date Templates:**
+
 - `{{.YYYYMMDD}}` - current day in local TZ
 - `{{.YYYYMMDDEOD}}` - current business day based on EOD threshold (default: 17:00)
 - `{{.YYYY}}` - current year
@@ -119,6 +122,7 @@ Cronn also understands various day-realted templates evaluated at the time of jo
 **Weekday Templates (W-prefixed):**
 
 These templates automatically skip backward to the previous business day (skipping weekends by default):
+
 - `{{.WYYYYMMDD}}` - previous business day
 - `{{.WYYYYMMDDEOD}}` - previous business day with EOD logic
 - `{{.WYYYY}}` - year from previous business day
@@ -128,6 +132,7 @@ These templates automatically skip backward to the previous business day (skippi
 - `{{.WYY}}`, `{{.WMM}}`, `{{.WDD}}` - year/month/day components from previous business day
 
 **Business Day Logic:**
+
 - EOD (End of Day) templates use a threshold hour (default: 17:00/5pm) to determine which business day to use
 - If current time is before EOD threshold, uses previous business day
 - If current time is at or after EOD threshold, uses current business day
@@ -238,6 +243,7 @@ jobs:
 ```
 
 The YAML format supports:
+
 - Two ways to define scheduling:
   - `spec`: Traditional cron string or @-descriptors
   - `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
@@ -249,6 +255,7 @@ The YAML format supports:
 Note: `spec` and `sched` are mutually exclusive - use only one per job. Empty `sched` fields default to `*`.
 
 The YAML configuration is validated against an embedded JSON schema that ensures:
+
 - Required fields are present
 - Field values meet constraints (e.g., valid cron patterns, reasonable retry attempts)
 - Configuration conflicts are detected (e.g., both spec and sched defined)
@@ -287,6 +294,7 @@ Both formats support the same template variables.
 Cronn includes a modern web dashboard for monitoring and managing cron jobs. The web UI provides:
 
 ### Features
+
 - **Real-time job monitoring** with live updates every 30 seconds
 - **Persistent job history** stored in SQLite database that survives restarts
 - **Manual job execution** with advanced capabilities:
@@ -553,6 +561,7 @@ Jobs can be configured to run only when certain system conditions are met. This 
 To control how many condition checks can run simultaneously, use the `--max-concurrent-checks` flag (default: 10) or set the `CRONN_MAX_CONCURRENT_CHECKS` environment variable. This prevents resource exhaustion when multiple jobs with conditions are scheduled.
 
 Available conditions:
+
 - `cpu_below`: Maximum CPU usage percentage (0-100)
 - `memory_below`: Maximum memory usage percentage (0-100)
 - `load_avg_below`: Maximum system load average
@@ -562,10 +571,12 @@ Available conditions:
 - `custom_timeout`: Timeout for custom script execution (defaults to 30s)
 
 Postponement options:
+
 - `max_postpone`: Maximum duration to wait for conditions (e.g., "2h", "30m")
 - `check_interval`: How often to check conditions (defaults to 30s)
 
 When conditions are not met:
+
 - Without `max_postpone`: Job is skipped
 - With `max_postpone`: Job waits up to the specified duration, checking periodically
 - If deadline is reached: Job executes regardless of conditions

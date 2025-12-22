@@ -10,5 +10,16 @@ prep_site:
 	sed -i 's|^.*https://github.com/umputun/cronn/workflows/build/badge.svg.*$$||' site/docs/index.md
 	cd site && mkdocs build
 
+# install playwright browsers (run once or after playwright-go version update)
+e2e-setup:
+	go run github.com/playwright-community/playwright-go/cmd/playwright@latest install --with-deps chromium
 
-.PHONY: docker race_test prep_site
+# run e2e tests headless (default, for CI and quick checks)
+e2e:
+	go test -v -count=1 -timeout=5m -tags=e2e ./e2e/...
+
+# run e2e tests with visible UI (for debugging and development)
+e2e-ui:
+	E2E_HEADLESS=false go test -v -count=1 -timeout=10m -tags=e2e ./e2e/...
+
+.PHONY: docker race_test prep_site e2e-setup e2e e2e-ui

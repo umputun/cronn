@@ -86,6 +86,21 @@ func TestFooter_ShowsCopyright(t *testing.T) {
 	assert.Contains(t, text, "Umputun")
 }
 
+func TestFooter_UsesFlexboxForCentering(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+
+	// verify footer uses flexbox for cross-browser vertical centering
+	result, err := page.Evaluate("() => getComputedStyle(document.querySelector('.footer')).display")
+	require.NoError(t, err)
+	assert.Equal(t, "flex", result, "footer should use flexbox for cross-browser centering")
+
+	// verify flex alignment
+	result, err = page.Evaluate("() => getComputedStyle(document.querySelector('.footer')).alignItems")
+	require.NoError(t, err)
+	assert.Equal(t, "center", result, "footer should vertically center items")
+}
+
 // --- htmx polling tests ---
 
 func TestHTMX_AutoRefreshIsConfigured(t *testing.T) {

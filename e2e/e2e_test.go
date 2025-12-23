@@ -42,6 +42,7 @@ const (
 
 var (
 	pw        *playwright.Playwright
+	browser   playwright.Browser // single browser instance for all tests
 	serverCmd *exec.Cmd
 )
 
@@ -107,10 +108,28 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// launch browser once for all tests (contexts per test provide isolation)
+	headless := os.Getenv("E2E_HEADLESS") != "false"
+	var slowMo float64
+	if !headless {
+		slowMo = 50 // slow down visible browser for easier observation
+	}
+	browser, err = pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Headless: playwright.Bool(headless),
+		SlowMo:   playwright.Float(slowMo),
+	})
+	if err != nil {
+		fmt.Printf("failed to launch browser: %v\n", err)
+		_ = pw.Stop()
+		_ = serverCmd.Process.Kill()
+		os.Exit(1)
+	}
+
 	// run tests
 	code := m.Run()
 
 	// cleanup
+	_ = browser.Close()
 	_ = pw.Stop()
 	_ = serverCmd.Process.Kill()
 	_ = os.Remove(testDBPath)
@@ -161,20 +180,9 @@ func waitForServer(url string, timeout time.Duration) error {
 
 func newPage(t *testing.T) playwright.Page {
 	t.Helper()
-	headless := os.Getenv("E2E_HEADLESS") != "false"
-	slowMo := 0.0
-	if !headless {
-		slowMo = 50 // 50ms slowdown for UI mode
-	}
-	brow, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(headless),
-		SlowMo:   playwright.Float(slowMo),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = brow.Close() })
-
 	// create isolated context (incognito-like) for complete test isolation
-	ctx, err := brow.NewContext()
+	// browser is shared, contexts provide isolation (cookies, storage)
+	ctx, err := browser.NewContext()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ctx.Close() })
 
@@ -223,6 +231,30 @@ func isModalVisible(t *testing.T, page playwright.Page, selector string) bool {
 		return false
 	}
 	return visible
+}
+
+// waitVisible waits for locator to become visible
+func waitVisible(t *testing.T, loc playwright.Locator) {
+	t.Helper()
+	require.NoError(t, loc.WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateVisible,
+	}))
+}
+
+// waitHidden waits for locator to become hidden
+func waitHidden(t *testing.T, loc playwright.Locator) {
+	t.Helper()
+	require.NoError(t, loc.WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateHidden,
+	}))
+}
+
+// defaultClickOpts returns click options for clicking at top-left corner of element
+// useful for clicking on modal backdrop without hitting the modal content
+func defaultClickOpts() playwright.LocatorClickOptions {
+	return playwright.LocatorClickOptions{
+		Position: &playwright.Position{X: 5, Y: 5},
+	}
 }
 
 // --- dashboard tests ---

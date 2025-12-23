@@ -5,7 +5,6 @@ package e2e
 import (
 	"testing"
 
-	"github.com/playwright-community/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,11 +18,7 @@ func TestListView_ShowsTableStructure(t *testing.T) {
 
 	// switch to list view
 	require.NoError(t, page.Locator(".view-toggle").Click())
-	err := page.Locator(".jobs-table").WaitFor(playwright.LocatorWaitForOptions{
-		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(5000),
-	})
-	require.NoError(t, err)
+	waitVisible(t, page.Locator(".jobs-table"))
 
 	// verify table headers
 	visible, err := page.Locator(".jobs-table th:has-text('Status')").IsVisible()
@@ -54,17 +49,11 @@ func TestListView_InfoButtonOpensModal(t *testing.T) {
 
 	// switch to list view
 	require.NoError(t, page.Locator(".view-toggle").Click())
-	err := page.Locator(".jobs-table").WaitFor(playwright.LocatorWaitForOptions{
-		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(5000),
-	})
-	require.NoError(t, err)
+	waitVisible(t, page.Locator(".jobs-table"))
 
 	// click info button on first job row
 	require.NoError(t, page.Locator(".job-row .info-btn").First().Click())
-	require.NoError(t, page.Locator("#job-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
-	}))
+	waitVisible(t, page.Locator("#job-modal"))
 
 	// verify modal is visible
 	assert.True(t, isModalVisible(t, page, "#job-modal"), "job modal should be visible from list view")

@@ -5,7 +5,6 @@ package e2e
 import (
 	"testing"
 
-	"github.com/playwright-community/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,9 +16,7 @@ func TestModal_JobDetailsOpens(t *testing.T) {
 
 	// click info button on first job
 	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
-	require.NoError(t, page.Locator("#job-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
-	}))
+	waitVisible(t, page.Locator("#job-modal"))
 
 	// verify modal is visible
 	assert.True(t, isModalVisible(t, page, "#job-modal"), "job modal should be visible")
@@ -37,9 +34,7 @@ func TestModal_JobDetailsShowsContent(t *testing.T) {
 
 	// click info button on first job
 	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
-	require.NoError(t, page.Locator("#job-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
-	}))
+	waitVisible(t, page.Locator("#job-modal"))
 
 	// verify modal shows job details
 	visible, err := page.Locator(".job-modal .modal-label:has-text('Status')").IsVisible()
@@ -62,15 +57,11 @@ func TestModal_JobDetailsCloses(t *testing.T) {
 
 	// open modal
 	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
-	require.NoError(t, page.Locator("#job-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
-	}))
+	waitVisible(t, page.Locator("#job-modal"))
 
 	// click close button
 	require.NoError(t, page.Locator("#modal-content .modal-close").Click())
-	require.NoError(t, page.Locator("#job-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateHidden,
-	}))
+	waitHidden(t, page.Locator("#job-modal"))
 
 	// verify modal is hidden
 	assert.False(t, isModalVisible(t, page, "#job-modal"), "job modal should be hidden after close")
@@ -82,9 +73,7 @@ func TestModal_SettingsOpens(t *testing.T) {
 
 	// click settings button in header
 	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
-	require.NoError(t, page.Locator("#settings-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
-	}))
+	waitVisible(t, page.Locator("#settings-modal"))
 
 	// verify settings modal is visible
 	assert.True(t, isModalVisible(t, page, "#settings-modal"), "settings modal should be visible")
@@ -101,9 +90,7 @@ func TestModal_SettingsShowsConfiguration(t *testing.T) {
 
 	// open settings modal
 	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
-	require.NoError(t, page.Locator("#settings-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
-	}))
+	waitVisible(t, page.Locator("#settings-modal"))
 
 	// verify settings sections
 	visible, err := page.Locator(".settings-modal:has-text('Application')").IsVisible()
@@ -125,16 +112,69 @@ func TestModal_SettingsCloses(t *testing.T) {
 
 	// open settings modal
 	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
-	require.NoError(t, page.Locator("#settings-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
-	}))
+	waitVisible(t, page.Locator("#settings-modal"))
 
 	// click close button
 	require.NoError(t, page.Locator("#settings-content .modal-close").Click())
-	require.NoError(t, page.Locator("#settings-modal").WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateHidden,
-	}))
+	waitHidden(t, page.Locator("#settings-modal"))
 
 	// verify modal is hidden
 	assert.False(t, isModalVisible(t, page, "#settings-modal"), "settings modal should be hidden after close")
+}
+
+// --- backdrop close tests ---
+
+func TestModal_JobDetailsClosesOnBackdropClick(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	waitForJobsLoaded(t, page)
+
+	// open modal
+	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
+	waitVisible(t, page.Locator("#job-modal"))
+
+	// click on backdrop (not on modal content)
+	// the backdrop has onclick="if(event.target === this) this.style.display='none'"
+	require.NoError(t, page.Locator("#job-modal").Click(defaultClickOpts()))
+	waitHidden(t, page.Locator("#job-modal"))
+
+	// verify modal is hidden
+	assert.False(t, isModalVisible(t, page, "#job-modal"), "job modal should close on backdrop click")
+}
+
+func TestModal_SettingsClosesOnBackdropClick(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+
+	// open settings modal
+	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
+	waitVisible(t, page.Locator("#settings-modal"))
+
+	// click on backdrop
+	require.NoError(t, page.Locator("#settings-modal").Click(defaultClickOpts()))
+	waitHidden(t, page.Locator("#settings-modal"))
+
+	// verify modal is hidden
+	assert.False(t, isModalVisible(t, page, "#settings-modal"), "settings modal should close on backdrop click")
+}
+
+func TestModal_ConfirmDialogDoesNotCloseOnBackdropClick(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	waitForJobsLoaded(t, page)
+
+	// open confirm dialog by clicking run button
+	require.NoError(t, page.Locator(".job-card .btn-compact").First().Click())
+	waitVisible(t, page.Locator("#confirm-dialog"))
+
+	// click on backdrop - confirm dialog should NOT close on backdrop click
+	// (it doesn't have the onclick handler like other modals)
+	require.NoError(t, page.Locator("#confirm-dialog").Click(defaultClickOpts()))
+
+	// verify dialog is still visible (confirm dialog requires explicit cancel/confirm)
+	assert.True(t, isModalVisible(t, page, "#confirm-dialog"), "confirm dialog should not close on backdrop click")
+
+	// close with cancel button
+	require.NoError(t, page.Locator(".btn-cancel").Click())
+	waitHidden(t, page.Locator("#confirm-dialog"))
 }

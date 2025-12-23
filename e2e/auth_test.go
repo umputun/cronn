@@ -89,11 +89,7 @@ func ensureAuthLoggedIn(t *testing.T, page playwright.Page) {
 		require.NoError(t, page.Locator("button[type='submit']").Click())
 	}
 
-	err = page.Locator(".header").WaitFor(playwright.LocatorWaitForOptions{
-		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(5000),
-	})
-	require.NoError(t, err)
+	waitVisible(t, page.Locator(".header"))
 }
 
 func TestAuth_LoginPageDisplays(t *testing.T) {
@@ -148,16 +144,20 @@ func TestAuth_LoginInvalid(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, page.Locator("input[name='password']").Fill("wrongpassword"))
 	require.NoError(t, page.Locator("button[type='submit']").Click())
-	require.NoError(t, page.Locator(".error-message").WaitFor())
+
+	// wait for error message and verify content (not just visibility)
+	errorElement := page.Locator(".error-message")
+	waitVisible(t, errorElement)
 
 	// verify we're still on login page
 	url := page.URL()
 	assert.Contains(t, url, "/login", "should stay on login page")
 
-	// verify error message is displayed
-	visible, err := page.Locator(".error-message").IsVisible()
+	// verify error message content
+	errorText, err := errorElement.TextContent()
 	require.NoError(t, err)
-	assert.True(t, visible, "error message should be visible")
+	assert.NotEmpty(t, errorText, "error message should have content")
+	assert.Contains(t, errorText, "Invalid password", "error message should indicate invalid credentials")
 }
 
 func TestAuth_Logout(t *testing.T) {

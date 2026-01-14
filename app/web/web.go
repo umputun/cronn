@@ -363,7 +363,7 @@ func (s *Server) routes() http.Handler {
 	// dashboard route
 	router.HandleFunc("GET /", s.handleDashboard)
 
-	// api routes with grouping
+	// api routes with grouping (HTMX endpoints)
 	router.Mount("/api").Route(func(api *routegroup.Bundle) {
 		// api-specific middleware
 		api.Use(rest.NoCache)             // prevent caching of API responses
@@ -382,6 +382,12 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
 		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/logs", s.handleExecutionLogs)
 		api.HandleFunc("GET /neighbors", s.handleNeighbors)
+	})
+
+	// JSON API for CLI/programmatic access
+	router.Mount("/api/v1").Route(func(api *routegroup.Bundle) {
+		api.Use(rest.NoCache)
+		api.HandleFunc("GET /status", s.handleAPIStatus)
 	})
 
 	// static files with proper error handling

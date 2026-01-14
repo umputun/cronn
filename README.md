@@ -434,6 +434,73 @@ The URL (or file) must return a JSON array with `name` and `url` fields:
 - **Error handling**: Shows appropriate messages if fetch fails
 - **File support**: Can read from local JSON file using `file://` URL scheme
 
+### JSON API
+
+Cronn provides a JSON API for programmatic access to job status, designed for CLI tools like `curl` and `jq`.
+
+#### Endpoint
+
+```
+GET /api/v1/status
+```
+
+#### Response
+
+```json
+{
+  "jobs": [
+    {
+      "id": "abc123...",
+      "command": "echo test",
+      "schedule": "* * * * *",
+      "next_run": "2024-01-15T02:00:00Z",
+      "last_run": "2024-01-14T02:00:00Z",
+      "last_status": "success",
+      "is_running": false,
+      "enabled": true
+    }
+  ],
+  "stats": {
+    "total": 10,
+    "running": 1,
+    "success": 7,
+    "failed": 1,
+    "idle": 1
+  },
+  "timestamp": "2024-01-14T15:30:00Z"
+}
+```
+
+#### Authentication
+
+When password authentication is enabled, use HTTP Basic Auth with username `cronn`:
+
+```bash
+curl -u cronn:yourpassword localhost:8080/api/v1/status | jq
+```
+
+#### Usage Examples
+
+```bash
+# get all jobs
+curl -s localhost:8080/api/v1/status | jq '.jobs'
+
+# get failed jobs only
+curl -s localhost:8080/api/v1/status | jq '.jobs[] | select(.last_status == "failed")'
+
+# get next job to run
+curl -s localhost:8080/api/v1/status | jq '.jobs | sort_by(.next_run) | first'
+
+# get stats summary
+curl -s localhost:8080/api/v1/status | jq '.stats'
+
+# count running jobs
+curl -s localhost:8080/api/v1/status | jq '.stats.running'
+
+# list job commands with status
+curl -s localhost:8080/api/v1/status | jq '.jobs[] | {command, status: .last_status}'
+```
+
 <details markdown>
   <summary>Screenshots</summary>
 

@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -14,6 +15,34 @@ import (
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
+
+// APIStatusResponse is the JSON response for /api/v1/status
+type APIStatusResponse struct {
+	Jobs      []APIJob  `json:"jobs"`
+	Stats     APIStats  `json:"stats"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// APIJob represents a job in JSON API response
+type APIJob struct {
+	ID         string    `json:"id"`
+	Command    string    `json:"command"`
+	Schedule   string    `json:"schedule"`
+	NextRun    time.Time `json:"next_run,omitzero"`
+	LastRun    time.Time `json:"last_run,omitzero"`
+	LastStatus string    `json:"last_status"`
+	IsRunning  bool      `json:"is_running"`
+	Enabled    bool      `json:"enabled"`
+}
+
+// APIStats represents aggregated statistics in JSON API response
+type APIStats struct {
+	Total   int `json:"total"`
+	Running int `json:"running"`
+	Success int `json:"success"`
+	Failed  int `json:"failed"`
+	Idle    int `json:"idle"`
+}
 
 // handleDashboard renders the main dashboard
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -647,4 +676,67 @@ func (s *Server) handleExecutionLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "partials/jobs.html", "logs-modal", data)
+}
+
+// handleAPIStatus returns JSON status for all jobs - designed for CLI/jq consumption
+func (s *Server) handleAPIStatus(w http.ResponseWriter, _ *http.Request) {
+	s.jobsMu.RLock()
+	allJobs := make([]persistence.JobInfo, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		jobCopy := job
+		s.updateNextRun(&jobCopy)
+		allJobs = append(allJobs, jobCopy)
+	}
+	s.jobsMu.RUnlock()
+
+	// sort by crontab order for consistent output
+	s.sortJobs(allJobs, enums.SortModeDefault)
+
+	// convert to API response and count stats
+	jobs := make([]APIJob, 0, len(allJobs))
+	stats := APIStats{Total: len(allJobs)}
+
+	for _, job := range allJobs {
+		apiJob := APIJob{
+			ID:         job.ID,
+			Command:    job.Command,
+			Schedule:   job.Schedule,
+			NextRun:    job.NextRun,
+			LastRun:    job.LastRun,
+			LastStatus: job.LastStatus.String(),
+			IsRunning:  job.IsRunning,
+			Enabled:    job.Enabled,
+		}
+		jobs = append(jobs, apiJob)
+
+		// count stats
+		if job.IsRunning {
+			stats.Running++
+		}
+		switch job.LastStatus {
+		case enums.JobStatusSuccess:
+			stats.Success++
+		case enums.JobStatusFailed:
+			stats.Failed++
+		case enums.JobStatusIdle:
+			stats.Idle++
+		}
+	}
+
+	resp := APIStatusResponse{
+		Jobs:      jobs,
+		Stats:     stats,
+		Timestamp: time.Now(),
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("[WARN] failed to encode API status response: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(data); err != nil {
+		log.Printf("[WARN] failed to write API status response: %v", err)
+	}
 }

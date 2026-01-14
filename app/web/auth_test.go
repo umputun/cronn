@@ -60,6 +60,24 @@ func TestServer_Authentication(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
+	t.Run("JSON API without auth returns 401", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
+		req.Header.Set("Accept", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("JSON API with correct basic auth returns 200", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
+		req.Header.Set("Accept", "application/json")
+		req.SetBasicAuth("cronn", "testpass")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	})
+
 	t.Run("login form displays", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/login", http.NoBody)
 		rec := httptest.NewRecorder()

@@ -1416,4 +1416,3 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	})
 }
-

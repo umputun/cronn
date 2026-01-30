@@ -349,7 +349,7 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 		assert.Equal(t, "execution not found", errResp["error"])
 	})
 
-	t.Run("job ID mismatch returns 403", func(t *testing.T) {
+	t.Run("job ID mismatch returns 404", func(t *testing.T) {
 		wrongJobID := HashCommand("echo wrong")
 
 		req := httptest.NewRequest("GET", "/api/v1/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
@@ -360,12 +360,12 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 		server.handleAPIExecutionLogs(w, req)
 
 		resp := w.Result()
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 
 		var errResp map[string]string
 		err = json.NewDecoder(w.Body).Decode(&errResp)
 		require.NoError(t, err)
-		assert.Equal(t, "execution does not belong to this job", errResp["error"])
+		assert.Equal(t, "execution not found", errResp["error"])
 	})
 
 	t.Run("missing job id returns 400", func(t *testing.T) {

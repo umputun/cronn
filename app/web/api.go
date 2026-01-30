@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -200,14 +201,19 @@ func (s *Server) handleAPIExecutionLogs(w http.ResponseWriter, r *http.Request) 
 	// get execution from database
 	execution, err := s.store.GetExecutionByID(execID)
 	if err != nil {
+		if errors.Is(err, persistence.ErrNotFound) {
+			s.writeJSONError(w, http.StatusNotFound, "execution not found")
+			return
+		}
 		log.Printf("[ERROR] failed to get execution %d: %v", execID, err)
-		s.writeJSONError(w, http.StatusNotFound, "execution not found")
+		s.writeJSONError(w, http.StatusInternalServerError, "failed to load execution")
 		return
 	}
 
-	// verify execution belongs to the requested job
+	// verify execution belongs to the requested job.
+	// return 404 (not 403) to avoid confirming execution exists for other jobs
 	if execution.JobID != jobID {
-		s.writeJSONError(w, http.StatusForbidden, "execution does not belong to this job")
+		s.writeJSONError(w, http.StatusNotFound, "execution not found")
 		return
 	}
 

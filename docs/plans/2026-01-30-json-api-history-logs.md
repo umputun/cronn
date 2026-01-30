@@ -50,16 +50,16 @@ Add JSON API endpoints for job execution history and logs to enable CLI/programm
 **Files:**
 - Create: `app/web/api_test.go`
 
-- [ ] Add `TestHandleAPIStatus` - verify existing endpoint still works
-- [ ] Add `TestHandleAPIJobHistory`:
+- [x] Add `TestHandleAPIStatus` - verify existing endpoint still works
+- [x] Add `TestHandleAPIJobHistory`:
   - Success case with executions
   - Job not found (404)
   - Empty history (empty array)
-- [ ] Add `TestHandleAPIExecutionLogs`:
+- [x] Add `TestHandleAPIExecutionLogs`:
   - Success case with output
   - Execution not found (404)
   - Job ID mismatch (403)
-- [ ] Verify all tests pass
+- [x] Verify all tests pass
 
 ### 4. Final Validation
 

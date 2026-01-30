@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -41,13 +42,15 @@ func TestSQLiteStore_TablesCreated(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
+	ctx := context.Background()
+
 	// verify tables were created during initialization
 	var count int
-	err = store.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jobs'").Scan(&count)
+	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jobs'").Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	err = store.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='executions'").Scan(&count)
+	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='executions'").Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }
@@ -144,9 +147,11 @@ func TestSQLiteStore_RecordExecution(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	ctx := context.Background()
+
 	// verify execution was recorded
 	var count int
-	err = store.db.QueryRow("SELECT COUNT(*) FROM executions WHERE job_id = ?", "job1").Scan(&count)
+	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM executions WHERE job_id = ?", "job1").Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
@@ -154,7 +159,7 @@ func TestSQLiteStore_RecordExecution(t *testing.T) {
 	var jobID, status string
 	var startedAt, finishedAt time.Time
 	var exitCode int
-	err = store.db.QueryRow("SELECT job_id, started_at, finished_at, status, exit_code FROM executions WHERE job_id = ?", "job1").
+	err = store.db.QueryRowContext(ctx, "SELECT job_id, started_at, finished_at, status, exit_code FROM executions WHERE job_id = ?", "job1").
 		Scan(&jobID, &startedAt, &finishedAt, &status, &exitCode)
 	require.NoError(t, err)
 	assert.Equal(t, "job1", jobID)
@@ -198,12 +203,14 @@ func TestSQLiteStore_Migration_ExecutedCommandColumn(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	ctx := context.Background()
+
 	// create database with old schema (without executed_command column)
 	db, err := sqlx.Open("sqlite", dbPath)
 	require.NoError(t, err)
 
 	// create old schema without executed_command column
-	_, err = db.Exec(`CREATE TABLE executions (
+	_, err = db.ExecContext(ctx, `CREATE TABLE executions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		job_id TEXT,
 		started_at DATETIME,
@@ -215,7 +222,7 @@ func TestSQLiteStore_Migration_ExecutedCommandColumn(t *testing.T) {
 	require.NoError(t, err)
 
 	// insert a record with old schema
-	_, err = db.Exec(`INSERT INTO executions (job_id, started_at, finished_at, status, exit_code)
+	_, err = db.ExecContext(ctx, `INSERT INTO executions (job_id, started_at, finished_at, status, exit_code)
 		VALUES (?, ?, ?, ?, ?)`, "job1", time.Now(), time.Now(), "success", 0)
 	require.NoError(t, err)
 
@@ -229,7 +236,7 @@ func TestSQLiteStore_Migration_ExecutedCommandColumn(t *testing.T) {
 
 	// verify executed_command column was added
 	var columnExists bool
-	err = store.db.QueryRow(`
+	err = store.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) > 0
 		FROM pragma_table_info('executions')
 		WHERE name = 'executed_command'
@@ -318,9 +325,11 @@ func TestSQLiteStore_WALMode(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
+	ctx := context.Background()
+
 	// verify WAL mode is enabled
 	var mode string
-	err = store.db.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	err = store.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode)
 	require.NoError(t, err)
 	assert.Equal(t, "wal", mode)
 }
@@ -332,8 +341,10 @@ func TestSQLiteStore_LoadJobs_Error(t *testing.T) {
 	store, err := NewSQLiteStore(dbPath)
 	require.NoError(t, err)
 
+	ctx := context.Background()
+
 	// corrupt the database by dropping the jobs table
-	_, err = store.db.Exec("DROP TABLE jobs")
+	_, err = store.db.ExecContext(ctx, "DROP TABLE jobs")
 	require.NoError(t, err)
 
 	// now LoadJobs should fail
@@ -354,8 +365,10 @@ func TestSQLiteStore_SaveJobs_Error(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
+	ctx := context.Background()
+
 	// corrupt the database by dropping the jobs table
-	_, err = store.db.Exec("DROP TABLE jobs")
+	_, err = store.db.ExecContext(ctx, "DROP TABLE jobs")
 	require.NoError(t, err)
 
 	jobs := []JobInfo{
@@ -477,7 +490,9 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 		require.NoError(t, err)
 		defer store.Close()
 
-		_, err = store.db.Exec("DROP TABLE executions")
+		ctx := context.Background()
+
+		_, err = store.db.ExecContext(ctx, "DROP TABLE executions")
 		require.NoError(t, err)
 
 		results, err := store.GetExecutions("job1", 50)
@@ -491,12 +506,14 @@ func TestSQLiteStore_Migration_OutputColumn(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	ctx := context.Background()
+
 	// create database with old schema (without output column)
 	db, err := sqlx.Open("sqlite", dbPath)
 	require.NoError(t, err)
 
 	// create old schema without output column
-	_, err = db.Exec(`CREATE TABLE executions (
+	_, err = db.ExecContext(ctx, `CREATE TABLE executions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		job_id TEXT,
 		started_at DATETIME,
@@ -509,7 +526,7 @@ func TestSQLiteStore_Migration_OutputColumn(t *testing.T) {
 	require.NoError(t, err)
 
 	// insert a record with old schema
-	_, err = db.Exec(`INSERT INTO executions (job_id, started_at, finished_at, status, exit_code, executed_command)
+	_, err = db.ExecContext(ctx, `INSERT INTO executions (job_id, started_at, finished_at, status, exit_code, executed_command)
 		VALUES (?, ?, ?, ?, ?, ?)`, "job1", time.Now(), time.Now(), "success", 0, "echo test")
 	require.NoError(t, err)
 
@@ -523,7 +540,7 @@ func TestSQLiteStore_Migration_OutputColumn(t *testing.T) {
 
 	// verify output column was added
 	var columnExists bool
-	err = store.db.QueryRow(`
+	err = store.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) > 0
 		FROM pragma_table_info('executions')
 		WHERE name = 'output'
@@ -757,7 +774,7 @@ func TestSQLiteStore_GetExecutionByID(t *testing.T) {
 		assert.Equal(t, output, execution.Output)
 	})
 
-	t.Run("returns error for non-existent execution", func(t *testing.T) {
+	t.Run("returns ErrNotFound for non-existent execution", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -767,5 +784,6 @@ func TestSQLiteStore_GetExecutionByID(t *testing.T) {
 
 		_, err = store.GetExecutionByID(99999)
 		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }

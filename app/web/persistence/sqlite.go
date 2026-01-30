@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,6 +14,9 @@ import (
 	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
 )
+
+// ErrNotFound is returned when a requested resource does not exist
+var ErrNotFound = errors.New("not found")
 
 // JobInfo represents a cron job with its execution state
 type JobInfo struct {
@@ -53,9 +58,11 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	ctx := context.Background()
+
 	// helper to execute pragma with proper error handling
 	execPragma := func(pragma, errMsgPrefix string) error {
-		if _, err := db.Exec(pragma); err != nil {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
 			if closeErr := db.Close(); closeErr != nil {
 				return fmt.Errorf("%s: %w (also failed to close db: %v)", errMsgPrefix, err, closeErr)
 			}
@@ -77,7 +84,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	store := &SQLiteStore{db: db}
 
 	// initialize database tables
-	if err := store.initialize(); err != nil {
+	if err := store.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
@@ -86,7 +93,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 }
 
 // initialize creates the database schema
-func (s *SQLiteStore) initialize() error {
+func (s *SQLiteStore) initialize(ctx context.Context) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS jobs (
 			id TEXT PRIMARY KEY,
@@ -115,13 +122,13 @@ func (s *SQLiteStore) initialize() error {
 	}
 
 	for _, query := range queries {
-		if _, err := s.db.Exec(query); err != nil {
+		if _, err := s.db.ExecContext(ctx, query); err != nil {
 			return fmt.Errorf("failed to execute query: %w", err)
 		}
 	}
 
 	// run schema migrations
-	if err := s.migrate(); err != nil {
+	if err := s.migrate(ctx); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -129,10 +136,10 @@ func (s *SQLiteStore) initialize() error {
 }
 
 // migrate performs schema migrations for existing databases
-func (s *SQLiteStore) migrate() error {
+func (s *SQLiteStore) migrate(ctx context.Context) error {
 	// check if executed_command column exists
 	var executedCommandExists bool
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) > 0
 		FROM pragma_table_info('executions')
 		WHERE name = 'executed_command'
@@ -143,14 +150,14 @@ func (s *SQLiteStore) migrate() error {
 
 	// add executed_command column if it doesn't exist
 	if !executedCommandExists {
-		if _, execErr := s.db.Exec("ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''"); execErr != nil {
+		if _, execErr := s.db.ExecContext(ctx, "ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''"); execErr != nil {
 			return fmt.Errorf("failed to add executed_command column: %w", execErr)
 		}
 	}
 
 	// check if output column exists
 	var outputExists bool
-	err = s.db.QueryRow(`
+	err = s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) > 0
 		FROM pragma_table_info('executions')
 		WHERE name = 'output'
@@ -161,7 +168,7 @@ func (s *SQLiteStore) migrate() error {
 
 	// add output column if it doesn't exist
 	if !outputExists {
-		if _, outErr := s.db.Exec("ALTER TABLE executions ADD COLUMN output TEXT DEFAULT ''"); outErr != nil {
+		if _, outErr := s.db.ExecContext(ctx, "ALTER TABLE executions ADD COLUMN output TEXT DEFAULT ''"); outErr != nil {
 			return fmt.Errorf("failed to add output column: %w", outErr)
 		}
 	}
@@ -270,7 +277,8 @@ func (s *SQLiteStore) GetExecutions(jobID string, limit int) ([]ExecutionInfo, e
 	return executions, nil
 }
 
-// GetExecutionByID retrieves a specific execution by its ID
+// GetExecutionByID retrieves a specific execution by its ID.
+// Returns ErrNotFound if the execution does not exist.
 func (s *SQLiteStore) GetExecutionByID(execID int) (ExecutionInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -283,6 +291,9 @@ func (s *SQLiteStore) GetExecutionByID(execID int) (ExecutionInfo, error) {
 		execID)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ExecutionInfo{}, ErrNotFound
+		}
 		return ExecutionInfo{}, fmt.Errorf("failed to query execution: %w", err)
 	}
 

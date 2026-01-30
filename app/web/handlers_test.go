@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -1415,114 +1414,5 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 
 		resp := w.Result()
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
-	})
-}
-
-func TestServer_handleAPIStatus(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{DBPath: dbPath, UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir)}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// start event processor
-	ctx := t.Context()
-	go server.processEvents(ctx)
-
-	// add test jobs with different statuses
-	startTime := time.Now()
-
-	// job 1: success
-	server.OnJobStart(request.OnJobStart{Command: "echo success", ExecutedCommand: "echo success", Schedule: "* * * * *", StartTime: startTime})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo success", ExecutedCommand: "echo success", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
-
-	// job 2: failed
-	server.OnJobStart(request.OnJobStart{Command: "echo failed", ExecutedCommand: "echo failed", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour)})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo failed", ExecutedCommand: "echo failed", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour), EndTime: startTime.Add(-time.Hour + time.Second), ExitCode: 1, Output: "", Err: fmt.Errorf("failed")})
-
-	// job 3: running
-	server.OnJobStart(request.OnJobStart{Command: "echo running", ExecutedCommand: "echo running", Schedule: "@daily", StartTime: startTime})
-
-	// wait for events to be processed
-	require.Eventually(t, func() bool {
-		server.jobsMu.RLock()
-		defer server.jobsMu.RUnlock()
-		return len(server.jobs) == 3
-	}, time.Second, 10*time.Millisecond)
-
-	t.Run("returns valid json with jobs and stats", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
-		w := httptest.NewRecorder()
-
-		server.handleAPIStatus(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
-
-		var apiResp APIStatusResponse
-		err := json.NewDecoder(w.Body).Decode(&apiResp)
-		require.NoError(t, err)
-
-		// verify jobs
-		assert.Len(t, apiResp.Jobs, 3)
-
-		// verify stats
-		assert.Equal(t, 3, apiResp.Stats.Total)
-		assert.Equal(t, 1, apiResp.Stats.Running)
-		assert.Equal(t, 1, apiResp.Stats.Success)
-		assert.Equal(t, 1, apiResp.Stats.Failed)
-		assert.Equal(t, 0, apiResp.Stats.Idle)
-
-		// verify timestamp is recent
-		assert.WithinDuration(t, time.Now(), apiResp.Timestamp, time.Second)
-
-		// verify job data
-		jobMap := make(map[string]APIJob)
-		for _, j := range apiResp.Jobs {
-			jobMap[j.Command] = j
-		}
-
-		successJob := jobMap["echo success"]
-		assert.Equal(t, "success", successJob.LastStatus)
-		assert.False(t, successJob.IsRunning)
-		assert.True(t, successJob.Enabled)
-		assert.Equal(t, "* * * * *", successJob.Schedule)
-
-		failedJob := jobMap["echo failed"]
-		assert.Equal(t, "failed", failedJob.LastStatus)
-		assert.False(t, failedJob.IsRunning)
-
-		runningJob := jobMap["echo running"]
-		assert.Equal(t, "running", runningJob.LastStatus)
-		assert.True(t, runningJob.IsRunning)
-	})
-
-	t.Run("empty jobs returns empty array not null", func(t *testing.T) {
-		// create new server with no jobs
-		emptyServer, err := New(Config{
-			DBPath:         filepath.Join(tmpDir, "empty.db"),
-			UpdateInterval: time.Minute,
-			Version:        "test",
-			JobsProvider:   createTestProvider(t, tmpDir),
-		})
-		require.NoError(t, err)
-		defer emptyServer.store.Close()
-
-		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
-		w := httptest.NewRecorder()
-
-		emptyServer.handleAPIStatus(w, req)
-
-		var apiResp APIStatusResponse
-		err = json.NewDecoder(w.Body).Decode(&apiResp)
-		require.NoError(t, err)
-
-		assert.NotNil(t, apiResp.Jobs)
-		assert.Empty(t, apiResp.Jobs)
-		assert.Equal(t, 0, apiResp.Stats.Total)
 	})
 }

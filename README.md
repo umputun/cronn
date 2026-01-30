@@ -438,13 +438,29 @@ The URL (or file) must return a JSON array with `name` and `url` fields:
 
 Cronn provides a JSON API for programmatic access to job status, designed for CLI tools like `curl` and `jq`.
 
-#### Endpoint
+#### Endpoints
+
+**Status** - Get all jobs with statistics:
 
 ```
 GET /api/v1/status
 ```
 
-#### Response
+**Job History** - Get execution history for a specific job (up to 50 most recent):
+
+```
+GET /api/v1/jobs/{id}/history
+```
+
+**Execution Logs** - Get details and output for a specific execution:
+
+```
+GET /api/v1/jobs/{id}/executions/{exec_id}/logs
+```
+
+#### Response Examples
+
+**Status Response:**
 
 ```json
 {
@@ -499,6 +515,54 @@ curl -s localhost:8080/api/v1/status | jq '.stats.running'
 
 # list job commands with status
 curl -s localhost:8080/api/v1/status | jq '.jobs[] | {command, status: .last_status}'
+
+# get job execution history (replace JOB_ID with actual job ID)
+curl -s localhost:8080/api/v1/jobs/JOB_ID/history | jq '.executions'
+
+# get execution logs (replace JOB_ID and EXEC_ID with actual IDs)
+curl -s localhost:8080/api/v1/jobs/JOB_ID/executions/EXEC_ID/logs | jq '.output'
+```
+
+**History Response:**
+
+```json
+{
+  "job": {
+    "id": "abc123...",
+    "command": "echo test",
+    "schedule": "* * * * *",
+    "next_run": "2024-01-15T02:00:00Z",
+    "last_run": "2024-01-14T02:00:00Z",
+    "last_status": "success",
+    "is_running": false,
+    "enabled": true
+  },
+  "executions": [
+    {
+      "id": 42,
+      "started_at": "2024-01-14T02:00:00Z",
+      "finished_at": "2024-01-14T02:00:01Z",
+      "status": "success",
+      "exit_code": 0,
+      "executed_command": "echo test"
+    }
+  ]
+}
+```
+
+**Logs Response:**
+
+```json
+{
+  "id": 42,
+  "job_id": "abc123...",
+  "started_at": "2024-01-14T02:00:00Z",
+  "finished_at": "2024-01-14T02:00:01Z",
+  "status": "success",
+  "exit_code": 0,
+  "executed_command": "echo test",
+  "output": "test\n"
+}
 ```
 
 <details markdown>

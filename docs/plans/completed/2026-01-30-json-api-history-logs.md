@@ -63,6 +63,6 @@ Add JSON API endpoints for job execution history and logs to enable CLI/programm
 
 ### 4. Final Validation
 
-- [ ] Run full test suite: `go test ./...`
-- [ ] Run linter: `golangci-lint run`
-- [ ] Move plan to `docs/plans/completed/`
+- [x] Run full test suite: `go test ./...`
+- [x] Run linter: `golangci-lint run`
+- [x] Move plan to `docs/plans/completed/`

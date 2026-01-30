@@ -1,3 +1,4 @@
+// Package web implements the web server for cronn application
 package web
 
 import (
@@ -388,6 +389,8 @@ func (s *Server) routes() http.Handler {
 	router.Mount("/api/v1").Route(func(api *routegroup.Bundle) {
 		api.Use(rest.NoCache)
 		api.HandleFunc("GET /status", s.handleAPIStatus)
+		api.HandleFunc("GET /jobs/{id}/history", s.handleAPIJobHistory)
+		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/logs", s.handleAPIExecutionLogs)
 	})
 
 	// static files with proper error handling

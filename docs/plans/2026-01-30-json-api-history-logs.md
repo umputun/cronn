@@ -19,31 +19,31 @@ Add JSON API endpoints for job execution history and logs to enable CLI/programm
 - Create: `app/web/api.go`
 - Modify: `app/web/handlers.go` (remove API types and handler)
 
-- [ ] Create `app/web/api.go` with response types:
+- [x] Create `app/web/api.go` with response types:
   - Move `APIStatusResponse`, `APIJob`, `APIStats` from handlers.go
   - Add `APIExecution` (execution without output field)
   - Add `APIHistoryResponse` (job info + executions list)
   - Add `APILogsResponse` (single execution with output)
-- [ ] Move `handleAPIStatus` handler from handlers.go to api.go
-- [ ] Add helper function `toAPIExecution` for conversion
-- [ ] Add `handleAPIJobHistory` handler:
+- [x] Move `handleAPIStatus` handler from handlers.go to api.go
+- [x] Add helper function `toAPIExecution` for conversion
+- [x] Add `handleAPIJobHistory` handler:
   - Validate job ID, check job exists
   - Fetch executions from store (limit 50)
   - Convert to API format, return JSON
-- [ ] Add `handleAPIExecutionLogs` handler:
+- [x] Add `handleAPIExecutionLogs` handler:
   - Validate job ID and execution ID
   - Fetch execution, verify belongs to job
   - Return full execution with output as JSON
-- [ ] Remove moved code from handlers.go
+- [x] Remove moved code from handlers.go
 
 ### 2. Wire routes
 
 **Files:**
 - Modify: `app/web/web.go`
 
-- [ ] Add route `GET /jobs/{id}/history` to `/api/v1` mount
-- [ ] Add route `GET /jobs/{id}/executions/{exec_id}/logs` to `/api/v1` mount
-- [ ] Verify tests pass
+- [x] Add route `GET /jobs/{id}/history` to `/api/v1` mount
+- [x] Add route `GET /jobs/{id}/executions/{exec_id}/logs` to `/api/v1` mount
+- [x] Verify tests pass
 
 ### 3. Add tests
 

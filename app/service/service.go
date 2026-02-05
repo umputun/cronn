@@ -134,7 +134,8 @@ type JobEventHandler interface {
 	OnJobComplete(req request.OnJobComplete)
 }
 
-// Do runs blocking scheduler
+// Do runs blocking scheduler. If UpdatesEnabled is true and crontab file fails to load,
+// the scheduler starts with zero jobs and waits for crontab updates.
 func (s *Scheduler) Do(ctx context.Context) {
 	if s.ResumeConcurrency <= 0 {
 		s.ResumeConcurrency = 1
@@ -155,8 +156,13 @@ func (s *Scheduler) Do(ctx context.Context) {
 	}
 
 	if err := s.loadFromFileParser(ctx); err != nil {
-		log.Printf("[WARN] can't load crontab file, %v", err)
-		return
+		// only tolerate missing file errors when updates are enabled
+		// other errors (permission, parse, validation) should still abort
+		if !s.UpdatesEnabled || !errors.Is(err, os.ErrNotExist) {
+			log.Printf("[WARN] can't load crontab file, %v", err)
+			return
+		}
+		log.Printf("[INFO] crontab file doesn't exist yet, running with zero jobs, waiting for updates")
 	}
 	s.Start()
 	<-ctx.Done()

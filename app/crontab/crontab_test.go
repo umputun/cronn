@@ -261,6 +261,46 @@ func TestParser_ChangesHup(t *testing.T) {
 	assert.Len(t, jobs, 3)
 }
 
+func TestParser_ChangesFileCreatedLater(t *testing.T) {
+	// use a path that doesn't exist yet
+	tmpDir := t.TempDir()
+	filePath := tmpDir + "/nonexistent-crontab"
+
+	ctab := New(filePath, time.Millisecond*100, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+	defer cancel()
+
+	// changes should not return error even when file doesn't exist
+	ch, err := ctab.Changes(ctx)
+	require.NoError(t, err, "Changes() should not error when file doesn't exist")
+	require.NotNil(t, ch, "channel should be returned")
+
+	// create file after a short delay
+	time.AfterFunc(time.Millisecond*300, func() {
+		f, e := os.Create(filePath) //nolint:gosec // test file in temp directory
+		if e != nil {
+			panic("failed to create test file: " + e.Error())
+		}
+		if _, e = f.WriteString("1 * * * * ls\n"); e != nil {
+			panic("failed to write test file: " + e.Error())
+		}
+		if e = f.Close(); e != nil {
+			panic("failed to close test file: " + e.Error())
+		}
+	})
+
+	// should receive the jobs once file is created and detected
+	select {
+	case updJobs := <-ch:
+		require.Len(t, updJobs, 1)
+		assert.Equal(t, "1 * * * *", updJobs[0].Spec)
+		assert.Equal(t, "ls", updJobs[0].Command)
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for file creation detection")
+	}
+}
+
 func TestParseYAMLWithRepeater(t *testing.T) {
 	p := New("testfiles/crontab-repeater.yml", time.Hour, nil)
 	jobs, err := p.List()

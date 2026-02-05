@@ -670,6 +670,7 @@ However, it will survive container's restart.
 - auto-update mode is disabled by default. To enable it, add `--update` to the command line or set `$CRONN_UPDATE` environment variable.
 - if enabled, `cronn` will check for changes in crontab file (`-f` mode only) and reload updated jobs.
 - the check is performed every 10 seconds by default and can be changed with `--update-interval=<duration>` option.
+- when auto-update is enabled, `cronn` can start even if the crontab file doesn't exist yet - it will begin with zero jobs and automatically load them when the file is created.
 - user can send SIGHUP signal to `cronn` to force update check.
 - if user wishes to disable aut-update check but allow SIGHUP reloads the `--update-interval` can be set to `0s`. Pls note: in order to reload crontab file on SIGHUP signal update mode has to be enabled with `--update`.
 

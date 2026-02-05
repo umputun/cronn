@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,6 +145,167 @@ func TestScheduler_DoIntegration(t *testing.T) {
 	svc.Do(ctx)
 	t.Log(out.String())
 	assert.Contains(t, out.String(), "not found")
+}
+
+func TestScheduler_DoUpdatesModeEmptyFile(t *testing.T) {
+	// test that scheduler stays running with UpdatesEnabled=true when file doesn't exist
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*500)
+	defer cancel()
+
+	started := false
+	stopped := false
+
+	cr := &mocks.CronMock{
+		EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+		RemoveFunc:  func(id cron.EntryID) {},
+		StartFunc:   func() { started = true },
+		StopFunc:    func() context.Context { stopped = true; return ctx },
+	}
+
+	resmr := &mocks.ResumerMock{ListFunc: func() []resumer.Cmd { return nil }}
+
+	// parser that returns os.ErrNotExist (simulates missing file)
+	parser := &mocks.CrontabParserMock{
+		ListFunc: func() ([]crontab.JobSpec, error) {
+			return nil, fmt.Errorf("failed to load file test-missing: failed to read file: %w", os.ErrNotExist)
+		},
+		StringFunc: func() string {
+			return "test-missing"
+		},
+		ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+			// return channel that stays open, simulating update watcher
+			ch := make(chan []crontab.JobSpec)
+			go func() {
+				<-ctx.Done()
+				close(ch)
+			}()
+			return ch, nil
+		},
+	}
+
+	svc := Scheduler{
+		Cron:           cr,
+		Resumer:        resmr,
+		CrontabParser:  parser,
+		UpdatesEnabled: true, // key: updates enabled
+	}
+
+	svc.Do(ctx)
+
+	// verify scheduler started and stopped (meaning it didn't exit early)
+	assert.True(t, started, "scheduler should have started")
+	assert.True(t, stopped, "scheduler should have stopped after context cancel")
+	assert.Len(t, parser.ListCalls(), 1)
+}
+
+func TestScheduler_DoUpdatesModeParseError(t *testing.T) {
+	// test that scheduler exits on parse errors even with UpdatesEnabled=true
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	started := false
+
+	cr := &mocks.CronMock{
+		EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+		RemoveFunc:  func(id cron.EntryID) {},
+		StartFunc:   func() { started = true },
+		StopFunc:    func() context.Context { return ctx },
+	}
+
+	resmr := &mocks.ResumerMock{ListFunc: func() []resumer.Cmd { return nil }}
+
+	// parser that returns parse error (not os.ErrNotExist)
+	parser := &mocks.CrontabParserMock{
+		ListFunc: func() ([]crontab.JobSpec, error) {
+			return nil, errors.New("failed to parse YAML: invalid syntax")
+		},
+		StringFunc: func() string {
+			return "test-invalid"
+		},
+		ChangesFunc: func(ctx context.Context) (<-chan []crontab.JobSpec, error) {
+			ch := make(chan []crontab.JobSpec)
+			go func() {
+				<-ctx.Done()
+				close(ch)
+			}()
+			return ch, nil
+		},
+	}
+
+	svc := Scheduler{
+		Cron:           cr,
+		Resumer:        resmr,
+		CrontabParser:  parser,
+		UpdatesEnabled: true, // updates enabled, but error is not os.ErrNotExist
+	}
+
+	done := make(chan struct{})
+	go func() {
+		svc.Do(ctx)
+		close(done)
+	}()
+
+	// should exit quickly because error is not os.ErrNotExist
+	select {
+	case <-done:
+		// success - Do() returned on parse error
+	case <-time.After(time.Millisecond * 100):
+		t.Fatal("scheduler should have exited on parse error even with UpdatesEnabled=true")
+	}
+
+	assert.False(t, started, "scheduler should not have started cron when parse failed")
+	assert.Len(t, parser.ListCalls(), 1)
+}
+
+func TestScheduler_DoNoUpdatesModeExits(t *testing.T) {
+	// test that scheduler exits immediately with UpdatesEnabled=false when crontab load fails
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	started := false
+
+	cr := &mocks.CronMock{
+		EntriesFunc: func() []cron.Entry { return []cron.Entry{} },
+		RemoveFunc:  func(id cron.EntryID) {},
+		StartFunc:   func() { started = true },
+		StopFunc:    func() context.Context { return ctx },
+	}
+
+	resmr := &mocks.ResumerMock{ListFunc: func() []resumer.Cmd { return nil }}
+
+	// parser that returns error (simulates missing/empty file)
+	parser := &mocks.CrontabParserMock{
+		ListFunc: func() ([]crontab.JobSpec, error) {
+			return nil, errors.New("file not found")
+		},
+		StringFunc: func() string {
+			return "test-missing"
+		},
+	}
+
+	svc := Scheduler{
+		Cron:           cr,
+		Resumer:        resmr,
+		CrontabParser:  parser,
+		UpdatesEnabled: false, // key: updates disabled
+	}
+
+	done := make(chan struct{})
+	go func() {
+		svc.Do(ctx)
+		close(done)
+	}()
+
+	// should exit quickly without starting cron
+	select {
+	case <-done:
+		// success - Do() returned
+	case <-time.After(time.Millisecond * 100):
+		t.Fatal("scheduler should have exited immediately on load error with UpdatesEnabled=false")
+	}
+
+	assert.False(t, started, "scheduler should not have started cron when load failed")
+	assert.Len(t, parser.ListCalls(), 1)
 }
 
 func TestScheduler_execute(t *testing.T) {

@@ -220,6 +220,7 @@ Job events update memory immediately via `JobEventHandler`, but persist only whe
 - Inline comment support in crontab lines
 - Per-job repeater configuration overrides global settings
 - Conditional execution via `conditions` field (YAML only)
+- Empty file handling: empty files, whitespace-only files, and `jobs: []` return empty list without error (enables zero-jobs update mode)
 
 ## Testing Architecture Critical Patterns
 

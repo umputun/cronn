@@ -155,6 +155,7 @@ func (s *Scheduler) Do(ctx context.Context) {
 		go s.listenForManualTriggers(ctx)
 	}
 
+	fileMissing := false
 	if err := s.loadFromFileParser(ctx); err != nil {
 		// only tolerate missing file errors when updates are enabled
 		// other errors (permission, parse, validation) should still abort
@@ -163,6 +164,12 @@ func (s *Scheduler) Do(ctx context.Context) {
 			return
 		}
 		log.Printf("[INFO] crontab file doesn't exist yet, running with zero jobs, waiting for updates")
+		fileMissing = true
+	}
+
+	// log only when file exists but has zero jobs (not when file doesn't exist)
+	if !fileMissing && s.UpdatesEnabled && len(s.Entries()) == 0 {
+		log.Printf("[INFO] no jobs scheduled, waiting for crontab updates")
 	}
 	s.Start()
 	<-ctx.Done()

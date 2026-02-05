@@ -120,6 +120,69 @@ func TestParser_ListYAMLEmptyFields(t *testing.T) {
 	assert.Contains(t, err.Error(), "command is required")
 }
 
+func TestParser_ListYAMLEmptyFile(t *testing.T) {
+	t.Run("empty file", func(t *testing.T) {
+		tmp, err := os.CreateTemp("", "crontab*.yml")
+		require.NoError(t, err)
+		defer os.Remove(tmp.Name())
+		defer tmp.Close()
+
+		// empty file should return empty list without error
+		ctab := New(tmp.Name(), time.Hour, nil)
+		jobs, err := ctab.List()
+		require.NoError(t, err)
+		assert.Empty(t, jobs)
+	})
+
+	t.Run("whitespace only", func(t *testing.T) {
+		tmp, err := os.CreateTemp("", "crontab*.yml")
+		require.NoError(t, err)
+		defer os.Remove(tmp.Name())
+		defer tmp.Close()
+
+		_, err = tmp.WriteString("   \n\t\n  ")
+		require.NoError(t, err)
+		require.NoError(t, tmp.Sync())
+
+		ctab := New(tmp.Name(), time.Hour, nil)
+		jobs, err := ctab.List()
+		require.NoError(t, err)
+		assert.Empty(t, jobs)
+	})
+
+	t.Run("jobs header only", func(t *testing.T) {
+		tmp, err := os.CreateTemp("", "crontab*.yml")
+		require.NoError(t, err)
+		defer os.Remove(tmp.Name())
+		defer tmp.Close()
+
+		_, err = tmp.WriteString("jobs:\n")
+		require.NoError(t, err)
+		require.NoError(t, tmp.Sync())
+
+		ctab := New(tmp.Name(), time.Hour, nil)
+		jobs, err := ctab.List()
+		require.NoError(t, err)
+		assert.Empty(t, jobs)
+	})
+
+	t.Run("jobs empty array", func(t *testing.T) {
+		tmp, err := os.CreateTemp("", "crontab*.yml")
+		require.NoError(t, err)
+		defer os.Remove(tmp.Name())
+		defer tmp.Close()
+
+		_, err = tmp.WriteString("jobs: []\n")
+		require.NoError(t, err)
+		require.NoError(t, tmp.Sync())
+
+		ctab := New(tmp.Name(), time.Hour, nil)
+		jobs, err := ctab.List()
+		require.NoError(t, err)
+		assert.Empty(t, jobs)
+	})
+}
+
 func TestParser_ListYAMLSched(t *testing.T) {
 	ctab := New("testfiles/crontab-sched.yml", time.Hour, nil)
 	jobs, err := ctab.List()

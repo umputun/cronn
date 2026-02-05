@@ -945,7 +945,7 @@ func TestScheduler_DoWithReload(t *testing.T) {
 	svc.Do(ctx)
 
 	assert.Len(t, resmr.ListCalls(), 1)
-	assert.Len(t, cr.EntriesCalls(), 2)
+	assert.Len(t, cr.EntriesCalls(), 3) // initial load + zero jobs check + reload
 	assert.Len(t, cr.RemoveCalls(), 6)
 	assert.Len(t, cr.StartCalls(), 1)
 	assert.Len(t, cr.StopCalls(), 1)

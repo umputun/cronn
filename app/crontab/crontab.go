@@ -5,6 +5,7 @@ package crontab
 //go:generate go run internal/schema/main.go schema.json
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -105,12 +106,23 @@ func (p Parser) List() (result []JobSpec, err error) {
 
 // parseYAML parses YAML configuration
 func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
+	// handle empty file gracefully - return empty list without error
+	if len(bytes.TrimSpace(data)) == 0 {
+		return []JobSpec{}, nil
+	}
+
 	var config YamlConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	// validate configuration
+	// allow empty jobs list (for update mode with initially empty file)
+	// skip schema validation for empty jobs - validation requires minItems=1
+	if len(config.Jobs) == 0 {
+		return []JobSpec{}, nil
+	}
+
+	// validate configuration only when jobs are present
 	if err := VerifyAgainstEmbeddedSchema(&config); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}

@@ -170,22 +170,25 @@ func (p Parser) String() string {
 // it will get parsed and the full list of jobs will be sent to the channel. Update checked periodically
 // and postponed for short time to prevent changes on every small intermediate save.
 // In addition it also performs forced reload on hupCh event.
+// The method tolerates missing files - if file doesn't exist initially, it will wait for creation.
 func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 	ch := make(chan []JobSpec)
 
-	// get modification time of crontab file
-	mtime := func() (time.Time, error) {
+	// get modification time of crontab file, returns (time, exists)
+	mtime := func() (time.Time, bool) {
 		st, err := os.Stat(p.file)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("can't load cron file %s: %w", p.file, err)
+			if !os.IsNotExist(err) {
+				log.Printf("[WARN] can't stat crontab file %s: %v", p.file, err)
+			}
+			return time.Time{}, false
 		}
-		return st.ModTime(), nil
+		return st.ModTime(), true
 	}
 
-	lastMtime, err := mtime()
-	if err != nil {
-		// need file available to start change watcher
-		return nil, err
+	lastMtime, exists := mtime()
+	if !exists {
+		log.Printf("[INFO] crontab file %s doesn't exist yet, waiting for creation", p.file)
 	}
 
 	ticker := time.NewTicker(p.updInterval)
@@ -205,9 +208,9 @@ func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 				}
 				ch <- jobs
 			case <-ticker.C: // react on changes every X seconds
-				m, err := mtime()
-				if err != nil {
-					log.Printf("[WARN] can't get info about %s, %v", p.file, err)
+				m, fileExists := mtime()
+				if !fileExists {
+					// file doesn't exist yet, skip this iteration
 					continue
 				}
 				secsSinceChange := time.Now().Second() - m.Second()

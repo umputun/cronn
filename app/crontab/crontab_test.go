@@ -397,6 +397,58 @@ func TestParseYAMLWithRepeater(t *testing.T) {
 	assert.Nil(t, jobs[2].Repeater)
 }
 
+func TestParser_ChangesMinuteBoundaryCrossing(t *testing.T) {
+	// this test verifies that Parser.Changes detects file modifications correctly
+	// even when the modification time crosses a minute boundary from now.
+	// the previous bug used time.Now().Second() - m.Second() which fails across boundaries.
+
+	tmp, err := os.CreateTemp("", "crontab-boundary")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, tmp.Close())
+		require.NoError(t, os.Remove(tmp.Name()))
+	}()
+
+	// write initial content
+	_, err = tmp.WriteString("1 * * * * ls\n")
+	require.NoError(t, err)
+	require.NoError(t, tmp.Sync())
+
+	// set modification time to 65 seconds ago (crosses minute boundary)
+	// this simulates the bug scenario where Second() arithmetic fails
+	oldMtime := time.Now().Add(-65 * time.Second)
+	require.NoError(t, os.Chtimes(tmp.Name(), oldMtime, oldMtime))
+
+	// use short update interval to trigger check quickly
+	ctab := New(tmp.Name(), time.Millisecond*100, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+
+	ch, err := ctab.Changes(ctx)
+	require.NoError(t, err)
+
+	// modify file and update mtime to now (simulating external file update)
+	time.AfterFunc(time.Millisecond*200, func() {
+		f, e := os.OpenFile(tmp.Name(), os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test file
+		if e != nil {
+			return
+		}
+		_, _ = f.WriteString("2 * * * * echo test\n")
+		_ = f.Close()
+	})
+
+	// should receive update - this would fail with old bug if mtime crossed minute boundary
+	select {
+	case jobs := <-ch:
+		require.Len(t, jobs, 2)
+		assert.Equal(t, "1 * * * *", jobs[0].Spec)
+		assert.Equal(t, "2 * * * *", jobs[1].Spec)
+	case <-ctx.Done():
+		t.Fatal("timeout: Changes did not detect file modification across minute boundary")
+	}
+}
+
 func TestParseYAMLWithConditions(t *testing.T) {
 	p := New("testfiles/crontab-conditions.yml", time.Hour, nil)
 	jobs, err := p.List()

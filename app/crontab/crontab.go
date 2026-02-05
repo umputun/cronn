@@ -225,7 +225,7 @@ func (p Parser) Changes(ctx context.Context) (<-chan []JobSpec, error) {
 					// file doesn't exist yet, skip this iteration
 					continue
 				}
-				secsSinceChange := time.Now().Second() - m.Second()
+				secsSinceChange := int(time.Since(m).Seconds())
 				secsThreshold := int(p.updInterval.Seconds() / 2)
 				if m != lastMtime && secsSinceChange >= secsThreshold {
 					// change should be at least X/2 secs old to prevent changes on every small intermediate save

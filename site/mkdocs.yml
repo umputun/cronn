@@ -1,21 +1,24 @@
-site_name: Cronn
-site_url: https://cronn.umputun.dev/
+site_name: Cronn Documentation
+site_url: https://cronn.umputun.dev/docs/
 site_author: Umputun
 site_description: >-
-  cron service with extras
+  Modern cron scheduler with web dashboard
+
+docs_dir: docs-src
+site_dir: site/docs
 
 repo_name: umputun/cronn
 repo_url: https://github.com/umputun/cronn
-copyright: Some rights reserved &copy; 2021 - 2022 Umputun
+copyright: Some rights reserved &copy; 2021 - 2026 Umputun
 
 theme:
   name: material
-  favicon: favicon.png
+  favicon: ../favicon.png
   language: en
   palette:
     - scheme: slate
       media: "(prefers-color-scheme: dark)"
-      primary: red
+      primary: blue
   features:
     - navigation.instant
     - toc.follow
@@ -81,4 +84,4 @@ markdown_extensions:
   - pymdownx.tilde
 
 nav:
-  - CRONN: index.md
+  - Documentation: index.md

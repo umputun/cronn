@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cronn - cron scheduler with web dashboard</title>
+    <meta name="description" content="Modern cron replacement with web dashboard, YAML config, conditional execution, and notifications. Single binary, embedded SQLite.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://cronn.umputun.dev/">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="cronn - cron scheduler with web dashboard">
+    <meta property="og:description" content="Modern cron replacement with web dashboard, YAML config, conditional execution, and notifications.">
+    <meta property="og:url" content="https://cronn.umputun.dev/">
+    <meta property="og:image" content="https://cronn.umputun.dev/logo.png">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="cronn - cron scheduler with web dashboard">
+    <meta name="twitter:description" content="Modern cron replacement with web dashboard.">
+
+    <link rel="icon" type="image/png" href="favicon.png">
+
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "cronn",
+        "description": "Modern cron replacement with web dashboard, YAML config, conditional execution, and notifications.",
+        "url": "https://cronn.umputun.dev",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Linux, Windows",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": { "@type": "Person", "name": "Umputun", "url": "https://github.com/umputun" }
+    }
+    </script>
+
+
+    <style>
+        :root {
+            /* Match cronn dashboard dark theme */
+            --bg: #1a1a1a;
+            --bg-elevated: #2a2a2a;
+            --bg-surface: #333333;
+            --border: #404040;
+            --border-subtle: #353535;
+            --text: #e0e0e0;
+            --text-secondary: #b0b0b0;
+            --text-muted: #888888;
+            --accent: #70a0ff;
+            --accent-hover: #5080ff;
+            --green: #4ade80;
+            --red: #f87171;
+            --amber: #fbbf24;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+        code, .mono {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+        }
+
+        /* Layout */
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header - simple utility bar */
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: 12px 0;
+        }
+
+        header .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .logo img {
+            height: 28px;
+        }
+
+        .header-links {
+            display: flex;
+            gap: 24px;
+            font-size: 15px;
+        }
+
+        .header-links a {
+            color: var(--text-secondary);
+        }
+
+        .header-links a:hover {
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        /* Hero - compact, information-dense */
+        .hero {
+            padding: 48px 0 40px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 48px;
+            align-items: start;
+        }
+
+        @media (max-width: 768px) {
+            .hero-grid { grid-template-columns: 1fr; gap: 32px; }
+        }
+
+        .hero h1 {
+            font-size: 36px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 16px;
+            line-height: 1.2;
+        }
+
+        .hero-desc {
+            color: var(--text-secondary);
+            font-size: 17px;
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+
+        .hero-install {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 14px 18px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .hero-install .prompt {
+            color: var(--text-muted);
+            user-select: none;
+        }
+
+        .hero-links {
+            display: flex;
+            gap: 20px;
+            font-size: 15px;
+        }
+
+        /* Quick example */
+        .example-box {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .example-header {
+            background: var(--bg-elevated);
+            padding: 8px 12px;
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .example-body {
+            padding: 16px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        .example-body .comment { color: var(--text-muted); }
+        .example-body .key { color: #7dd3fc; }
+        .example-body .string { color: #7ee787; }
+        .example-body .number { color: #ffa657; }
+
+        /* Features - dense table-like layout */
+        .features {
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .features h2 {
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        @media (max-width: 768px) {
+            .feature-list { grid-template-columns: 1fr; }
+        }
+
+        .feature-item {
+            background: var(--bg-elevated);
+            padding: 16px;
+        }
+
+        .feature-item h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .feature-item p {
+            font-size: 14px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        /* Config comparison */
+        .config-section {
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .config-section h2 {
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            align-items: start;
+        }
+
+        @media (max-width: 768px) {
+            .config-grid { grid-template-columns: 1fr; }
+        }
+
+        .config-box {
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .config-box-header {
+            background: var(--bg-elevated);
+            padding: 10px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .config-box pre {
+            padding: 14px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            overflow-x: auto;
+            background: var(--bg-surface);
+        }
+
+        .config-box .yaml-key { color: #7dd3fc; }
+        .config-box .yaml-string { color: #7ee787; }
+        .config-box .yaml-comment { color: var(--text-muted); }
+
+        /* Dashboard preview */
+        .dashboard-section {
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .dashboard-section h2 {
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .dashboard-section > p {
+            color: var(--text-secondary);
+            font-size: 15px;
+            margin-bottom: 20px;
+        }
+
+        .dashboard-preview {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        .dashboard-preview.single {
+            grid-template-columns: 1fr;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-preview { grid-template-columns: 1fr; }
+        }
+
+        .dashboard-preview figure {
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .dashboard-preview img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .dashboard-preview figcaption {
+            padding: 10px 14px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            background: var(--bg-elevated);
+            border-top: 1px solid var(--border);
+        }
+
+        /* Install options */
+        .install-section {
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .install-section h2 {
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        .install-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        @media (max-width: 768px) {
+            .install-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .install-item {
+            background: var(--bg-elevated);
+            padding: 16px;
+        }
+
+        .install-item h3 {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .install-item code {
+            display: block;
+            font-size: 13px;
+            color: var(--text);
+            word-break: break-all;
+        }
+
+        /* Comparison table */
+        .comparison {
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison h2 {
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 14px;
+            overflow: hidden;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 12px 14px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-table th {
+            background: var(--bg-elevated);
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .comparison-table td {
+            background: var(--bg-surface);
+        }
+
+        .comparison-table td:first-child {
+            font-weight: 500;
+        }
+
+        .yes { color: var(--green); }
+        .no { color: var(--text-muted); }
+
+        /* Footer */
+        footer {
+            padding: 24px 0;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        footer .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        @media (max-width: 640px) {
+            footer .container {
+                flex-direction: column;
+                gap: 12px;
+                text-align: center;
+            }
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 16px;
+        }
+
+        .footer-links a {
+            color: var(--text-muted);
+        }
+
+        .footer-links a:hover {
+            color: var(--text);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <a href="/" class="logo">
+                <img src="icon.png" alt="">
+                <span class="mono">cronn</span>
+            </a>
+            <nav class="header-links">
+                <a href="docs/">Documentation</a>
+                <a href="https://github.com/umputun/cronn">GitHub</a>
+                <a href="https://github.com/umputun/cronn/releases">Releases</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <div class="hero-grid">
+                    <div>
+                        <h1>Cron scheduler with<br>web dashboard</h1>
+                        <p class="hero-desc">
+                            Single binary, zero dependencies. YAML or crontab format, conditional execution,
+                            auto-retry, notifications. No silent failures, no scattered logs.
+                        </p>
+                        <div class="hero-install">
+                            <span class="prompt">$</span>
+                            <span>brew install umputun/apps/cronn</span>
+                        </div>
+                        <div class="hero-links">
+                            <a href="docs/">Read the docs</a>
+                            <a href="https://github.com/umputun/cronn/releases">Download binary</a>
+                            <a href="https://github.com/umputun/cronn">View source</a>
+                        </div>
+                    </div>
+                    <div class="example-box">
+                        <div class="example-header">jobs.yml</div>
+                        <div class="example-body"><span class="key">jobs:</span>
+  - <span class="key">spec:</span> <span class="string">"0 2 * * *"</span>
+    <span class="key">command:</span> <span class="string">"backup.sh"</span>
+    <span class="key">name:</span> <span class="string">"Nightly backup"</span>
+    <span class="key">conditions:</span>
+      <span class="key">cpu_below:</span> <span class="number">50</span>
+      <span class="key">disk_free_above:</span> <span class="number">20</span>
+    <span class="key">repeater:</span>
+      <span class="key">attempts:</span> <span class="number">3</span>
+      <span class="key">duration:</span> <span class="string">"10s"</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="features">
+            <div class="container">
+                <h2>Features</h2>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <h3>Web Dashboard</h3>
+                        <p>Real-time monitoring, execution history, manual triggers. Light and dark themes.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>YAML Config</h3>
+                        <p>Structured configuration with JSON schema validation. Traditional crontab also supported.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>Conditional Execution</h3>
+                        <p>Run when CPU, memory, or disk thresholds met. Custom check scripts supported.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>Auto-Retry</h3>
+                        <p>Exponential backoff with jitter. Per-job override for attempts, duration, factor.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>Notifications</h3>
+                        <p>Slack, Telegram, email, webhook on failure or completion. Custom templates.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>Date Templates</h3>
+                        <p>Business day support, EOD logic. Inject {{.YYYYMMDD}} and variants into commands.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>Hot Reload</h3>
+                        <p>Auto-detect config changes. SIGHUP support. Start with zero jobs, add later.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>Container Ready</h3>
+                        <p>Use as base image or entrypoint. Graceful shutdown, auto-resume after restart.</p>
+                    </div>
+                    <div class="feature-item">
+                        <h3>Embedded SQLite</h3>
+                        <p>Job history persisted locally. No external database required. Survives restarts.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="config-section">
+            <div class="container">
+                <h2>Configuration Formats</h2>
+                <div class="config-grid">
+                    <div class="config-box">
+                        <div class="config-box-header">jobs.yml (YAML format)</div>
+                        <pre><code><span class="yaml-key">jobs:</span>
+  - <span class="yaml-key">spec:</span> <span class="yaml-string">"0 2 * * *"</span>
+    <span class="yaml-key">command:</span> <span class="yaml-string">"backup.sh"</span>
+    <span class="yaml-key">name:</span> <span class="yaml-string">"Nightly backup"</span>
+
+  - <span class="yaml-key">spec:</span> <span class="yaml-string">"*/30 * * * *"</span>
+    <span class="yaml-key">command:</span> <span class="yaml-string">"sync.sh"</span>
+    <span class="yaml-key">conditions:</span>
+      <span class="yaml-key">cpu_below:</span> 50
+
+  - <span class="yaml-key">spec:</span> <span class="yaml-string">"@daily"</span>
+    <span class="yaml-key">command:</span> <span class="yaml-string">"cleanup.sh"</span>
+    <span class="yaml-key">repeater:</span>
+      <span class="yaml-key">attempts:</span> 3</code></pre>
+                    </div>
+                    <div class="config-box">
+                        <div class="config-box-header">crontab (traditional format)</div>
+                        <pre><code><span class="yaml-comment"># Standard 5-field format</span>
+0 2 * * * backup.sh
+*/30 * * * * sync.sh
+0 * * * * health-check.sh
+
+<span class="yaml-comment"># @descriptors</span>
+@daily cleanup-logs.sh
+@every 5m ping-api.sh
+@midnight db-maintenance.sh
+@reboot startup-tasks.sh
+
+<span class="yaml-comment"># With date templates</span>
+0 18 * * 1-5 report.sh {{.YYYYMMDD}}
+0 9 * * * backup.sh {{.WYYYYMMDD}}</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="dashboard-section">
+            <div class="container">
+                <h2>Web Dashboard</h2>
+                <p>Enable with <code class="mono">--web.enabled</code>. Supports authentication, reverse proxy, multiple views.</p>
+                <div class="dashboard-preview single">
+                    <figure>
+                        <img src="screenshots/dashboard-dark-desktop.png" alt="Web dashboard">
+                        <figcaption>Job monitoring with execution history</figcaption>
+                    </figure>
+                </div>
+            </div>
+        </section>
+
+        <section class="comparison">
+            <div class="container">
+                <h2>vs. Traditional Cron</h2>
+                <table class="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Feature</th>
+                            <th>cronn</th>
+                            <th>system cron</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Web dashboard</td>
+                            <td class="yes">Yes</td>
+                            <td class="no">No</td>
+                        </tr>
+                        <tr>
+                            <td>Execution history</td>
+                            <td class="yes">SQLite persistence</td>
+                            <td class="no">Logs only</td>
+                        </tr>
+                        <tr>
+                            <td>Conditional execution</td>
+                            <td class="yes">CPU/memory/disk/custom</td>
+                            <td class="no">No</td>
+                        </tr>
+                        <tr>
+                            <td>Auto-retry with backoff</td>
+                            <td class="yes">Configurable per job</td>
+                            <td class="no">No</td>
+                        </tr>
+                        <tr>
+                            <td>Notifications</td>
+                            <td class="yes">Slack/Telegram/email/webhook</td>
+                            <td class="no">Email (basic)</td>
+                        </tr>
+                        <tr>
+                            <td>Config hot reload</td>
+                            <td class="yes">Auto + SIGHUP</td>
+                            <td class="no">Service restart</td>
+                        </tr>
+                        <tr>
+                            <td>Graceful shutdown</td>
+                            <td class="yes">Waits for jobs</td>
+                            <td class="no">Kills jobs</td>
+                        </tr>
+                        <tr>
+                            <td>Container-friendly</td>
+                            <td class="yes">Auto-resume, single process</td>
+                            <td class="no">Multiple daemons</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="install-section">
+            <div class="container">
+                <h2>Install</h2>
+                <div class="install-grid">
+                    <div class="install-item">
+                        <h3>Homebrew</h3>
+                        <code>brew install umputun/apps/cronn</code>
+                    </div>
+                    <div class="install-item">
+                        <h3>Docker</h3>
+                        <code>ghcr.io/umputun/cronn</code>
+                    </div>
+                    <div class="install-item">
+                        <h3>Debian/Ubuntu</h3>
+                        <code>.deb from releases</code>
+                    </div>
+                    <div class="install-item">
+                        <h3>RHEL/CentOS</h3>
+                        <code>.rpm from releases</code>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <span>MIT License</span>
+            <nav class="footer-links">
+                <a href="https://github.com/umputun/cronn">GitHub</a>
+                <a href="docs/">Documentation</a>
+                <a href="https://github.com/umputun/cronn/releases">Releases</a>
+            </nav>
+        </div>
+    </footer>
+</body>
+</html>

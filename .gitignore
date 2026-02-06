@@ -19,6 +19,8 @@ dist/
 .idea/
 site/docs/index.md
 site/site/
+site/.venv/
+site/docs-src/
 cronn
 
 # Database files

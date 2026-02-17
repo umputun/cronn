@@ -1,2 +1,2 @@
 # fish completion for cronn (generated via go-flags)
-complete -c cronn -a '(GO_FLAGS_COMPLETION=1 cronn (commandline -cop) 2>/dev/null)'
+complete -c cronn -a '(GO_FLAGS_COMPLETION=verbose cronn (commandline -cop) 2>/dev/null | string replace -r "\\s+# " "\t")'

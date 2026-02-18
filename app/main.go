@@ -104,7 +104,9 @@ var opts struct {
 var revision = "unknown"
 
 func main() {
-	fmt.Printf("cronn %s\n", revision)
+	if os.Getenv("GO_FLAGS_COMPLETION") == "" {
+		fmt.Printf("cronn %s\n", revision)
+	}
 
 	p := flags.NewParser(&opts, flags.PassDoubleDash|flags.HelpFlag)
 	if _, err := p.Parse(); err != nil {

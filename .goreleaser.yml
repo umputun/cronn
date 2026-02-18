@@ -42,6 +42,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - completions/*
     rlcp: true
 
 brews:
@@ -58,6 +59,10 @@ brews:
     homepage: "https://cronn.umputun.dev"
     description: "Cronn is a crontab jobs scheduler with some nice extras. It allows to run commands on specified time intervals and can be used directly as well as from a container."
     license: "MIT"
+    extra_install: |
+      bash_completion.install "completions/cronn.bash" => "cronn"
+      zsh_completion.install "completions/cronn.zsh" => "_cronn"
+      fish_completion.install "completions/cronn.fish" => "cronn.fish"
 
 nfpms:
   - id: cronn
@@ -80,6 +85,12 @@ nfpms:
         dst: /etc/systemd/system/cronn.service
       - src: crontab.example
         dst: /etc/cronntab
+      - src: completions/cronn.bash
+        dst: /usr/share/bash-completion/completions/cronn
+      - src: completions/cronn.zsh
+        dst: /usr/share/zsh/vendor-completions/_cronn
+      - src: completions/cronn.fish
+        dst: /usr/share/fish/vendor_completions.d/cronn.fish
     scripts:
       postinstall: "scripts/postinstall.sh"
       preremove: "scripts/preremove.sh"

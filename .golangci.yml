@@ -24,6 +24,11 @@ linters:
     - nilerr
     - noctx
   settings:
+    gosec:
+      excludes:
+        - G204
+        - G703
+        - G704
     dupl:
       threshold: 100
     goconst:

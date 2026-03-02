@@ -161,33 +161,41 @@ jobs:
       - name: create ghcr.io manifest and push (master)
         if: ${{ github.event.workflow_run.head_branch == 'master' }}
         working-directory: /tmp/digests/ghcr
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/${{ github.actor }}/cronn:${{ steps.ref.outputs.ref }} \
+            -t ghcr.io/${{ github.actor }}/cronn:${REF} \
             $(printf 'ghcr.io/${{ github.actor }}/cronn@sha256:%s ' *)
 
       - name: create dockerhub manifest and push (master)
         if: ${{ github.event.workflow_run.head_branch == 'master' }}
         working-directory: /tmp/digests/dockerhub
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
         run: |
           docker buildx imagetools create \
-            -t ${{ github.actor }}/cronn:${{ steps.ref.outputs.ref }} \
+            -t ${{ github.actor }}/cronn:${REF} \
             $(printf '${{ github.actor }}/cronn@sha256:%s ' *)
 
       - name: create ghcr.io manifest and push (tag)
         if: ${{ startsWith(github.event.workflow_run.head_branch, 'v') }}
         working-directory: /tmp/digests/ghcr
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/${{ github.actor }}/cronn:${{ steps.ref.outputs.ref }} \
+            -t ghcr.io/${{ github.actor }}/cronn:${REF} \
             -t ghcr.io/${{ github.actor }}/cronn:latest \
             $(printf 'ghcr.io/${{ github.actor }}/cronn@sha256:%s ' *)
 
       - name: create dockerhub manifest and push (tag)
         if: ${{ startsWith(github.event.workflow_run.head_branch, 'v') }}
         working-directory: /tmp/digests/dockerhub
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
         run: |
           docker buildx imagetools create \
-            -t ${{ github.actor }}/cronn:${{ steps.ref.outputs.ref }} \
+            -t ${{ github.actor }}/cronn:${REF} \
             -t ${{ github.actor }}/cronn:latest \
             $(printf '${{ github.actor }}/cronn@sha256:%s ' *)

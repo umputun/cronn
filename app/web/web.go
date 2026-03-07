@@ -296,7 +296,7 @@ func (s *Server) Run(ctx context.Context, address string) error {
 		IdleTimeout:       30 * time.Second,
 	}
 
-	go func() {
+	go func() { //nolint:gosec // context.Background is intentional here — ctx is already canceled, shutdown needs a fresh context
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

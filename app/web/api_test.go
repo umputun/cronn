@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -53,7 +54,7 @@ func TestHandleAPIStatus(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	t.Run("returns valid json with jobs and stats", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/status", http.NoBody)
 		w := httptest.NewRecorder()
 
 		server.handleAPIStatus(w, req)
@@ -111,7 +112,7 @@ func TestHandleAPIStatus(t *testing.T) {
 		require.NoError(t, err)
 		defer emptyServer.store.Close()
 
-		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/status", http.NoBody)
 		w := httptest.NewRecorder()
 
 		emptyServer.handleAPIStatus(w, req)
@@ -164,7 +165,7 @@ func TestHandleAPIJobHistory(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		req := httptest.NewRequest("GET", "/api/v1/jobs/test-job-id/history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/test-job-id/history", http.NoBody)
 		req.SetPathValue("id", "test-job-id")
 		w := httptest.NewRecorder()
 
@@ -198,7 +199,7 @@ func TestHandleAPIJobHistory(t *testing.T) {
 	})
 
 	t.Run("job not found returns 404", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/jobs/nonexistent/history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/nonexistent/history", http.NoBody)
 		req.SetPathValue("id", "nonexistent")
 		w := httptest.NewRecorder()
 
@@ -227,7 +228,7 @@ func TestHandleAPIJobHistory(t *testing.T) {
 		server.jobs[emptyJob.ID] = emptyJob
 		server.jobsMu.Unlock()
 
-		req := httptest.NewRequest("GET", "/api/v1/jobs/empty-job-id/history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/empty-job-id/history", http.NoBody)
 		req.SetPathValue("id", "empty-job-id")
 		w := httptest.NewRecorder()
 
@@ -246,7 +247,7 @@ func TestHandleAPIJobHistory(t *testing.T) {
 	})
 
 	t.Run("missing job id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/jobs//history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs//history", http.NoBody)
 		// note: not setting path value simulates empty job ID
 		w := httptest.NewRecorder()
 
@@ -307,7 +308,7 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 	execID := executions[0].ID
 
 	t.Run("success case with output", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/jobs/"+jobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/"+jobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
 		req.SetPathValue("id", jobID)
 		req.SetPathValue("exec_id", fmt.Sprint(execID))
 		w := httptest.NewRecorder()
@@ -333,7 +334,7 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 	})
 
 	t.Run("execution not found returns 404", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/jobs/"+jobID+"/executions/99999/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/"+jobID+"/executions/99999/logs", http.NoBody)
 		req.SetPathValue("id", jobID)
 		req.SetPathValue("exec_id", "99999")
 		w := httptest.NewRecorder()
@@ -352,7 +353,7 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 	t.Run("job ID mismatch returns 404", func(t *testing.T) {
 		wrongJobID := HashCommand("echo wrong")
 
-		req := httptest.NewRequest("GET", "/api/v1/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
 		req.SetPathValue("id", wrongJobID)
 		req.SetPathValue("exec_id", fmt.Sprint(execID))
 		w := httptest.NewRecorder()
@@ -369,7 +370,7 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 	})
 
 	t.Run("missing job id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/jobs//executions/1/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs//executions/1/logs", http.NoBody)
 		req.SetPathValue("exec_id", "1")
 		w := httptest.NewRecorder()
 
@@ -385,7 +386,7 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 	})
 
 	t.Run("missing execution id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/jobs/"+jobID+"/executions//logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/"+jobID+"/executions//logs", http.NoBody)
 		req.SetPathValue("id", jobID)
 		w := httptest.NewRecorder()
 
@@ -401,7 +402,7 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 	})
 
 	t.Run("invalid execution id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/jobs/"+jobID+"/executions/invalid/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/jobs/"+jobID+"/executions/invalid/logs", http.NoBody)
 		req.SetPathValue("id", jobID)
 		req.SetPathValue("exec_id", "invalid")
 		w := httptest.NewRecorder()

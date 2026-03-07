@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -51,7 +52,7 @@ func TestServer_handleSortModeChange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/sort-mode", strings.NewReader("sort="+tt.formValue))
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/sort-mode", strings.NewReader("sort="+tt.formValue))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
 
@@ -131,7 +132,7 @@ func TestServer_handleViewModeToggle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/view-mode", http.NoBody)
 			if tt.currentCookie != "" {
 				req.AddCookie(&http.Cookie{Name: "view-mode", Value: tt.currentCookie})
 			}
@@ -170,7 +171,7 @@ func TestServer_handleViewModeToggle(t *testing.T) {
 			server.templates["partials/jobs.html"] = originalTemplate
 		}()
 
-		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/view-mode", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		server.handleViewModeToggle(rec, req)
@@ -188,7 +189,7 @@ func TestServer_handleViewModeToggle(t *testing.T) {
 			server.templates["partials/jobs.html"] = originalTemplate
 		}()
 
-		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/view-mode", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		server.handleViewModeToggle(rec, req)
@@ -226,7 +227,7 @@ func TestServer_handleDashboard(t *testing.T) {
 		return exists
 	}, time.Second, 10*time.Millisecond)
 
-	req := httptest.NewRequest("GET", "/", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 	w := httptest.NewRecorder()
 
 	server.handleDashboard(w, req)
@@ -273,7 +274,7 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	// test card view
-	req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 	w := httptest.NewRecorder()
 
@@ -290,7 +291,7 @@ func TestServer_handleAPIJobs(t *testing.T) {
 	assert.Contains(t, body, "view-toggle")
 
 	// test list view
-	req = httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+	req = httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "list"})
 	w = httptest.NewRecorder()
 
@@ -342,7 +343,7 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	// test search for "backup"
-	req := httptest.NewRequest("GET", "/api/jobs?search=backup", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs?search=backup", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 	w := httptest.NewRecorder()
 
@@ -357,7 +358,7 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 	assert.NotContains(t, body, "cleanup logs")
 
 	// test case-insensitive search
-	req = httptest.NewRequest("GET", "/api/jobs?search=BACKUP", http.NoBody)
+	req = httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs?search=BACKUP", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 	w = httptest.NewRecorder()
 
@@ -372,7 +373,7 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 	assert.NotContains(t, body, "cleanup logs")
 
 	// test search for "python"
-	req = httptest.NewRequest("GET", "/api/jobs?search=python", http.NoBody)
+	req = httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs?search=python", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 	w = httptest.NewRecorder()
 
@@ -387,7 +388,7 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 	assert.NotContains(t, body, "cleanup logs")
 
 	// test empty search returns all jobs
-	req = httptest.NewRequest("GET", "/api/jobs?search=", http.NoBody)
+	req = httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs?search=", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 	w = httptest.NewRecorder()
 
@@ -402,7 +403,7 @@ func TestServer_handleAPIJobs_Search(t *testing.T) {
 	assert.Contains(t, body, "backup.py")
 
 	// test search with no matches
-	req = httptest.NewRequest("GET", "/api/jobs?search=nonexistent", http.NoBody)
+	req = httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs?search=nonexistent", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 	w = httptest.NewRecorder()
 
@@ -444,7 +445,7 @@ func TestServer_handleToggleTheme(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/toggle-theme", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/toggle-theme", http.NoBody)
 			if tt.current != "" {
 				req.AddCookie(&http.Cookie{Name: "theme", Value: tt.current})
 			}
@@ -490,7 +491,7 @@ func TestServer_handleToggleView(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/toggle-view", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/toggle-view", http.NoBody)
 			if tt.current != "" {
 				req.AddCookie(&http.Cookie{Name: "view-mode", Value: tt.current})
 			}
@@ -556,7 +557,7 @@ func TestServer_handleSortToggle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/sort-toggle", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/sort-toggle", http.NoBody)
 			if tt.currentCookie != "" {
 				req.AddCookie(&http.Cookie{Name: "sort-mode", Value: tt.currentCookie})
 			}
@@ -629,7 +630,7 @@ func TestServer_handleFilterToggle(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(fmt.Sprintf("%s_to_%s", tc.currentMode, tc.expectedNext), func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/filter-toggle", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/filter-toggle", http.NoBody)
 			if tc.currentMode != "all" {
 				req.AddCookie(&http.Cookie{
 					Name:  "filter-mode",
@@ -657,7 +658,7 @@ func TestServer_handleFilterToggle(t *testing.T) {
 	}
 
 	t.Run("stats template error", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/filter-toggle", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/filter-toggle", http.NoBody)
 		w := httptest.NewRecorder()
 
 		// create a template without stats-updates to trigger error
@@ -793,7 +794,7 @@ func TestServer_handleRunJob(t *testing.T) {
 	server.jobsMu.Unlock()
 
 	t.Run("successful manual trigger", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", http.NoBody)
 		req.SetPathValue("id", "test-job-id")
 		w := httptest.NewRecorder()
 
@@ -816,7 +817,7 @@ func TestServer_handleRunJob(t *testing.T) {
 	})
 
 	t.Run("job not found", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/nonexistent/run", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/nonexistent/run", http.NoBody)
 		req.SetPathValue("id", "nonexistent")
 		w := httptest.NewRecorder()
 
@@ -839,7 +840,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		server.jobs[disabledJob.ID] = disabledJob
 		server.jobsMu.Unlock()
 
-		req := httptest.NewRequest("POST", "/api/jobs/disabled-job/run", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/disabled-job/run", http.NoBody)
 		req.SetPathValue("id", "disabled-job")
 		w := httptest.NewRecorder()
 
@@ -862,7 +863,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		server.jobs[runningJob.ID] = runningJob
 		server.jobsMu.Unlock()
 
-		req := httptest.NewRequest("POST", "/api/jobs/running-job/run", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/running-job/run", http.NoBody)
 		req.SetPathValue("id", "running-job")
 		w := httptest.NewRecorder()
 
@@ -894,7 +895,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		server2.jobs[testJob.ID] = testJob
 		server2.jobsMu.Unlock()
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", http.NoBody)
 		req.SetPathValue("id", "test-job-id")
 		w := httptest.NewRecorder()
 
@@ -923,7 +924,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		server3.jobs[testJob.ID] = testJob
 		server3.jobsMu.Unlock()
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", http.NoBody)
 		req.SetPathValue("id", "test-job-id")
 		w := httptest.NewRecorder()
 
@@ -938,7 +939,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		form := url.Values{}
 		form.Add("command", "echo edited")
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
 		req.SetPathValue("id", "test-job-id")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
@@ -965,7 +966,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		form.Add("command", "echo test")
 		form.Add("date", "20241225")
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
 		req.SetPathValue("id", "test-job-id")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
@@ -1001,7 +1002,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		form.Add("command", "echo test")
 		form.Add("date", "invalid")
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
 		req.SetPathValue("id", "test-job-id")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
@@ -1032,7 +1033,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		server4.jobs[testJob.ID] = testJob
 		server4.jobsMu.Unlock()
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", http.NoBody)
 		req.SetPathValue("id", "test-job-id")
 		w := httptest.NewRecorder()
 
@@ -1066,7 +1067,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		form := url.Values{}
 		form.Add("command", "echo modified")
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
 		req.SetPathValue("id", "test-job-id")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
@@ -1101,7 +1102,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		form := url.Values{}
 		form.Add("command", "echo test")
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
 		req.SetPathValue("id", "test-job-id")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
@@ -1152,7 +1153,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		form := url.Values{}
 		form.Add("command", "echo {{.YYYYMMDD}}")
 
-		req := httptest.NewRequest("POST", "/api/jobs/templated-job/run", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/jobs/templated-job/run", strings.NewReader(form.Encode()))
 		req.SetPathValue("id", "templated-job")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
@@ -1198,7 +1199,7 @@ func TestServer_handleJobHistory(t *testing.T) {
 		err = server.store.RecordExecution(request.RecordExecution{JobID: "test-job-id", StartedAt: baseTime.Add(-2 * time.Minute), FinishedAt: baseTime.Add(-1 * time.Minute), Status: enums.JobStatusFailed, ExitCode: 1, ExecutedCommand: "echo test2", Output: ""})
 		require.NoError(t, err)
 
-		req := httptest.NewRequest("GET", "/api/jobs/test-job-id/history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs/test-job-id/history", http.NoBody)
 		req.SetPathValue("id", "test-job-id")
 		w := httptest.NewRecorder()
 
@@ -1214,7 +1215,7 @@ func TestServer_handleJobHistory(t *testing.T) {
 	})
 
 	t.Run("job not found", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/nonexistent/history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs/nonexistent/history", http.NoBody)
 		req.SetPathValue("id", "nonexistent")
 		w := httptest.NewRecorder()
 
@@ -1225,7 +1226,7 @@ func TestServer_handleJobHistory(t *testing.T) {
 	})
 
 	t.Run("empty job id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs//history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs//history", http.NoBody)
 		w := httptest.NewRecorder()
 
 		server.handleJobHistory(w, req)
@@ -1240,7 +1241,7 @@ func TestServer_handleJobHistory(t *testing.T) {
 		server.jobs[emptyJob.ID] = emptyJob
 		server.jobsMu.Unlock()
 
-		req := httptest.NewRequest("GET", "/api/jobs/empty-job-id/history", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs/empty-job-id/history", http.NoBody)
 		req.SetPathValue("id", "empty-job-id")
 		w := httptest.NewRecorder()
 
@@ -1306,7 +1307,7 @@ func TestServer_handleSettingsModal(t *testing.T) {
 	require.NoError(t, err)
 	defer server.store.Close()
 
-	req := httptest.NewRequest("GET", "/api/settings/modal", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/settings/modal", http.NoBody)
 	w := httptest.NewRecorder()
 
 	server.handleSettingsModal(w, req)
@@ -1354,7 +1355,7 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 	execID := executions[0].ID
 
 	t.Run("valid request", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs/"+jobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
 		req.SetPathValue("id", jobID)
 		req.SetPathValue("exec_id", fmt.Sprint(execID))
 		w := httptest.NewRecorder()
@@ -1369,7 +1370,7 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 	})
 
 	t.Run("missing job id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs//executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs//executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
 		req.SetPathValue("exec_id", fmt.Sprint(execID))
 		w := httptest.NewRecorder()
 
@@ -1380,7 +1381,7 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 	})
 
 	t.Run("invalid execution id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/invalid/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs/"+jobID+"/executions/invalid/logs", http.NoBody)
 		req.SetPathValue("id", jobID)
 		req.SetPathValue("exec_id", "invalid")
 		w := httptest.NewRecorder()
@@ -1392,7 +1393,7 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 	})
 
 	t.Run("non-existent execution", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/99999/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs/"+jobID+"/executions/99999/logs", http.NoBody)
 		req.SetPathValue("id", jobID)
 		req.SetPathValue("exec_id", "99999")
 		w := httptest.NewRecorder()
@@ -1405,7 +1406,7 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 
 	t.Run("execution belongs to different job", func(t *testing.T) {
 		wrongJobID := HashCommand("echo test2")
-		req := httptest.NewRequest("GET", "/api/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
 		req.SetPathValue("id", wrongJobID)
 		req.SetPathValue("exec_id", fmt.Sprint(execID))
 		w := httptest.NewRecorder()

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -36,7 +37,7 @@ func TestServer_Authentication(t *testing.T) {
 	handler := server.routes()
 
 	t.Run("without auth redirects to login", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusSeeOther, rec.Code)
@@ -44,7 +45,7 @@ func TestServer_Authentication(t *testing.T) {
 	})
 
 	t.Run("with wrong password returns 401 for API", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs", http.NoBody)
 		req.Header.Set("Accept", "application/json")
 		req.SetBasicAuth("cronn", "wrongpass")
 		rec := httptest.NewRecorder()
@@ -53,7 +54,7 @@ func TestServer_Authentication(t *testing.T) {
 	})
 
 	t.Run("with correct auth returns 200", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.SetBasicAuth("cronn", "testpass")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -61,7 +62,7 @@ func TestServer_Authentication(t *testing.T) {
 	})
 
 	t.Run("JSON API without auth returns 401", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/status", http.NoBody)
 		req.Header.Set("Accept", "application/json")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -69,7 +70,7 @@ func TestServer_Authentication(t *testing.T) {
 	})
 
 	t.Run("JSON API with correct basic auth returns 200", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/status", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/status", http.NoBody)
 		req.Header.Set("Accept", "application/json")
 		req.SetBasicAuth("cronn", "testpass")
 		rec := httptest.NewRecorder()
@@ -79,7 +80,7 @@ func TestServer_Authentication(t *testing.T) {
 	})
 
 	t.Run("login form displays", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/login", http.NoBody)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
@@ -87,7 +88,7 @@ func TestServer_Authentication(t *testing.T) {
 	})
 
 	t.Run("login with correct password sets cookie", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -101,7 +102,7 @@ func TestServer_Authentication(t *testing.T) {
 	})
 
 	t.Run("login with wrong password shows error", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=wrongpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -122,14 +123,14 @@ func TestServer_Authentication(t *testing.T) {
 		defer noAuthServer.store.Close()
 
 		noAuthHandler := noAuthServer.routes()
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		rec := httptest.NewRecorder()
 		noAuthHandler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
 	t.Run("HTTPS login sets __Host- prefixed cookie", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Forwarded-Proto", "https") // simulate HTTPS
 		rec := httptest.NewRecorder()
@@ -170,7 +171,7 @@ func TestServer_CSRFProtection(t *testing.T) {
 
 	t.Run("GET requests are allowed (safe methods)", func(t *testing.T) {
 		// GET requests should work with cross-origin
-		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs", http.NoBody)
 		req.Header.Set("Origin", "https://evil.com")
 		req.SetBasicAuth("cronn", "testpass")
 		rec := httptest.NewRecorder()
@@ -182,7 +183,7 @@ func TestServer_CSRFProtection(t *testing.T) {
 	})
 
 	t.Run("POST requests without Sec-Fetch-Site are allowed (same-origin assumed)", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/theme", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/theme", http.NoBody)
 		req.SetBasicAuth("cronn", "testpass")
 		rec := httptest.NewRecorder()
 
@@ -193,7 +194,7 @@ func TestServer_CSRFProtection(t *testing.T) {
 	})
 
 	t.Run("POST requests with Sec-Fetch-Site: same-origin are allowed", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/theme", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/theme", http.NoBody)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		req.SetBasicAuth("cronn", "testpass")
 		rec := httptest.NewRecorder()
@@ -204,7 +205,7 @@ func TestServer_CSRFProtection(t *testing.T) {
 	})
 
 	t.Run("POST requests with Sec-Fetch-Site: cross-site are blocked", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/theme", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/theme", http.NoBody)
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		req.SetBasicAuth("cronn", "testpass")
 		rec := httptest.NewRecorder()
@@ -216,7 +217,7 @@ func TestServer_CSRFProtection(t *testing.T) {
 	})
 
 	t.Run("POST requests with mismatched Origin header are blocked", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/theme", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/theme", http.NoBody)
 		req.Host = "localhost:8080"
 		req.Header.Set("Origin", "https://evil.com")
 		req.SetBasicAuth("cronn", "testpass")
@@ -229,7 +230,7 @@ func TestServer_CSRFProtection(t *testing.T) {
 	})
 
 	t.Run("Login form POST is also protected", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		rec := httptest.NewRecorder()
@@ -241,7 +242,7 @@ func TestServer_CSRFProtection(t *testing.T) {
 	})
 
 	t.Run("Same-origin login works", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		rec := httptest.NewRecorder()
@@ -276,7 +277,7 @@ func TestServer_handleLogout(t *testing.T) {
 
 	t.Run("logout clears auth cookie and redirects", func(t *testing.T) {
 		// first login to get a valid session
-		loginReq := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		loginReq := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		loginRec := httptest.NewRecorder()
 		handler.ServeHTTP(loginRec, loginReq)
@@ -287,7 +288,7 @@ func TestServer_handleLogout(t *testing.T) {
 		sessionCookie := cookies[0]
 
 		// now test logout
-		logoutReq := httptest.NewRequest("GET", "/logout", http.NoBody)
+		logoutReq := httptest.NewRequestWithContext(context.Background(), "GET", "/logout", http.NoBody)
 		logoutReq.AddCookie(sessionCookie)
 		logoutRec := httptest.NewRecorder()
 		handler.ServeHTTP(logoutRec, logoutReq)
@@ -314,7 +315,7 @@ func TestServer_handleLogout(t *testing.T) {
 
 	t.Run("logout with HTTPS cookie", func(t *testing.T) {
 		// login with HTTPS to get __Host- cookie
-		loginReq := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		loginReq := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		loginReq.Header.Set("X-Forwarded-Proto", "https")
 		loginReq.Header.Set("Sec-Fetch-Site", "same-origin") // CSRF protection
@@ -327,7 +328,7 @@ func TestServer_handleLogout(t *testing.T) {
 		assert.Equal(t, "__Host-cronn-auth", cookies[0].Name)
 
 		// logout with HTTPS
-		logoutReq := httptest.NewRequest("GET", "/logout", http.NoBody)
+		logoutReq := httptest.NewRequestWithContext(context.Background(), "GET", "/logout", http.NoBody)
 		logoutReq.Header.Set("X-Forwarded-Proto", "https")
 		logoutReq.AddCookie(cookies[0])
 		logoutRec := httptest.NewRecorder()
@@ -338,7 +339,7 @@ func TestServer_handleLogout(t *testing.T) {
 	})
 
 	t.Run("logout without session cookie still works", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/logout", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/logout", http.NoBody)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
@@ -435,7 +436,7 @@ func TestServer_handleLoginEdgeCases(t *testing.T) {
 	defer server.store.Close()
 
 	t.Run("handleLogin with missing password field", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader(""))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader(""))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 
@@ -446,7 +447,7 @@ func TestServer_handleLoginEdgeCases(t *testing.T) {
 	})
 
 	t.Run("handleLogin with empty password", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password="))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password="))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 
@@ -457,7 +458,7 @@ func TestServer_handleLoginEdgeCases(t *testing.T) {
 	})
 
 	t.Run("handleLogin with malformed form data", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("not_a_form"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("not_a_form"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 
@@ -467,7 +468,7 @@ func TestServer_handleLoginEdgeCases(t *testing.T) {
 	})
 
 	t.Run("handleLogin with correct password redirects", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 
@@ -490,7 +491,7 @@ func TestServer_handleLoginEdgeCases(t *testing.T) {
 		}
 		server.sessionsMu.Unlock()
 
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 
@@ -523,7 +524,7 @@ func TestServer_renderLoginTemplate(t *testing.T) {
 	defer server.store.Close()
 
 	t.Run("renderLoginTemplate success", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/login", http.NoBody)
 		rec := httptest.NewRecorder()
 		server.renderLoginTemplate(rec, req, "", http.StatusOK)
 
@@ -533,7 +534,7 @@ func TestServer_renderLoginTemplate(t *testing.T) {
 	})
 
 	t.Run("renderLoginTemplate with error message", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/login", http.NoBody)
 		rec := httptest.NewRecorder()
 		server.renderLoginTemplate(rec, req, "Test error message", http.StatusUnauthorized)
 
@@ -549,7 +550,7 @@ func TestServer_renderLoginTemplate(t *testing.T) {
 			server.templates["login"] = originalTemplate
 		}()
 
-		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/login", http.NoBody)
 		rec := httptest.NewRecorder()
 		server.renderLoginTemplate(rec, req, "", http.StatusOK)
 
@@ -565,7 +566,7 @@ func TestServer_renderLoginTemplate(t *testing.T) {
 			server.templates["login"] = originalTemplate
 		}()
 
-		req := httptest.NewRequest("GET", "/login", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/login", http.NoBody)
 		rec := httptest.NewRecorder()
 		server.renderLoginTemplate(rec, req, "", http.StatusOK)
 
@@ -601,7 +602,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 		// make attempts until rate limited (should happen within 6 attempts)
 		var attempts int
 		for attempts < 10 { // safety limit
-			req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=wrongpass"))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("Sec-Fetch-Site", "same-origin")
 			req.RemoteAddr = testIP
@@ -623,7 +624,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 		assert.LessOrEqual(t, attempts, 6, "Rate limiting should kick in within 6 attempts")
 
 		// make one more request to confirm it's still rate limited
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=wrongpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		req.RemoteAddr = testIP
@@ -639,7 +640,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 		// use a different remote addr to simulate different IP for rate limiting
 		// make a few failed attempts (within limit)
 		for range 3 {
-			req := httptest.NewRequest("POST", "/login", strings.NewReader("password=wrongpass"))
+			req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=wrongpass"))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("Sec-Fetch-Site", "same-origin")
 			req.RemoteAddr = "192.168.1.100:12345" // different IP than default
@@ -649,7 +650,7 @@ func TestServer_LoginRateLimiting(t *testing.T) {
 		}
 
 		// successful login should work
-		req := httptest.NewRequest("POST", "/login", strings.NewReader("password=testpass"))
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/login", strings.NewReader("password=testpass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		req.RemoteAddr = "192.168.1.100:12345" // same different IP

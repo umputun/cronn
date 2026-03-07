@@ -34,6 +34,7 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 
 // handleLogin processes the login form submission
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit request body to 1MB
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return

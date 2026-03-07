@@ -103,7 +103,7 @@ func TestServer_getSortMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 			if tt.cookieVal != "" {
 				req.AddCookie(&http.Cookie{Name: "sort-mode", Value: tt.cookieVal})
 			}
@@ -425,7 +425,7 @@ func TestServer_getViewMode_CookieErrors(t *testing.T) {
 	defer server.store.Close()
 
 	t.Run("invalid view mode value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.AddCookie(&http.Cookie{
 			Name:  "view-mode",
 			Value: "invalid-mode",
@@ -436,7 +436,7 @@ func TestServer_getViewMode_CookieErrors(t *testing.T) {
 	})
 
 	t.Run("empty cookie value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.AddCookie(&http.Cookie{
 			Name:  "view-mode",
 			Value: "",
@@ -468,7 +468,7 @@ func TestServer_getTheme_CookieErrors(t *testing.T) {
 	defer server.store.Close()
 
 	t.Run("invalid theme value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.AddCookie(&http.Cookie{
 			Name:  "theme",
 			Value: "invalid-theme",
@@ -479,7 +479,7 @@ func TestServer_getTheme_CookieErrors(t *testing.T) {
 	})
 
 	t.Run("empty cookie value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.AddCookie(&http.Cookie{
 			Name:  "theme",
 			Value: "",
@@ -490,7 +490,7 @@ func TestServer_getTheme_CookieErrors(t *testing.T) {
 	})
 
 	t.Run("no cookie", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		// no cookie set
 
 		theme := server.getTheme(req)
@@ -519,7 +519,7 @@ func TestServer_getSortMode_CookieErrors(t *testing.T) {
 	defer server.store.Close()
 
 	t.Run("invalid sort mode value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.AddCookie(&http.Cookie{
 			Name:  "sort-mode",
 			Value: "invalid-sort",
@@ -530,7 +530,7 @@ func TestServer_getSortMode_CookieErrors(t *testing.T) {
 	})
 
 	t.Run("empty cookie value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.AddCookie(&http.Cookie{
 			Name:  "sort-mode",
 			Value: "",
@@ -557,7 +557,7 @@ func TestServer_getFilterMode(t *testing.T) {
 	defer server.store.Close()
 
 	t.Run("no cookie returns all", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		mode := server.getFilterMode(req)
 		assert.Equal(t, enums.FilterModeAll, mode)
 	})
@@ -575,7 +575,7 @@ func TestServer_getFilterMode(t *testing.T) {
 
 		for _, tc := range tests {
 			t.Run(tc.cookieValue, func(t *testing.T) {
-				req := httptest.NewRequest("GET", "/", http.NoBody)
+				req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 				req.AddCookie(&http.Cookie{
 					Name:  "filter-mode",
 					Value: tc.cookieValue,
@@ -587,7 +587,7 @@ func TestServer_getFilterMode(t *testing.T) {
 	})
 
 	t.Run("invalid cookie returns all", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.AddCookie(&http.Cookie{
 			Name:  "filter-mode",
 			Value: "invalid",
@@ -772,13 +772,13 @@ func TestServer_BaseURL(t *testing.T) {
 		}
 
 		// test request to /cronn/api/jobs should work
-		req := httptest.NewRequest("GET", "/cronn/api/jobs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/cronn/api/jobs", http.NoBody)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
 
 		// test request to /api/jobs (without prefix) should fail with baseURL
-		req = httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req = httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs", http.NoBody)
 		rec = httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusNotFound, rec.Code)
@@ -791,7 +791,7 @@ func TestServer_BaseURL(t *testing.T) {
 		defer server.store.Close()
 
 		// test view mode toggle sets cookie with correct path
-		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/view-mode", http.NoBody)
 		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 		rec := httptest.NewRecorder()
 		server.handleViewModeToggle(rec, req)
@@ -817,7 +817,7 @@ func TestServer_BaseURL(t *testing.T) {
 		defer server.store.Close()
 
 		// test auth redirect to login uses correct base URL
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		req.Header.Set("Accept", "text/html")
 		rec := httptest.NewRecorder()
 		server.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -835,7 +835,7 @@ func TestServer_BaseURL(t *testing.T) {
 		require.NoError(t, err)
 		defer server.store.Close()
 
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		data := server.newTemplateData(req)
 
 		assert.Equal(t, "/myapp", data.BaseURL)

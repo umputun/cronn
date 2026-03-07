@@ -88,6 +88,7 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 
 // handleJobsPartial returns the jobs list partial for HTMX polling
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit request body to 1MB
 	searchTerm := r.FormValue("search")
 	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
 
@@ -175,6 +176,7 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// get sorted jobs for the new view mode
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit request body to 1MB
 	searchTerm := r.FormValue("search")
 	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
 
@@ -253,6 +255,7 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	s.setSortCookie(w, nextMode)
 
 	// get sorted jobs for the new mode
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit request body to 1MB
 	searchTerm := r.FormValue("search")
 	stats := s.getJobsWithStats(nextMode, s.getFilterMode(r), searchTerm)
 
@@ -320,6 +323,7 @@ func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
 	s.setFilterCookie(w, nextMode)
 
 	// get filtered jobs for the new mode
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit request body to 1MB
 	searchTerm := r.FormValue("search")
 	stats := s.getJobsWithStats(s.getSortMode(r), nextMode, searchTerm)
 
@@ -397,6 +401,7 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
 
 // handleSortModeChange changes the sort mode
 func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit request body to 1MB
 	sortModeStr := r.FormValue("sort")
 
 	// parse and validate sort mode
@@ -485,6 +490,7 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// parse form data
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit request body to 1MB
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return

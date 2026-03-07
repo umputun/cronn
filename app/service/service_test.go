@@ -1227,6 +1227,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
 		// cancel context after short delay
 		go func() {

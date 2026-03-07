@@ -74,7 +74,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	server.OnJobComplete(request.OnJobComplete{Command: "echo five-minutes", ExecutedCommand: "echo five-minutes", Schedule: "*/5 * * * *", StartTime: startTimeFiveMin.Add(-time.Second), EndTime: startTimeFiveMin, ExitCode: 1, Output: "", Err: fmt.Errorf("test error")})
 
 	t.Run("dashboard", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody)
 		w := httptest.NewRecorder()
 
 		server.handleDashboard(w, req)
@@ -90,7 +90,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	})
 
 	t.Run("jobs partial - cards view", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs", http.NoBody)
 		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 		w := httptest.NewRecorder()
 
@@ -107,7 +107,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	})
 
 	t.Run("jobs partial - list view", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/jobs", http.NoBody)
 		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "list"})
 		w := httptest.NewRecorder()
 
@@ -125,7 +125,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	})
 
 	t.Run("theme toggle", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/toggle-theme", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/toggle-theme", http.NoBody)
 		req.AddCookie(&http.Cookie{Name: "theme", Value: "light"})
 		w := httptest.NewRecorder()
 
@@ -141,7 +141,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 	})
 
 	t.Run("view mode toggle", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/toggle-view", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "/toggle-view", http.NoBody)
 		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 		w := httptest.NewRecorder()
 

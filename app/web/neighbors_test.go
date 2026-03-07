@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"net/http"
@@ -24,7 +25,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 
 	t.Run("returns error message when neighbors not configured", func(t *testing.T) {
 		srv := &Server{neighborsURL: "", templates: templates}
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 
 		srv.handleNeighbors(w, req)
@@ -48,7 +49,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 
 		srv := &Server{neighborsURL: mockServer.URL, templates: templates}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
@@ -76,7 +77,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 			templates:          templates,
 		}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
@@ -99,7 +100,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 
 		srv := &Server{neighborsURL: "file://" + filePath, templates: templates}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
@@ -110,7 +111,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 	t.Run("returns error HTML when HTTP fetch fails", func(t *testing.T) {
 		srv := &Server{neighborsURL: "http://nonexistent.invalid", templates: templates}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
@@ -121,7 +122,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 	t.Run("returns error HTML when file read fails", func(t *testing.T) {
 		srv := &Server{neighborsURL: "file:///nonexistent/path/neighbors.json", templates: templates}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
@@ -137,7 +138,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 
 		srv := &Server{neighborsURL: "file://" + filePath, templates: templates}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 
@@ -160,7 +161,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 
 		srv := &Server{neighborsURL: mockServer.URL, templates: templates}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/neighbors", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/neighbors", http.NoBody)
 		w := httptest.NewRecorder()
 		srv.handleNeighbors(w, req)
 

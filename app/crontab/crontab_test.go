@@ -339,9 +339,11 @@ func TestParser_ChangesFileCreatedLater(t *testing.T) {
 	require.NoError(t, err, "Changes() should not error when file doesn't exist")
 	require.NotNil(t, ch, "channel should be returned")
 
-	// create file after a short delay
+	// create file after a short delay, using atomic write (write to temp + rename)
+	// to avoid the race where the ticker detects an empty file before content is written
 	time.AfterFunc(time.Millisecond*300, func() {
-		f, e := os.Create(filePath) //nolint:gosec // test file in temp directory
+		tmpFile := filePath + ".tmp"
+		f, e := os.Create(tmpFile) //nolint:gosec // test file in temp directory
 		if e != nil {
 			panic("failed to create test file: " + e.Error())
 		}
@@ -350,6 +352,9 @@ func TestParser_ChangesFileCreatedLater(t *testing.T) {
 		}
 		if e = f.Close(); e != nil {
 			panic("failed to close test file: " + e.Error())
+		}
+		if e = os.Rename(tmpFile, filePath); e != nil {
+			panic("failed to rename test file: " + e.Error())
 		}
 	})
 

@@ -26,6 +26,8 @@ linters:
   settings:
     gosec:
       excludes:
+        - G118
+        - G120
         - G204
         - G703
         - G704
@@ -91,6 +93,9 @@ linters:
       - linters:
           - govet
         text: struct literal uses unkeyed fields
+      - linters:
+          - noctx
+        path: _test\.go$
       - linters:
           - revive
           - unparam

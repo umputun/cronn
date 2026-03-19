@@ -276,6 +276,12 @@ func (r *rows) ColumnTypeScanType(index int) reflect.Type {
 	case sqlite3.SQLITE_FLOAT:
 		return reflect.TypeOf(float64(0))
 	case sqlite3.SQLITE_TEXT:
+		if r.c.textToTime {
+			switch strings.ToLower(r.c.columnDeclType(r.pstmt, index)) {
+			case "date", "datetime", "time", "timestamp":
+				return reflect.TypeOf(time.Time{})
+			}
+		}
 		return reflect.TypeOf("")
 	case sqlite3.SQLITE_BLOB:
 		return reflect.TypeOf([]byte(nil))

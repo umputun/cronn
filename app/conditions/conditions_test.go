@@ -35,7 +35,7 @@ func TestCheck(t *testing.T) {
 		{
 			name: "cpu below threshold passes",
 			conditions: Config{
-				CPUBelow: intPtr(90),
+				CPUBelow: new(90),
 			},
 			setupMocks: func() {
 				// real CPU check, should pass with high threshold
@@ -47,7 +47,7 @@ func TestCheck(t *testing.T) {
 		{
 			name: "memory below threshold passes",
 			conditions: Config{
-				MemoryBelow: intPtr(99),
+				MemoryBelow: new(99),
 			},
 			setupMocks: func() {
 				// real memory check, should pass with high threshold
@@ -58,7 +58,7 @@ func TestCheck(t *testing.T) {
 		{
 			name: "disk free above threshold passes",
 			conditions: Config{
-				DiskFreeAbove: intPtr(1),
+				DiskFreeAbove: new(1),
 				DiskFreePath:  "/",
 			},
 			setupMocks: func() {
@@ -86,9 +86,9 @@ func TestCheck(t *testing.T) {
 		{
 			name: "multiple conditions all pass",
 			conditions: Config{
-				CPUBelow:      intPtr(99),
-				MemoryBelow:   intPtr(99),
-				DiskFreeAbove: intPtr(1),
+				CPUBelow:      new(99),
+				MemoryBelow:   new(99),
+				DiskFreeAbove: new(1),
 				Custom:        "exit 0",
 			},
 			wantOK:     true,
@@ -97,9 +97,9 @@ func TestCheck(t *testing.T) {
 		{
 			name: "multiple conditions one fails",
 			conditions: Config{
-				CPUBelow:      intPtr(99),
-				MemoryBelow:   intPtr(99),
-				DiskFreeAbove: intPtr(1),
+				CPUBelow:      new(99),
+				MemoryBelow:   new(99),
+				DiskFreeAbove: new(1),
 				Custom:        "exit 1",
 			},
 			wantOK:     false,
@@ -141,73 +141,73 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 	}{
 		{
 			name:       "invalid CPU below negative",
-			conditions: Config{CPUBelow: intPtr(-1)},
+			conditions: Config{CPUBelow: new(-1)},
 			wantOK:     false,
 			wantReason: "invalid CPU threshold: -1 (must be 0-100)",
 		},
 		{
 			name:       "invalid CPU below over 100",
-			conditions: Config{CPUBelow: intPtr(101)},
+			conditions: Config{CPUBelow: new(101)},
 			wantOK:     false,
 			wantReason: "invalid CPU threshold: 101 (must be 0-100)",
 		},
 		{
 			name:       "valid CPU at boundary 0",
-			conditions: Config{CPUBelow: intPtr(0)},
+			conditions: Config{CPUBelow: new(0)},
 			wantOK:     false, // will fail because CPU is always > 0
 			wantReason: "CPU: current=",
 		},
 		{
 			name:       "valid CPU at boundary 100",
-			conditions: Config{CPUBelow: intPtr(100)},
+			conditions: Config{CPUBelow: new(100)},
 			wantOK:     true,
 			wantReason: "",
 		},
 		{
 			name:       "invalid memory below negative",
-			conditions: Config{MemoryBelow: intPtr(-1)},
+			conditions: Config{MemoryBelow: new(-1)},
 			wantOK:     false,
 			wantReason: "invalid memory threshold: -1 (must be 0-100)",
 		},
 		{
 			name:       "invalid memory below over 100",
-			conditions: Config{MemoryBelow: intPtr(101)},
+			conditions: Config{MemoryBelow: new(101)},
 			wantOK:     false,
 			wantReason: "invalid memory threshold: 101 (must be 0-100)",
 		},
 		{
 			name:       "invalid load average negative",
-			conditions: Config{LoadAvgBelow: float64Ptr(-0.1)},
+			conditions: Config{LoadAvgBelow: new(-0.1)},
 			wantOK:     false,
 			wantReason: "invalid load average threshold: -0.10 (must be >= 0)",
 		},
 		{
 			name:       "valid load average at boundary 0",
-			conditions: Config{LoadAvgBelow: float64Ptr(0.0)},
+			conditions: Config{LoadAvgBelow: new(0.0)},
 			wantOK:     false, // will fail because load is always > 0
 			wantReason: "load average: current=",
 		},
 		{
 			name:       "invalid disk free negative",
-			conditions: Config{DiskFreeAbove: intPtr(-1)},
+			conditions: Config{DiskFreeAbove: new(-1)},
 			wantOK:     false,
 			wantReason: "invalid disk free threshold: -1 (must be 0-100)",
 		},
 		{
 			name:       "invalid disk free over 100",
-			conditions: Config{DiskFreeAbove: intPtr(101)},
+			conditions: Config{DiskFreeAbove: new(101)},
 			wantOK:     false,
 			wantReason: "invalid disk free threshold: 101 (must be 0-100)",
 		},
 		{
 			name:       "valid disk free at boundary 0",
-			conditions: Config{DiskFreeAbove: intPtr(0)},
+			conditions: Config{DiskFreeAbove: new(0)},
 			wantOK:     true, // will pass because disk free is always >= 0
 			wantReason: "",
 		},
 		{
 			name:       "valid disk free at boundary 100",
-			conditions: Config{DiskFreeAbove: intPtr(100)},
+			conditions: Config{DiskFreeAbove: new(100)},
 			wantOK:     false, // will fail because disk free is never 100%
 			wantReason: "disk free: current=",
 		},
@@ -391,10 +391,10 @@ func TestCheckMultipleConditions(t *testing.T) {
 
 	// test with all conditions passing
 	conditions := Config{
-		CPUBelow:      intPtr(99),
-		MemoryBelow:   intPtr(99),
-		LoadAvgBelow:  float64Ptr(100.0),
-		DiskFreeAbove: intPtr(1),
+		CPUBelow:      new(99),
+		MemoryBelow:   new(99),
+		LoadAvgBelow:  new(100.0),
+		DiskFreeAbove: new(1),
 		DiskFreePath:  "/",
 		Custom:        "true",
 	}
@@ -404,34 +404,34 @@ func TestCheckMultipleConditions(t *testing.T) {
 	assert.Empty(t, reason)
 
 	// test with CPU failing
-	conditions.CPUBelow = intPtr(0)
+	conditions.CPUBelow = new(0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
 	assert.Contains(t, reason, "CPU: current=")
 
 	// test with memory failing
-	conditions.CPUBelow = intPtr(99)
-	conditions.MemoryBelow = intPtr(0)
+	conditions.CPUBelow = new(99)
+	conditions.MemoryBelow = new(0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
 	assert.Contains(t, reason, "memory: current=")
 
 	// test with load average failing
-	conditions.MemoryBelow = intPtr(99)
-	conditions.LoadAvgBelow = float64Ptr(0.0)
+	conditions.MemoryBelow = new(99)
+	conditions.LoadAvgBelow = new(0.0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
 	assert.Contains(t, reason, "load average: current=")
 
 	// test with disk free failing
-	conditions.LoadAvgBelow = float64Ptr(100.0)
-	conditions.DiskFreeAbove = intPtr(100)
+	conditions.LoadAvgBelow = new(100.0)
+	conditions.DiskFreeAbove = new(100)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
 	assert.Contains(t, reason, "disk free: current=")
 
 	// test with custom script failing
-	conditions.DiskFreeAbove = intPtr(1)
+	conditions.DiskFreeAbove = new(1)
 	conditions.Custom = "false"
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
@@ -443,7 +443,7 @@ func TestCheckDiskFreeDefaultPath(t *testing.T) {
 
 	// test that empty path defaults to "/"
 	conditions := Config{
-		DiskFreeAbove: intPtr(1),
+		DiskFreeAbove: new(1),
 		DiskFreePath:  "", // empty path should default to "/"
 	}
 
@@ -585,15 +585,7 @@ func TestConcurrentChecksDifferentLimits(t *testing.T) {
 	}
 }
 
-// helper functions
-func intPtr(i int) *int {
-	return &i
-}
-
-func float64Ptr(f float64) *float64 {
-	return &f
-}
-
+//go:fix inline
 func durationPtr(d time.Duration) *time.Duration {
-	return &d
+	return new(d)
 }

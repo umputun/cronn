@@ -143,7 +143,7 @@ func TestServer_Authentication(t *testing.T) {
 		require.Len(t, cookies, 1)
 		assert.Equal(t, "__Host-cronn-auth", cookies[0].Name)
 		assert.True(t, cookies[0].Secure)
-		assert.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
+		assert.Equal(t, http.SameSiteLaxMode, cookies[0].SameSite)
 	})
 }
 

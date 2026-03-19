@@ -30,8 +30,8 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 			config: &YamlConfig{Jobs: []JobSpec{{
 				Spec: "@daily", Command: "backup.sh", Name: "Daily backup",
 				Repeater: &RepeaterConfig{
-					Attempts: intPtr(3), Duration: durationPtr(time.Second),
-					Factor: floatPtr(2.0), Jitter: boolPtr(true),
+					Attempts: new(3), Duration: durationPtr(time.Second),
+					Factor: new(2.0), Jitter: new(true),
 				},
 			}}},
 			wantErr: false,
@@ -88,7 +88,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 		{
 			name: "invalid repeater attempts low",
 			config: &YamlConfig{Jobs: []JobSpec{{
-				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Attempts: intPtr(0)},
+				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Attempts: new(0)},
 			}}},
 			wantErr: true,
 			errMsg:  "attempts must be between 1 and 100",
@@ -96,7 +96,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 		{
 			name: "invalid repeater attempts high",
 			config: &YamlConfig{Jobs: []JobSpec{{
-				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Attempts: intPtr(101)},
+				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Attempts: new(101)},
 			}}},
 			wantErr: true,
 			errMsg:  "attempts must be between 1 and 100",
@@ -120,7 +120,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 		{
 			name: "invalid repeater factor low",
 			config: &YamlConfig{Jobs: []JobSpec{{
-				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Factor: floatPtr(0.5)},
+				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Factor: new(0.5)},
 			}}},
 			wantErr: true,
 			errMsg:  "factor must be between 1.0 and 10.0",
@@ -128,7 +128,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 		{
 			name: "invalid repeater factor high",
 			config: &YamlConfig{Jobs: []JobSpec{{
-				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Factor: floatPtr(15.0)},
+				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Factor: new(15.0)},
 			}}},
 			wantErr: true,
 			errMsg:  "factor must be between 1.0 and 10.0",
@@ -179,13 +179,13 @@ func TestValidateRepeaterConfig(t *testing.T) {
 	}{
 		{
 			name:    "valid full config",
-			config:  &RepeaterConfig{Attempts: intPtr(5), Duration: durationPtr(time.Second), Factor: floatPtr(2.5), Jitter: boolPtr(true)},
+			config:  &RepeaterConfig{Attempts: new(5), Duration: durationPtr(time.Second), Factor: new(2.5), Jitter: new(true)},
 			jobNum:  1,
 			wantErr: false,
 		},
 		{
 			name:    "valid partial - attempts only",
-			config:  &RepeaterConfig{Attempts: intPtr(3)},
+			config:  &RepeaterConfig{Attempts: new(3)},
 			jobNum:  1,
 			wantErr: false,
 		},
@@ -197,25 +197,25 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "valid partial - factor only",
-			config:  &RepeaterConfig{Factor: floatPtr(1.5)},
+			config:  &RepeaterConfig{Factor: new(1.5)},
 			jobNum:  1,
 			wantErr: false,
 		},
 		{
 			name:    "valid partial - jitter only",
-			config:  &RepeaterConfig{Jitter: boolPtr(false)},
+			config:  &RepeaterConfig{Jitter: new(false)},
 			jobNum:  1,
 			wantErr: false,
 		},
 		{
 			name:    "valid boundary - min attempts",
-			config:  &RepeaterConfig{Attempts: intPtr(1)},
+			config:  &RepeaterConfig{Attempts: new(1)},
 			jobNum:  1,
 			wantErr: false,
 		},
 		{
 			name:    "valid boundary - max attempts",
-			config:  &RepeaterConfig{Attempts: intPtr(100)},
+			config:  &RepeaterConfig{Attempts: new(100)},
 			jobNum:  1,
 			wantErr: false,
 		},
@@ -233,33 +233,33 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "valid boundary - min factor",
-			config:  &RepeaterConfig{Factor: floatPtr(1.0)},
+			config:  &RepeaterConfig{Factor: new(1.0)},
 			jobNum:  1,
 			wantErr: false,
 		},
 		{
 			name:    "valid boundary - max factor",
-			config:  &RepeaterConfig{Factor: floatPtr(10.0)},
+			config:  &RepeaterConfig{Factor: new(10.0)},
 			jobNum:  1,
 			wantErr: false,
 		},
 		{
 			name:    "attempts too low",
-			config:  &RepeaterConfig{Attempts: intPtr(0)},
+			config:  &RepeaterConfig{Attempts: new(0)},
 			jobNum:  1,
 			wantErr: true,
 			errMsg:  "attempts must be between 1 and 100",
 		},
 		{
 			name:    "attempts negative",
-			config:  &RepeaterConfig{Attempts: intPtr(-1)},
+			config:  &RepeaterConfig{Attempts: new(-1)},
 			jobNum:  1,
 			wantErr: true,
 			errMsg:  "attempts must be between 1 and 100",
 		},
 		{
 			name:    "attempts too high",
-			config:  &RepeaterConfig{Attempts: intPtr(101)},
+			config:  &RepeaterConfig{Attempts: new(101)},
 			jobNum:  1,
 			wantErr: true,
 			errMsg:  "attempts must be between 1 and 100",
@@ -294,7 +294,7 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "factor too low",
-			config:  &RepeaterConfig{Factor: floatPtr(0.99)},
+			config:  &RepeaterConfig{Factor: new(0.99)},
 			jobNum:  3,
 			wantErr: true,
 			errMsg:  "job 3: repeater.factor must be between 1.0 and 10.0",
@@ -308,21 +308,21 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "factor negative",
-			config:  &RepeaterConfig{Factor: floatPtr(-1.5)},
+			config:  &RepeaterConfig{Factor: new(-1.5)},
 			jobNum:  3,
 			wantErr: true,
 			errMsg:  "factor must be between 1.0 and 10.0",
 		},
 		{
 			name:    "factor too high",
-			config:  &RepeaterConfig{Factor: floatPtr(10.01)},
+			config:  &RepeaterConfig{Factor: new(10.01)},
 			jobNum:  3,
 			wantErr: true,
 			errMsg:  "factor must be between 1.0 and 10.0",
 		},
 		{
 			name:    "multiple invalid fields",
-			config:  &RepeaterConfig{Attempts: intPtr(0), Duration: durationPtr(0), Factor: floatPtr(0)},
+			config:  &RepeaterConfig{Attempts: new(0), Duration: durationPtr(0), Factor: floatPtr(0)},
 			jobNum:  4,
 			wantErr: true,
 			errMsg:  "attempts must be between 1 and 100", // first error only
@@ -521,19 +521,12 @@ func TestGenerateSchema(t *testing.T) {
 	assert.Contains(t, schemaStr, "sched")
 }
 
-// helper functions for creating pointers
-func intPtr(i int) *int {
-	return &i
-}
-
+//go:fix inline
 func floatPtr(f float64) *float64 {
-	return &f
+	return new(f)
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
-
+//go:fix inline
 func durationPtr(d time.Duration) *time.Duration {
-	return &d
+	return new(d)
 }

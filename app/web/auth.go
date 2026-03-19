@@ -72,7 +72,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path:     s.cookiePath(),
 		MaxAge:   24 * 60 * 60, // 24 hours
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 		Secure:   secure,
 	})
 
@@ -100,7 +100,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     s.cookiePath(),
 		MaxAge:   -1, // delete cookie
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 		Secure:   secure,
 	})
 
@@ -112,7 +112,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1, // delete cookie
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 		Secure:   true,
 	})
 

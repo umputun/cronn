@@ -1098,7 +1098,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		svc := &Scheduler{}
 
 		cond := conditions.Config{
-			CPUBelow: intPtr(50),
+			CPUBelow: new(50),
 		}
 
 		result := svc.waitForConditions(context.Background(), cond, "test job")
@@ -1117,7 +1117,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		}
 
 		cond := conditions.Config{
-			CPUBelow: intPtr(50),
+			CPUBelow: new(50),
 		}
 
 		result := svc.waitForConditions(context.Background(), cond, "test job")
@@ -1137,7 +1137,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		}
 
 		cond := conditions.Config{
-			CPUBelow: intPtr(50),
+			CPUBelow: new(50),
 		}
 
 		result := svc.waitForConditions(context.Background(), cond, "test job")
@@ -1164,7 +1164,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		maxPostpone := 2 * time.Second
 		checkInterval := 100 * time.Millisecond
 		cond := conditions.Config{
-			CPUBelow:      intPtr(50),
+			CPUBelow:      new(50),
 			MaxPostpone:   &maxPostpone,
 			CheckInterval: &checkInterval,
 		}
@@ -1193,7 +1193,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		maxPostpone := 200 * time.Millisecond
 		checkInterval := 100 * time.Millisecond
 		cond := conditions.Config{
-			CPUBelow:      intPtr(50),
+			CPUBelow:      new(50),
 			MaxPostpone:   &maxPostpone,
 			CheckInterval: &checkInterval,
 		}
@@ -1221,7 +1221,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 		maxPostpone := 10 * time.Second
 		checkInterval := 100 * time.Millisecond
 		cond := conditions.Config{
-			CPUBelow:      intPtr(50),
+			CPUBelow:      new(50),
 			MaxPostpone:   &maxPostpone,
 			CheckInterval: &checkInterval,
 		}
@@ -1261,7 +1261,7 @@ func TestScheduler_WaitForConditions(t *testing.T) {
 
 		maxPostpone := 100 * time.Millisecond
 		cond := conditions.Config{
-			CPUBelow:    intPtr(50),
+			CPUBelow:    new(50),
 			MaxPostpone: &maxPostpone,
 			// CheckInterval not set - should default to 30s but max postpone will trigger first
 		}
@@ -2006,7 +2006,3 @@ func (w *safeWriter) String() string {
 	return w.buf.String()
 }
 
-// helper function for tests
-func intPtr(i int) *int {
-	return &i
-}

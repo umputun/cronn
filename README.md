@@ -304,6 +304,7 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
   - Visual indicators for customized manual runs
 - **Multiple view modes**: Card view and compact list view with toggle button
 - **Sorting options**: Sort jobs by original order, last run time, or next run time
+- **Job enable/disable toggle**: Disable individual jobs from the dashboard without editing config files
 - **Status filtering**: Filter jobs by status (all, running, success, failed)
 - **Light, dark, and auto themes** with automatic system preference detection
 - **Job statistics bar** showing total jobs, currently running jobs, and next execution time
@@ -450,6 +451,12 @@ GET /api/v1/status
 
 ```
 GET /api/v1/jobs/{id}/history
+```
+
+**Toggle Job** - Enable or disable a job:
+
+```
+POST /api/jobs/{id}/toggle
 ```
 
 **Execution Logs** - Get details and output for a specific execution:

@@ -127,6 +127,88 @@ func TestToggle_PersistsAcrossReload(t *testing.T) {
 	enableAllJobs(t, page)
 }
 
+// --- next run hidden for disabled jobs ---
+
+func TestToggle_DisabledJobHidesNextRun(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	waitForJobsLoaded(t, page)
+
+	enableAllJobs(t, page)
+
+	// verify enabled job shows a real next run value (not "-")
+	nextRunText, err := page.Locator(".job-card .timing-value").First().InnerText()
+	require.NoError(t, err)
+	assert.NotEqual(t, "-", nextRunText, "enabled job should show next run time")
+
+	// disable first job
+	require.NoError(t, page.Locator(".job-card .btn-toggle").First().Click())
+	require.NoError(t, page.Locator(".job-card.job-disabled").First().WaitFor())
+
+	// verify disabled job shows "-" for next run
+	disabledNextRun, err := page.Locator(".job-card.job-disabled .timing-value").First().InnerText()
+	require.NoError(t, err)
+	assert.Equal(t, "-", disabledNextRun, "disabled job should show '-' for next run")
+
+	// verify title attribute says "disabled"
+	title, err := page.Locator(".job-card.job-disabled .timing-value").First().GetAttribute("title")
+	require.NoError(t, err)
+	assert.Equal(t, "disabled", title)
+
+	// cleanup
+	enableAllJobs(t, page)
+}
+
+func TestToggle_ReEnabledJobShowsNextRun(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	waitForJobsLoaded(t, page)
+
+	enableAllJobs(t, page)
+
+	// disable then re-enable
+	require.NoError(t, page.Locator(".job-card .btn-toggle").First().Click())
+	require.NoError(t, page.Locator(".job-card.job-disabled").First().WaitFor())
+	require.NoError(t, page.Locator(".job-card.job-disabled .btn-toggle").First().Click())
+	page.WaitForTimeout(1500)
+
+	// verify next run is restored (not "-")
+	nextRunText, err := page.Locator(".job-card .timing-value").First().InnerText()
+	require.NoError(t, err)
+	assert.NotEqual(t, "-", nextRunText, "re-enabled job should show next run time again")
+}
+
+func TestToggle_DisabledJobHidesNextRunInListView(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	waitForJobsLoaded(t, page)
+
+	enableAllJobs(t, page)
+
+	// switch to list view
+	require.NoError(t, page.Locator(".view-toggle").Click())
+	waitVisible(t, page.Locator(".jobs-table"))
+
+	// verify enabled job shows next run
+	nextRunText, err := page.Locator(".job-row .td-next .time-value").First().InnerText()
+	require.NoError(t, err)
+	assert.NotEqual(t, "-", nextRunText, "enabled job should show next run in list view")
+
+	// disable first job
+	require.NoError(t, page.Locator(".job-row .btn-toggle").First().Click())
+	require.NoError(t, page.Locator(".job-row.job-disabled").First().WaitFor())
+
+	// verify disabled job shows "-"
+	disabledNextRun, err := page.Locator(".job-row.job-disabled .td-next .time-value").First().InnerText()
+	require.NoError(t, err)
+	assert.Equal(t, "-", disabledNextRun, "disabled job should show '-' for next run in list view")
+
+	// cleanup: switch back to cards and re-enable
+	require.NoError(t, page.Locator(".view-toggle").Click())
+	waitForJobsLoaded(t, page)
+	enableAllJobs(t, page)
+}
+
 // --- toggle button tests (list view) ---
 
 func TestToggle_ButtonExistsInListView(t *testing.T) {

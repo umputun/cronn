@@ -378,6 +378,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
 		api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
+		api.HandleFunc("POST /jobs/{id}/toggle", s.handleToggleJob)
 		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
 		api.HandleFunc("GET /jobs/{id}/history", s.handleJobHistory)
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)

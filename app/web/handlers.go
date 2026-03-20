@@ -540,6 +540,31 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleToggleJob toggles the enabled state of a job
+func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		http.Error(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+
+	s.jobsMu.Lock()
+	job, exists := s.jobs[jobID]
+	if !exists {
+		s.jobsMu.Unlock()
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	job.Enabled = !job.Enabled
+	job.UpdatedAt = time.Now()
+	s.jobs[jobID] = job
+	s.jobsMu.Unlock()
+
+	s.persistJobs()
+	w.Header().Set("HX-Trigger", "refresh-jobs")
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleJobModal handles job details modal requests
 func (s *Server) handleJobModal(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")

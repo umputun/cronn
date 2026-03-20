@@ -53,8 +53,8 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 			runningCount++
 		}
 
-		// find nearest next run
-		if !jobCopy.NextRun.IsZero() {
+		// find nearest next run (skip disabled jobs)
+		if jobCopy.Enabled && !jobCopy.NextRun.IsZero() {
 			if nearestNextRun == nil || jobCopy.NextRun.Before(*nearestNextRun) {
 				nearestNextRun = &jobCopy.NextRun
 			}

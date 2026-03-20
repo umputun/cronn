@@ -699,11 +699,11 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 	// add test jobs with different statuses
 	now := time.Now()
 	server.jobs = map[string]persistence.JobInfo{
-		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour)},
-		"2": {ID: "2", Command: "success1", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour)},
-		"3": {ID: "3", Command: "failed1", IsRunning: false, LastStatus: enums.JobStatusFailed, NextRun: now.Add(3 * time.Hour)},
-		"4": {ID: "4", Command: "success2", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(4 * time.Hour)},
-		"5": {ID: "5", Command: "running2", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(30 * time.Minute)},
+		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour), Enabled: true},
+		"2": {ID: "2", Command: "success1", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour), Enabled: true},
+		"3": {ID: "3", Command: "failed1", IsRunning: false, LastStatus: enums.JobStatusFailed, NextRun: now.Add(3 * time.Hour), Enabled: true},
+		"4": {ID: "4", Command: "success2", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(4 * time.Hour), Enabled: true},
+		"5": {ID: "5", Command: "running2", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(30 * time.Minute), Enabled: true},
 	}
 
 	t.Run("filter all", func(t *testing.T) {

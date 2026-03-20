@@ -158,7 +158,6 @@ func main() {
 
 	// create manual trigger channel if web UI is enabled
 	var manualTrigger chan service.ManualJobRequest
-
 	if opts.Web.Enabled {
 		manualTrigger = make(chan service.ManualJobRequest, 100)
 	} else {
@@ -198,7 +197,7 @@ func main() {
 			log.Printf("[ERROR] failed to create web server: %v", err)
 			os.Exit(1)
 		}
-		eventHandler = webServer  // web.Server implements JobEventHandler
+		eventHandler = webServer // web.Server implements JobEventHandler
 		isJobDisabled = webServer.IsJobDisabled
 
 		// start web server in background

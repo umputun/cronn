@@ -158,11 +158,9 @@ func main() {
 
 	// create manual trigger channel if web UI is enabled
 	var manualTrigger chan service.ManualJobRequest
-	var disableToggle chan string
 
 	if opts.Web.Enabled {
 		manualTrigger = make(chan service.ManualJobRequest, 100)
-		disableToggle = make(chan string, 100)
 	} else {
 		// disable execution history if web is not enabled (no UI to view it)
 		opts.Log.ExecMaxLines = 0
@@ -171,6 +169,7 @@ func main() {
 
 	// initialize web server if enabled
 	var eventHandler service.JobEventHandler
+	var isJobDisabled func(string) bool
 	if opts.Web.Enabled {
 		baseURL := validateBaseURL(opts.Web.BaseURL)
 
@@ -184,7 +183,6 @@ func main() {
 			Hostname:           hostname,
 			Version:            revision,
 			ManualTrigger:      manualTrigger,
-			DisableToggle:      disableToggle,
 			JobsProvider:       crontabParser,
 			PasswordHash:       opts.Web.PasswordHash,
 			LoginTTL:           opts.Web.LoginTTL,
@@ -200,7 +198,8 @@ func main() {
 			log.Printf("[ERROR] failed to create web server: %v", err)
 			os.Exit(1)
 		}
-		eventHandler = webServer // web.Server implements JobEventHandler
+		eventHandler = webServer  // web.Server implements JobEventHandler
+		isJobDisabled = webServer.IsJobDisabled
 
 		// start web server in background
 		go func() {
@@ -230,7 +229,7 @@ func main() {
 		NotifyTimeout:     opts.Notify.TimeOut,
 		JobEventHandler:   eventHandler,
 		ManualTrigger:     manualTrigger,
-		DisableToggle:     disableToggle,
+		IsJobDisabled:     isJobDisabled,
 		AltTemplate:       opts.AltTemplate,
 	}
 

@@ -2000,82 +2000,40 @@ func TestScheduler_disableToggle(t *testing.T) {
 
 	t.Run("disabled job is skipped", func(t *testing.T) {
 		wr := &safeWriter{}
-		disableToggle := make(chan string, 10)
 		svc := Scheduler{
 			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
 			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
-			DisableToggle: disableToggle,
+			IsJobDisabled: func(string) bool { return true },
 		}
 
-		ctx := t.Context()
-		svc.disabledJobs = make(map[string]bool)
-		go svc.listenForDisableToggle(ctx)
-
 		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo disabled-test"}
-		jobID := svc.jobIDFromCommand(jobSpec.Command)
-
-		// disable the job
-		disableToggle <- jobID
-		require.Eventually(t, func() bool {
-			svc.disabledJobsMu.RLock()
-			defer svc.disabledJobsMu.RUnlock()
-			return svc.disabledJobs[jobID]
-		}, time.Second, 10*time.Millisecond)
-
-		// run the job — should be skipped
-		svc.jobFunc(ctx, jobSpec, scheduleMock).Run()
+		svc.jobFunc(t.Context(), jobSpec, scheduleMock).Run()
 		assert.Empty(t, wr.String(), "disabled job should not produce output")
 	})
 
-	t.Run("re-enabled job executes", func(t *testing.T) {
+	t.Run("enabled job executes", func(t *testing.T) {
 		wr := &safeWriter{}
-		disableToggle := make(chan string, 10)
 		svc := Scheduler{
 			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
 			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
-			DisableToggle: disableToggle,
+			IsJobDisabled: func(string) bool { return false },
 		}
 
-		ctx := t.Context()
-		svc.disabledJobs = make(map[string]bool)
-		go svc.listenForDisableToggle(ctx)
-
-		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo reenable-test"}
-		jobID := svc.jobIDFromCommand(jobSpec.Command)
-
-		// disable then re-enable
-		disableToggle <- jobID
-		disableToggle <- jobID
-		require.Eventually(t, func() bool {
-			svc.disabledJobsMu.RLock()
-			defer svc.disabledJobsMu.RUnlock()
-			return !svc.disabledJobs[jobID]
-		}, time.Second, 10*time.Millisecond)
-
-		// run the job — should execute
-		svc.jobFunc(ctx, jobSpec, scheduleMock).Run()
-		assert.Contains(t, wr.String(), "reenable-test")
+		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo enabled-test"}
+		svc.jobFunc(t.Context(), jobSpec, scheduleMock).Run()
+		assert.Contains(t, wr.String(), "enabled-test")
 	})
 
-	t.Run("listener stops on context cancel", func(t *testing.T) {
-		disableToggle := make(chan string, 10)
-		svc := Scheduler{DisableToggle: disableToggle}
-		svc.disabledJobs = make(map[string]bool)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		go func() {
-			svc.listenForDisableToggle(ctx)
-			close(done)
-		}()
-
-		cancel()
-		select {
-		case <-done:
-			// success
-		case <-time.After(time.Second):
-			t.Fatal("listener should stop on context cancel")
+	t.Run("nil callback allows execution", func(t *testing.T) {
+		wr := &safeWriter{}
+		svc := Scheduler{
+			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
+			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
 		}
+
+		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo nil-callback-test"}
+		svc.jobFunc(t.Context(), jobSpec, scheduleMock).Run()
+		assert.Contains(t, wr.String(), "nil-callback-test")
 	})
 }
 

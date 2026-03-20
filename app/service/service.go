@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"sync"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -63,12 +62,9 @@ type Scheduler struct {
 	Stdout          io.Writer
 	NotifyTimeout   time.Duration
 	JobEventHandler JobEventHandler       // handler for job execution events
-	ManualTrigger   chan ManualJobRequest // channel for manual job triggers
-	DisableToggle   chan string           // channel for job enable/disable toggle (receives job ID)
-	AltTemplate     bool                  // use alternative template format [[.YYYYMMDD]]
-
-	disabledJobs   map[string]bool // set of disabled job IDs
-	disabledJobsMu sync.RWMutex
+	ManualTrigger  chan ManualJobRequest      // channel for manual job triggers
+	IsJobDisabled  func(jobID string) bool  // callback to check if a job is disabled via web UI
+	AltTemplate    bool                     // use alternative template format [[.YYYYMMDD]]
 }
 
 // ManualJobRequest represents a request to manually trigger a job
@@ -158,12 +154,6 @@ func (s *Scheduler) Do(ctx context.Context) {
 	// start manual trigger listener if channel is provided
 	if s.ManualTrigger != nil {
 		go s.listenForManualTriggers(ctx)
-	}
-
-	// start disable toggle listener if channel is provided
-	if s.DisableToggle != nil {
-		s.disabledJobs = make(map[string]bool)
-		go s.listenForDisableToggle(ctx)
 	}
 
 	fileMissing := false
@@ -329,10 +319,7 @@ func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobS
 func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sched Schedule, customTime *time.Time) cron.FuncJob {
 	return func() {
 		// check if job is disabled via web UI
-		s.disabledJobsMu.RLock()
-		disabled := s.disabledJobs[s.jobIDFromCommand(r.Command)]
-		s.disabledJobsMu.RUnlock()
-		if disabled {
+		if s.IsJobDisabled != nil && s.IsJobDisabled(s.jobIDFromCommand(r.Command)) {
 			log.Printf("[INFO] job disabled, skipping: %s", s.jobDescription(r))
 			return
 		}
@@ -475,30 +462,6 @@ func (s *Scheduler) reload(ctx context.Context) {
 			if err = s.loadFromFileParser(ctx); err != nil {
 				log.Printf("[WARN] failed to update jobs, %v", err)
 			}
-		}
-	}
-}
-
-// listenForDisableToggle listens for job disable/enable toggle events
-func (s *Scheduler) listenForDisableToggle(ctx context.Context) {
-	log.Printf("[INFO] disable toggle listener started")
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case jobID, ok := <-s.DisableToggle:
-			if !ok {
-				return
-			}
-			s.disabledJobsMu.Lock()
-			if s.disabledJobs[jobID] {
-				delete(s.disabledJobs, jobID)
-				log.Printf("[INFO] job %s enabled", jobID)
-			} else {
-				s.disabledJobs[jobID] = true
-				log.Printf("[INFO] job %s disabled", jobID)
-			}
-			s.disabledJobsMu.Unlock()
 		}
 	}
 }

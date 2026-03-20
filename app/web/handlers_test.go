@@ -1445,9 +1445,6 @@ func TestServer_handleToggleJob(t *testing.T) {
 	server.jobs[testJob.ID] = testJob
 	server.jobsMu.Unlock()
 
-	disableToggle := make(chan string, 10)
-	server.disableToggle = disableToggle
-
 	t.Run("toggle enabled to disabled", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/jobs/test-toggle-id/toggle", http.NoBody)
 		req.SetPathValue("id", "test-toggle-id")
@@ -1461,14 +1458,6 @@ func TestServer_handleToggleJob(t *testing.T) {
 		server.jobsMu.RLock()
 		assert.False(t, server.jobs["test-toggle-id"].Enabled)
 		server.jobsMu.RUnlock()
-
-		// verify channel received job ID
-		select {
-		case id := <-disableToggle:
-			assert.Equal(t, "test-toggle-id", id)
-		case <-time.After(time.Second):
-			t.Fatal("expected job ID on disableToggle channel")
-		}
 	})
 
 	t.Run("toggle disabled to enabled", func(t *testing.T) {
@@ -1484,14 +1473,6 @@ func TestServer_handleToggleJob(t *testing.T) {
 		server.jobsMu.RLock()
 		assert.True(t, server.jobs["test-toggle-id"].Enabled)
 		server.jobsMu.RUnlock()
-
-		// verify channel received job ID
-		select {
-		case id := <-disableToggle:
-			assert.Equal(t, "test-toggle-id", id)
-		case <-time.After(time.Second):
-			t.Fatal("expected job ID on disableToggle channel")
-		}
 	})
 
 	t.Run("job not found", func(t *testing.T) {

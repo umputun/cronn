@@ -562,10 +562,6 @@ func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 	s.jobs[jobID] = job
 	s.jobsMu.Unlock()
 
-	if s.disableToggle != nil {
-		s.disableToggle <- jobID
-	}
-
 	s.persistJobs()
 	w.Header().Set("HX-Trigger", "refresh-jobs")
 	w.WriteHeader(http.StatusOK)

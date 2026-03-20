@@ -57,7 +57,6 @@ type Server struct {
 	passwordHash       string                          // bcrypt hash for basic auth
 	loginTTL           time.Duration                   // session TTL
 	manualTrigger      chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
-	disableToggle      chan<- string                   // channel to send disable toggle events to scheduler
 	csrfProtection     *http.CrossOriginProtection     // csrf protection for POST endpoints
 	sessions           map[string]session              // active user sessions
 	sessionsMu         sync.Mutex                      // protects sessions map
@@ -156,7 +155,6 @@ type Config struct {
 	Hostname           string // hostname to display in UI
 	Version            string
 	ManualTrigger      chan<- service.ManualJobRequest // channel for sending manual trigger requests
-	DisableToggle      chan<- string                   // channel for sending disable toggle events
 	JobsProvider       JobsProvider                    // interface for loading job specifications
 	PasswordHash       string                          // bcrypt hash for basic auth (empty to disable)
 	LoginTTL           time.Duration                   // session TTL, defaults to 24h if not set
@@ -257,7 +255,6 @@ func New(cfg Config) (*Server, error) {
 		passwordHash:       cfg.PasswordHash,
 		loginTTL:           loginTTL,
 		manualTrigger:      cfg.ManualTrigger,
-		disableToggle:      cfg.DisableToggle,
 		csrfProtection:     csrfProtection,
 		disableManual:      cfg.DisableManual,
 		disableCommandEdit: cfg.DisableCommandEdit,
@@ -284,17 +281,6 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) Run(ctx context.Context, address string) error {
 	// load existing job history from database
 	s.loadJobsFromDB()
-
-	// send initially disabled jobs to scheduler
-	if s.disableToggle != nil {
-		s.jobsMu.RLock()
-		for id, job := range s.jobs {
-			if !job.Enabled {
-				s.disableToggle <- id
-			}
-		}
-		s.jobsMu.RUnlock()
-	}
 
 	// start background job sync
 	go s.syncJobs(ctx)
@@ -646,6 +632,14 @@ func (s *Server) cookiePath() string {
 		return "/"
 	}
 	return s.baseURL + "/"
+}
+
+// IsJobDisabled returns true if the job with the given ID is disabled
+func (s *Server) IsJobDisabled(jobID string) bool {
+	s.jobsMu.RLock()
+	defer s.jobsMu.RUnlock()
+	job, exists := s.jobs[jobID]
+	return exists && !job.Enabled
 }
 
 // helper functions

@@ -43,9 +43,11 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 
 	// first collect all jobs and calculate stats
 	for _, job := range s.jobs {
-		// work with a copy, recalculate next run times
+		// work with a copy, recalculate next run times for enabled jobs only
 		jobCopy := job
-		s.updateNextRun(&jobCopy)
+		if jobCopy.Enabled {
+			s.updateNextRun(&jobCopy)
+		}
 		allJobs = append(allJobs, jobCopy)
 
 		// count running jobs

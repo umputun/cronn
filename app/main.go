@@ -158,8 +158,11 @@ func main() {
 
 	// create manual trigger channel if web UI is enabled
 	var manualTrigger chan service.ManualJobRequest
+	var disableToggle chan string
+
 	if opts.Web.Enabled {
 		manualTrigger = make(chan service.ManualJobRequest, 100)
+		disableToggle = make(chan string, 100)
 	} else {
 		// disable execution history if web is not enabled (no UI to view it)
 		opts.Log.ExecMaxLines = 0
@@ -181,6 +184,7 @@ func main() {
 			Hostname:           hostname,
 			Version:            revision,
 			ManualTrigger:      manualTrigger,
+			DisableToggle:      disableToggle,
 			JobsProvider:       crontabParser,
 			PasswordHash:       opts.Web.PasswordHash,
 			LoginTTL:           opts.Web.LoginTTL,
@@ -226,6 +230,7 @@ func main() {
 		NotifyTimeout:     opts.Notify.TimeOut,
 		JobEventHandler:   eventHandler,
 		ManualTrigger:     manualTrigger,
+		DisableToggle:     disableToggle,
 		AltTemplate:       opts.AltTemplate,
 	}
 

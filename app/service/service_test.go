@@ -1987,6 +1987,100 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 	})
 }
 
+func TestScheduler_disableToggle(t *testing.T) {
+	resmr := &mocks.ResumerMock{
+		OnStartFunc:  func(cmd string) (string, error) { return "resume.file", nil },
+		OnFinishFunc: func(fname string) error { return nil },
+	}
+	scheduleMock := &mocks.ScheduleMock{
+		NextFunc: func(timeMoqParam time.Time) time.Time {
+			return time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)
+		},
+	}
+
+	t.Run("disabled job is skipped", func(t *testing.T) {
+		wr := &safeWriter{}
+		disableToggle := make(chan string, 10)
+		svc := Scheduler{
+			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
+			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
+			DisableToggle: disableToggle,
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		svc.disabledJobs = make(map[string]bool)
+		go svc.listenForDisableToggle(ctx)
+
+		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo disabled-test"}
+		jobID := svc.jobIDFromCommand(jobSpec.Command)
+
+		// disable the job
+		disableToggle <- jobID
+		require.Eventually(t, func() bool {
+			svc.disabledJobsMu.RLock()
+			defer svc.disabledJobsMu.RUnlock()
+			return svc.disabledJobs[jobID]
+		}, time.Second, 10*time.Millisecond)
+
+		// run the job — should be skipped
+		svc.jobFunc(ctx, jobSpec, scheduleMock).Run()
+		assert.Empty(t, wr.String(), "disabled job should not produce output")
+	})
+
+	t.Run("re-enabled job executes", func(t *testing.T) {
+		wr := &safeWriter{}
+		disableToggle := make(chan string, 10)
+		svc := Scheduler{
+			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
+			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
+			DisableToggle: disableToggle,
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		svc.disabledJobs = make(map[string]bool)
+		go svc.listenForDisableToggle(ctx)
+
+		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo reenable-test"}
+		jobID := svc.jobIDFromCommand(jobSpec.Command)
+
+		// disable then re-enable
+		disableToggle <- jobID
+		disableToggle <- jobID
+		require.Eventually(t, func() bool {
+			svc.disabledJobsMu.RLock()
+			defer svc.disabledJobsMu.RUnlock()
+			return !svc.disabledJobs[jobID]
+		}, time.Second, 10*time.Millisecond)
+
+		// run the job — should execute
+		svc.jobFunc(ctx, jobSpec, scheduleMock).Run()
+		assert.Contains(t, wr.String(), "reenable-test")
+	})
+
+	t.Run("listener stops on context cancel", func(t *testing.T) {
+		disableToggle := make(chan string, 10)
+		svc := Scheduler{DisableToggle: disableToggle}
+		svc.disabledJobs = make(map[string]bool)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			svc.listenForDisableToggle(ctx)
+			close(done)
+		}()
+
+		cancel()
+		select {
+		case <-done:
+			// success
+		case <-time.After(time.Second):
+			t.Fatal("listener should stop on context cancel")
+		}
+	})
+}
+
 // safeWriter wraps bytes.Buffer with mutex for thread-safe concurrent writes
 type safeWriter struct {
 	buf bytes.Buffer

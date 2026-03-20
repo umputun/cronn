@@ -2007,8 +2007,7 @@ func TestScheduler_disableToggle(t *testing.T) {
 			DisableToggle: disableToggle,
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		svc.disabledJobs = make(map[string]bool)
 		go svc.listenForDisableToggle(ctx)
 
@@ -2037,8 +2036,7 @@ func TestScheduler_disableToggle(t *testing.T) {
 			DisableToggle: disableToggle,
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		svc.disabledJobs = make(map[string]bool)
 		go svc.listenForDisableToggle(ctx)
 

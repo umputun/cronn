@@ -20,7 +20,9 @@ func enableAllJobs(t *testing.T, page playwright.Page) {
 			return
 		}
 		require.NoError(t, page.Locator(".job-card.job-disabled .btn-toggle").First().Click())
-		page.WaitForTimeout(1500)
+		require.NoError(t, page.Locator(".job-card.job-disabled").WaitFor(playwright.LocatorWaitForOptions{
+			State: playwright.WaitForSelectorStateHidden,
+		}))
 	}
 }
 
@@ -76,7 +78,9 @@ func TestToggle_ReEnablesJob(t *testing.T) {
 
 	// re-enable
 	require.NoError(t, page.Locator(".job-card.job-disabled .btn-toggle").First().Click())
-	page.WaitForTimeout(1500)
+	require.NoError(t, page.Locator(".job-card.job-disabled").WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateHidden,
+	}))
 
 	afterCount, err := page.Locator(".job-card.job-disabled").Count()
 	require.NoError(t, err)
@@ -170,7 +174,9 @@ func TestToggle_ReEnabledJobShowsNextRun(t *testing.T) {
 	require.NoError(t, page.Locator(".job-card .btn-toggle").First().Click())
 	require.NoError(t, page.Locator(".job-card.job-disabled").First().WaitFor())
 	require.NoError(t, page.Locator(".job-card.job-disabled .btn-toggle").First().Click())
-	page.WaitForTimeout(1500)
+	require.NoError(t, page.Locator(".job-card.job-disabled").WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateHidden,
+	}))
 
 	// verify next run is restored (not "-")
 	nextRunText, err := page.Locator(".job-card .timing-value").First().InnerText()

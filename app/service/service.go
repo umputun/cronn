@@ -61,10 +61,10 @@ type Scheduler struct {
 	}
 	Stdout          io.Writer
 	NotifyTimeout   time.Duration
-	JobEventHandler JobEventHandler       // handler for job execution events
-	ManualTrigger  chan ManualJobRequest      // channel for manual job triggers
-	IsJobDisabled  func(jobID string) bool  // callback to check if a job is disabled via web UI
-	AltTemplate    bool                     // use alternative template format [[.YYYYMMDD]]
+	JobEventHandler JobEventHandler         // handler for job execution events
+	ManualTrigger   chan ManualJobRequest   // channel for manual job triggers
+	IsJobDisabled   func(jobID string) bool // callback to check if a job is disabled via web UI
+	AltTemplate     bool                    // use alternative template format [[.YYYYMMDD]]
 }
 
 // ManualJobRequest represents a request to manually trigger a job

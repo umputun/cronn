@@ -241,13 +241,17 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	case enums.EventTypeCompleted:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusSuccess
-		s.updateNextRun(&job)
+		if job.Enabled {
+			s.updateNextRun(&job)
+		}
 		needsRecord = true
 		recordStatus = job.LastStatus
 	case enums.EventTypeFailed:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusFailed
-		s.updateNextRun(&job)
+		if job.Enabled {
+			s.updateNextRun(&job)
+		}
 		needsRecord = true
 		recordStatus = job.LastStatus
 	}

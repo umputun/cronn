@@ -17,7 +17,6 @@ coverage.html
 bin/
 dist/
 .idea/
-.zed/
 site/docs/index.md
 site/site/
 site/.venv/

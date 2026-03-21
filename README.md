@@ -456,7 +456,7 @@ GET /api/v1/jobs/{id}/history
 **Toggle Job** - Enable or disable a job:
 
 ```
-POST /api/jobs/{id}/toggle
+POST /api/v1/jobs/{id}/toggle
 ```
 
 **Execution Logs** - Get details and output for a specific execution:

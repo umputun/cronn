@@ -101,7 +101,9 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, _ *http.Request) {
 	allJobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		jobCopy := job
-		s.updateNextRun(&jobCopy)
+		if jobCopy.Enabled {
+			s.updateNextRun(&jobCopy)
+		}
 		allJobs = append(allJobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
@@ -156,8 +158,10 @@ func (s *Server) handleAPIJobHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// update next run time
-	s.updateNextRun(&job)
+	// update next run time for enabled jobs only
+	if job.Enabled {
+		s.updateNextRun(&job)
+	}
 
 	// get execution history from database
 	executions, err := s.store.GetExecutions(jobID, 50)

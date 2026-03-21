@@ -423,7 +423,9 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	for _, job := range s.jobs {
 		// work with a copy, recalculate next run times
 		jobCopy := job
-		s.updateNextRun(&jobCopy)
+		if jobCopy.Enabled {
+			s.updateNextRun(&jobCopy)
+		}
 		jobs = append(jobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
@@ -586,7 +588,9 @@ func (s *Server) handleJobModal(w http.ResponseWriter, r *http.Request) {
 
 	// create a copy and update next run time
 	jobCopy := job
-	s.updateNextRun(&jobCopy)
+	if jobCopy.Enabled {
+		s.updateNextRun(&jobCopy)
+	}
 
 	s.render(w, "partials/jobs.html", "job-modal", jobCopy)
 }

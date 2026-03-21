@@ -43,9 +43,11 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 
 	// first collect all jobs and calculate stats
 	for _, job := range s.jobs {
-		// work with a copy, recalculate next run times
+		// work with a copy, recalculate next run times for enabled jobs only
 		jobCopy := job
-		s.updateNextRun(&jobCopy)
+		if jobCopy.Enabled {
+			s.updateNextRun(&jobCopy)
+		}
 		allJobs = append(allJobs, jobCopy)
 
 		// count running jobs
@@ -53,8 +55,8 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 			runningCount++
 		}
 
-		// find nearest next run
-		if !jobCopy.NextRun.IsZero() {
+		// find nearest next run (skip disabled jobs)
+		if jobCopy.Enabled && !jobCopy.NextRun.IsZero() {
 			if nearestNextRun == nil || jobCopy.NextRun.Before(*nearestNextRun) {
 				nearestNextRun = &jobCopy.NextRun
 			}
@@ -421,7 +423,9 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	for _, job := range s.jobs {
 		// work with a copy, recalculate next run times
 		jobCopy := job
-		s.updateNextRun(&jobCopy)
+		if jobCopy.Enabled {
+			s.updateNextRun(&jobCopy)
+		}
 		jobs = append(jobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
@@ -540,6 +544,31 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleToggleJob toggles the enabled state of a job
+func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		http.Error(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+
+	s.jobsMu.Lock()
+	job, exists := s.jobs[jobID]
+	if !exists {
+		s.jobsMu.Unlock()
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	job.Enabled = !job.Enabled
+	job.UpdatedAt = time.Now()
+	s.jobs[jobID] = job
+	s.jobsMu.Unlock()
+
+	s.persistJobs()
+	w.Header().Set("HX-Trigger", "refresh-jobs")
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleJobModal handles job details modal requests
 func (s *Server) handleJobModal(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
@@ -559,7 +588,9 @@ func (s *Server) handleJobModal(w http.ResponseWriter, r *http.Request) {
 
 	// create a copy and update next run time
 	jobCopy := job
-	s.updateNextRun(&jobCopy)
+	if jobCopy.Enabled {
+		s.updateNextRun(&jobCopy)
+	}
 
 	s.render(w, "partials/jobs.html", "job-modal", jobCopy)
 }

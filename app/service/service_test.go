@@ -1987,6 +1987,56 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 	})
 }
 
+func TestScheduler_disableToggle(t *testing.T) {
+	resmr := &mocks.ResumerMock{
+		OnStartFunc:  func(cmd string) (string, error) { return "resume.file", nil },
+		OnFinishFunc: func(fname string) error { return nil },
+	}
+	scheduleMock := &mocks.ScheduleMock{
+		NextFunc: func(timeMoqParam time.Time) time.Time {
+			return time.Date(2020, 7, 21, 16, 30, 0, 0, time.UTC)
+		},
+	}
+
+	t.Run("disabled job is skipped", func(t *testing.T) {
+		wr := &safeWriter{}
+		svc := Scheduler{
+			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
+			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
+			IsJobDisabled: func(string) bool { return true },
+		}
+
+		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo disabled-test"}
+		svc.jobFunc(t.Context(), jobSpec, scheduleMock).Run()
+		assert.Empty(t, wr.String(), "disabled job should not produce output")
+	})
+
+	t.Run("enabled job executes", func(t *testing.T) {
+		wr := &safeWriter{}
+		svc := Scheduler{
+			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
+			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
+			IsJobDisabled: func(string) bool { return false },
+		}
+
+		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo enabled-test"}
+		svc.jobFunc(t.Context(), jobSpec, scheduleMock).Run()
+		assert.Contains(t, wr.String(), "enabled-test")
+	})
+
+	t.Run("nil callback allows execution", func(t *testing.T) {
+		wr := &safeWriter{}
+		svc := Scheduler{
+			NotifyMaxLogLines: 10, Stdout: wr, Resumer: resmr,
+			Repeater: repeater.New(&strategy.Once{}), DeDup: NewDeDup(true),
+		}
+
+		jobSpec := crontab.JobSpec{Spec: "@startup", Command: "echo nil-callback-test"}
+		svc.jobFunc(t.Context(), jobSpec, scheduleMock).Run()
+		assert.Contains(t, wr.String(), "nil-callback-test")
+	})
+}
+
 // safeWriter wraps bytes.Buffer with mutex for thread-safe concurrent writes
 type safeWriter struct {
 	buf bytes.Buffer

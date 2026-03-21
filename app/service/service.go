@@ -62,8 +62,9 @@ type Scheduler struct {
 	Stdout          io.Writer
 	NotifyTimeout   time.Duration
 	JobEventHandler JobEventHandler       // handler for job execution events
-	ManualTrigger   chan ManualJobRequest // channel for manual job triggers
-	AltTemplate     bool                  // use alternative template format [[.YYYYMMDD]]
+	ManualTrigger  chan ManualJobRequest      // channel for manual job triggers
+	IsJobDisabled  func(jobID string) bool  // callback to check if a job is disabled via web UI
+	AltTemplate    bool                     // use alternative template format [[.YYYYMMDD]]
 }
 
 // ManualJobRequest represents a request to manually trigger a job
@@ -317,6 +318,12 @@ func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobS
 
 func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sched Schedule, customTime *time.Time) cron.FuncJob {
 	return func() {
+		// check if job is disabled via web UI
+		if s.IsJobDisabled != nil && s.IsJobDisabled(s.jobIDFromCommand(r.Command)) {
+			log.Printf("[INFO] job disabled, skipping: %s", s.jobDescription(r))
+			return
+		}
+
 		jobDesc := s.jobDescription(r)
 		jobRepeater := s.getJobRepeater(r.Repeater)
 

@@ -378,6 +378,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
 		api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
+		api.HandleFunc("POST /jobs/{id}/toggle", s.handleToggleJob)
 		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
 		api.HandleFunc("GET /jobs/{id}/history", s.handleJobHistory)
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
@@ -631,6 +632,14 @@ func (s *Server) cookiePath() string {
 		return "/"
 	}
 	return s.baseURL + "/"
+}
+
+// IsJobDisabled returns true if the job with the given ID is disabled
+func (s *Server) IsJobDisabled(jobID string) bool {
+	s.jobsMu.RLock()
+	defer s.jobsMu.RUnlock()
+	job, exists := s.jobs[jobID]
+	return exists && !job.Enabled
 }
 
 // helper functions

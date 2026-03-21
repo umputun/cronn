@@ -1,6 +1,6 @@
 {{define "jobs-cards"}}
 {{range .Jobs}}
-<div class="job-card"
+<div class="job-card{{if not .Enabled}} job-disabled{{end}}"
      data-job-id="{{.ID}}"
      data-job-status="{{.LastStatus}}"
      data-next-run="{{.NextRun.Unix}}">
@@ -55,6 +55,15 @@
                     <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                 </svg>
             </button>
+            <button class="btn-toggle {{if not .Enabled}}btn-disabled-state{{end}}"
+                    hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}"
+                    hx-swap="none"
+                    title="{{if .Enabled}}Disable{{else}}Enable{{end}} job">
+                <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
             {{if not $.ManualDisabled}}
             <button class="btn-compact"
                     {{if and .Enabled (not .IsRunning)}}
@@ -93,8 +102,8 @@
     <div class="job-timing">
         <div class="timing-item">
             <span class="timing-label">Next run:</span>
-            <span class="timing-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
-                {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
+            <span class="timing-value" title="{{if .Enabled}}{{.NextRun.Format "2006-01-02 15:04:05"}}{{else}}disabled{{end}}">
+                {{if not .Enabled}}-{{else}}{{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}{{end}}
             </span>
         </div>
         <div class="timing-item">
@@ -121,7 +130,7 @@
     </thead>
     <tbody>
         {{range .Jobs}}
-        <tr class="job-row"
+        <tr class="job-row{{if not .Enabled}} job-disabled{{end}}"
             data-job-id="{{.ID}}"
             data-job-status="{{.LastStatus}}"
             data-next-run="{{.NextRun.Unix}}">
@@ -170,8 +179,8 @@
             </td>
 
             <td class="td-next numeric">
-                <span class="time-value" title="{{.NextRun.Format "2006-01-02 15:04:05"}}">
-                    {{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}
+                <span class="time-value" title="{{if .Enabled}}{{.NextRun.Format "2006-01-02 15:04:05"}}{{else}}disabled{{end}}">
+                    {{if not .Enabled}}-{{else}}{{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}{{end}}
                 </span>
             </td>
 
@@ -194,6 +203,15 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                         <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
                         <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </button>
+                <button class="btn-toggle {{if not .Enabled}}btn-disabled-state{{end}}"
+                        hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}"
+                        hx-swap="none"
+                        title="{{if .Enabled}}Disable{{else}}Enable{{end}} job">
+                    <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
                 </button>
                 {{if not $.ManualDisabled}}
@@ -369,10 +387,9 @@
             <div class="modal-section">
                 <div class="modal-label">Next Run</div>
                 <div class="modal-value">
-                    {{if .NextRun.IsZero}}
-                    Never
-                    {{else}}
-                    {{.NextRun.Format "2006-01-02 15:04:05"}} ({{timeUntil .NextRun}})
+                    {{if not .Enabled}}Disabled
+                    {{else if .NextRun.IsZero}}Never
+                    {{else}}{{.NextRun.Format "2006-01-02 15:04:05"}} ({{timeUntil .NextRun}})
                     {{end}}
                 </div>
             </div>

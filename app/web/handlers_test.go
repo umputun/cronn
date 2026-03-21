@@ -699,11 +699,11 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 	// add test jobs with different statuses
 	now := time.Now()
 	server.jobs = map[string]persistence.JobInfo{
-		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour)},
-		"2": {ID: "2", Command: "success1", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour)},
-		"3": {ID: "3", Command: "failed1", IsRunning: false, LastStatus: enums.JobStatusFailed, NextRun: now.Add(3 * time.Hour)},
-		"4": {ID: "4", Command: "success2", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(4 * time.Hour)},
-		"5": {ID: "5", Command: "running2", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(30 * time.Minute)},
+		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour), Enabled: true},
+		"2": {ID: "2", Command: "success1", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour), Enabled: true},
+		"3": {ID: "3", Command: "failed1", IsRunning: false, LastStatus: enums.JobStatusFailed, NextRun: now.Add(3 * time.Hour), Enabled: true},
+		"4": {ID: "4", Command: "success2", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(4 * time.Hour), Enabled: true},
+		"5": {ID: "5", Command: "running2", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(30 * time.Minute), Enabled: true},
 	}
 
 	t.Run("filter all", func(t *testing.T) {
@@ -1414,5 +1414,116 @@ func TestServer_handleExecutionLogs(t *testing.T) {
 
 		resp := w.Result()
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+}
+
+func TestServer_handleToggleJob(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := Config{
+		DBPath:         dbPath,
+		UpdateInterval: time.Minute,
+		Version:        "test",
+		JobsProvider:   createTestProvider(t, tmpDir),
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	// add test job
+	testJob := persistence.JobInfo{
+		ID:         "test-toggle-id",
+		Command:    "echo toggle",
+		Schedule:   "* * * * *",
+		Enabled:    true,
+		IsRunning:  false,
+		LastStatus: enums.JobStatusIdle,
+	}
+	server.jobsMu.Lock()
+	server.jobs[testJob.ID] = testJob
+	server.jobsMu.Unlock()
+
+	t.Run("toggle enabled to disabled", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/jobs/test-toggle-id/toggle", http.NoBody)
+		req.SetPathValue("id", "test-toggle-id")
+		w := httptest.NewRecorder()
+
+		server.handleToggleJob(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"))
+
+		server.jobsMu.RLock()
+		assert.False(t, server.jobs["test-toggle-id"].Enabled)
+		server.jobsMu.RUnlock()
+	})
+
+	t.Run("toggle disabled to enabled", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/jobs/test-toggle-id/toggle", http.NoBody)
+		req.SetPathValue("id", "test-toggle-id")
+		w := httptest.NewRecorder()
+
+		server.handleToggleJob(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"))
+
+		server.jobsMu.RLock()
+		assert.True(t, server.jobs["test-toggle-id"].Enabled)
+		server.jobsMu.RUnlock()
+	})
+
+	t.Run("job not found", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/jobs/nonexistent/toggle", http.NoBody)
+		req.SetPathValue("id", "nonexistent")
+		w := httptest.NewRecorder()
+
+		server.handleToggleJob(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "Job not found")
+	})
+
+	t.Run("empty job ID", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/jobs/toggle", http.NoBody)
+		req.SetPathValue("id", "")
+		w := httptest.NewRecorder()
+
+		server.handleToggleJob(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Job ID required")
+	})
+
+	t.Run("persistence round-trip", func(t *testing.T) {
+		// ensure job is enabled first
+		server.jobsMu.Lock()
+		j := server.jobs["test-toggle-id"]
+		j.Enabled = true
+		server.jobs["test-toggle-id"] = j
+		server.jobsMu.Unlock()
+
+		// toggle to disabled
+		req := httptest.NewRequest("POST", "/api/jobs/test-toggle-id/toggle", http.NoBody)
+		req.SetPathValue("id", "test-toggle-id")
+		w := httptest.NewRecorder()
+		server.handleToggleJob(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// verify persisted in DB
+		loaded, err := server.store.LoadJobs()
+		require.NoError(t, err)
+
+		var found bool
+		for _, lj := range loaded {
+			if lj.ID == "test-toggle-id" {
+				assert.False(t, lj.Enabled)
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "job should be found in DB")
 	})
 }

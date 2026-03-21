@@ -66,7 +66,7 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 - **Out-of-band updates**: `hx-swap-oob="innerHTML"` for updating multiple elements in single response
 - **Auto-refresh polling**: `hx-trigger="load, every 5s"` for JavaScript-free real-time updates
 - **Response coordination**: `HX-Refresh: true` header triggers full page refresh when needed
-- **Event coordination**: Custom events like `refresh-jobs` coordinate updates between components
+- **Event coordination**: Custom events like `refresh-jobs` coordinate updates between components (used by toggle, sort, filter)
 - **Lazy-load dropdowns**: Native `<details>/<summary>` with `hx-trigger="toggle once"` for dropdowns that fetch content on first open (used in neighbors selector)
 
 ### Event-Driven Architecture
@@ -113,6 +113,15 @@ svc := service.New(..., service.WithManualTrigger(manualJobChan))
 // web UI sends job ID to channel
 manualJobChan <- jobID
 ```
+
+## Job Enable/Disable Toggle
+
+### Toggle Mechanism
+- Web UI toggle button (`POST /api/jobs/{id}/toggle`) flips `job.Enabled` in memory
+- State persisted immediately via `persistJobs()` after toggle
+- HTMX `HX-Trigger: refresh-jobs` header triggers UI refresh after toggle
+- Disabled jobs shown with `job-disabled` CSS class (visual dimming in both card and list views)
+- Toggle button uses `btn-toggle` / `btn-disabled-state` CSS classes for visual state feedback
 
 ## Type-Safe Enum Pattern
 

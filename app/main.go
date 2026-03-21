@@ -168,6 +168,7 @@ func main() {
 
 	// initialize web server if enabled
 	var eventHandler service.JobEventHandler
+	var isJobDisabled func(string) bool
 	if opts.Web.Enabled {
 		baseURL := validateBaseURL(opts.Web.BaseURL)
 
@@ -197,6 +198,7 @@ func main() {
 			os.Exit(1)
 		}
 		eventHandler = webServer // web.Server implements JobEventHandler
+		isJobDisabled = webServer.IsJobDisabled
 
 		// start web server in background
 		go func() {
@@ -226,6 +228,7 @@ func main() {
 		NotifyTimeout:     opts.Notify.TimeOut,
 		JobEventHandler:   eventHandler,
 		ManualTrigger:     manualTrigger,
+		IsJobDisabled:     isJobDisabled,
 		AltTemplate:       opts.AltTemplate,
 	}
 

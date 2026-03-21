@@ -514,6 +514,11 @@ code {
     contain: layout;
 }
 
+.job-card.job-disabled,
+.job-row.job-disabled {
+    opacity: 0.5;
+}
+
 .job-card:hover {
     box-shadow: var(--shadow-hover);
     transform: translateY(-2px);
@@ -1852,6 +1857,35 @@ code {
     color: var(--color-text-muted);
     cursor: not-allowed;
     opacity: 0.5;
+}
+
+.btn-toggle {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.btn-toggle:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.btn-toggle.btn-disabled-state {
+    color: var(--color-text-muted);
+    opacity: 0.5;
+}
+
+.btn-toggle.btn-disabled-state:hover {
+    color: var(--color-primary);
+    opacity: 1;
 }
 
 .btn-compact .icon {

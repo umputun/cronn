@@ -21,6 +21,8 @@ The repository you are currently viewing might be a mirror. Please review the gu
 
 ### Startup / Small Business Tier Sponsor
 
+![exe.dev](sponsors/boldsoftware.png "boldsoftware") [exe.dev](https://exe.dev)
+
 ![octoberswimmer](sponsors/octoberswimmer.png "osctoberswimmer") [October Swimmer](https://www.octoberswimmer.com/)
 
 ---

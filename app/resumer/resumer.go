@@ -16,7 +16,7 @@ import (
 type Resumer struct {
 	location string
 	enabled  bool
-	seq      uint64
+	seq      atomic.Uint64
 }
 
 // Cmd keeps file name and command
@@ -40,7 +40,7 @@ func (r *Resumer) OnStart(cmd string) (string, error) {
 	if !r.enabled {
 		return "", nil
 	}
-	seq := atomic.AddUint64(&r.seq, 1)
+	seq := r.seq.Add(1)
 	fname := fmt.Sprintf("%s/%d-%d.cronn", r.location, time.Now().UnixNano(), seq)
 	log.Printf("[DEBUG] create resumer file %s", fname)
 	if err := os.WriteFile(fname, []byte(cmd), 0o600); err != nil {

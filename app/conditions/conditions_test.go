@@ -501,9 +501,9 @@ func TestMaxConcurrentChecks(t *testing.T) {
 	}
 
 	// track how many checks are running concurrently
-	var running int32
-	var maxRunning int32
-	var completed int32
+	var running atomic.Int32
+	var maxRunning atomic.Int32
+	var completed atomic.Int32
 
 	// start many goroutines trying to check conditions
 	numGoroutines := 10
@@ -519,17 +519,17 @@ func TestMaxConcurrentChecks(t *testing.T) {
 
 			// if we got concurrency limit error, that's expected
 			if !ok && reason == "condition check limit reached, try increasing --max-concurrent-checks or wait for running checks to complete" {
-				atomic.AddInt32(&completed, 1)
+				completed.Add(1)
 				done <- struct{}{}
 				return
 			}
 
 			// otherwise we're actually running the check
-			current := atomic.AddInt32(&running, 1)
+			current := running.Add(1)
 			for {
-				maxVal := atomic.LoadInt32(&maxRunning)
+				maxVal := maxRunning.Load()
 				if current > maxVal {
-					if atomic.CompareAndSwapInt32(&maxRunning, maxVal, current) {
+					if maxRunning.CompareAndSwap(maxVal, current) {
 						break
 					}
 				} else {
@@ -541,8 +541,8 @@ func TestMaxConcurrentChecks(t *testing.T) {
 			assert.True(t, ok)
 			assert.Empty(t, reason)
 
-			atomic.AddInt32(&running, -1)
-			atomic.AddInt32(&completed, 1)
+			running.Add(-1)
+			completed.Add(1)
 			done <- struct{}{}
 		}()
 	}
@@ -556,12 +556,12 @@ func TestMaxConcurrentChecks(t *testing.T) {
 	}
 
 	// verify we never exceeded the limit
-	assert.LessOrEqual(t, int(maxRunning), 2, "should never have more than 2 concurrent checks")
-	assert.Equal(t, int32(numGoroutines), completed, "all goroutines should complete")
+	assert.LessOrEqual(t, int(maxRunning.Load()), 2, "should never have more than 2 concurrent checks")
+	assert.Equal(t, int32(numGoroutines), completed.Load(), "all goroutines should complete")
 
 	// at least some should have been rejected due to limit
 	// (with 10 goroutines and 100ms sleep, we expect some rejections)
-	t.Logf("Max concurrent checks: %d", maxRunning)
+	t.Logf("Max concurrent checks: %d", maxRunning.Load())
 }
 
 func TestConcurrentChecksDifferentLimits(t *testing.T) {

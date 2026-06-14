@@ -335,7 +335,7 @@ func TestCheckCustom_Timeout(t *testing.T) {
 	// test with custom timeout from config
 	conditions := Config{
 		Custom:        "sleep 2",
-		CustomTimeout: durationPtr(500 * time.Millisecond),
+		CustomTimeout: new(500 * time.Millisecond),
 	}
 
 	start = time.Now()
@@ -583,9 +583,4 @@ func TestConcurrentChecksDifferentLimits(t *testing.T) {
 			assert.Equal(t, tt.expected, cap(checker.semaphore))
 		})
 	}
-}
-
-//go:fix inline
-func durationPtr(d time.Duration) *time.Duration {
-	return new(d)
 }

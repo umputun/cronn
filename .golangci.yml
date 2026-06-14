@@ -28,6 +28,7 @@ linters:
       excludes:
         - G118
         - G120
+        - G124
         - G204
         - G703
         - G704

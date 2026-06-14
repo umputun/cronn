@@ -30,7 +30,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 			config: &YamlConfig{Jobs: []JobSpec{{
 				Spec: "@daily", Command: "backup.sh", Name: "Daily backup",
 				Repeater: &RepeaterConfig{
-					Attempts: new(3), Duration: durationPtr(time.Second),
+					Attempts: new(3), Duration: new(time.Second),
 					Factor: new(2.0), Jitter: new(true),
 				},
 			}}},
@@ -104,7 +104,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 		{
 			name: "invalid repeater duration too small",
 			config: &YamlConfig{Jobs: []JobSpec{{
-				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Duration: durationPtr(100 * time.Microsecond)},
+				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Duration: new(100 * time.Microsecond)},
 			}}},
 			wantErr: true,
 			errMsg:  "duration must be at least 1ms",
@@ -112,7 +112,7 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 		{
 			name: "invalid repeater duration too large",
 			config: &YamlConfig{Jobs: []JobSpec{{
-				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Duration: durationPtr(2 * time.Hour)},
+				Spec: "@daily", Command: "test", Repeater: &RepeaterConfig{Duration: new(2 * time.Hour)},
 			}}},
 			wantErr: true,
 			errMsg:  "duration must not exceed 1h0m0s",
@@ -179,7 +179,7 @@ func TestValidateRepeaterConfig(t *testing.T) {
 	}{
 		{
 			name:    "valid full config",
-			config:  &RepeaterConfig{Attempts: new(5), Duration: durationPtr(time.Second), Factor: new(2.5), Jitter: new(true)},
+			config:  &RepeaterConfig{Attempts: new(5), Duration: new(time.Second), Factor: new(2.5), Jitter: new(true)},
 			jobNum:  1,
 			wantErr: false,
 		},
@@ -191,7 +191,7 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "valid partial - duration only",
-			config:  &RepeaterConfig{Duration: durationPtr(500 * time.Millisecond)},
+			config:  &RepeaterConfig{Duration: new(500 * time.Millisecond)},
 			jobNum:  1,
 			wantErr: false,
 		},
@@ -221,13 +221,13 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "valid boundary - min duration",
-			config:  &RepeaterConfig{Duration: durationPtr(time.Millisecond)},
+			config:  &RepeaterConfig{Duration: new(time.Millisecond)},
 			jobNum:  1,
 			wantErr: false,
 		},
 		{
 			name:    "valid boundary - max duration",
-			config:  &RepeaterConfig{Duration: durationPtr(time.Hour)},
+			config:  &RepeaterConfig{Duration: new(time.Hour)},
 			jobNum:  1,
 			wantErr: false,
 		},
@@ -266,28 +266,28 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "duration too small",
-			config:  &RepeaterConfig{Duration: durationPtr(time.Microsecond)},
+			config:  &RepeaterConfig{Duration: new(time.Microsecond)},
 			jobNum:  2,
 			wantErr: true,
 			errMsg:  "job 2: repeater.duration must be at least 1ms",
 		},
 		{
 			name:    "duration zero",
-			config:  &RepeaterConfig{Duration: durationPtr(0)},
+			config:  &RepeaterConfig{Duration: new(time.Duration(0))},
 			jobNum:  2,
 			wantErr: true,
 			errMsg:  "duration must be at least 1ms",
 		},
 		{
 			name:    "duration negative",
-			config:  &RepeaterConfig{Duration: durationPtr(-time.Second)},
+			config:  &RepeaterConfig{Duration: new(-time.Second)},
 			jobNum:  2,
 			wantErr: true,
 			errMsg:  "duration must be at least 1ms",
 		},
 		{
 			name:    "duration too large",
-			config:  &RepeaterConfig{Duration: durationPtr(time.Hour + time.Second)},
+			config:  &RepeaterConfig{Duration: new(time.Hour + time.Second)},
 			jobNum:  2,
 			wantErr: true,
 			errMsg:  "duration must not exceed 1h0m0s",
@@ -301,7 +301,7 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "factor zero",
-			config:  &RepeaterConfig{Factor: floatPtr(0)},
+			config:  &RepeaterConfig{Factor: new(0.0)},
 			jobNum:  3,
 			wantErr: true,
 			errMsg:  "factor must be between 1.0 and 10.0",
@@ -322,7 +322,7 @@ func TestValidateRepeaterConfig(t *testing.T) {
 		},
 		{
 			name:    "multiple invalid fields",
-			config:  &RepeaterConfig{Attempts: new(0), Duration: durationPtr(0), Factor: floatPtr(0)},
+			config:  &RepeaterConfig{Attempts: new(0), Duration: new(time.Duration(0)), Factor: new(0.0)},
 			jobNum:  4,
 			wantErr: true,
 			errMsg:  "attempts must be between 1 and 100", // first error only
@@ -519,14 +519,4 @@ func TestGenerateSchema(t *testing.T) {
 	assert.Contains(t, schemaStr, "command")
 	assert.Contains(t, schemaStr, "spec")
 	assert.Contains(t, schemaStr, "sched")
-}
-
-//go:fix inline
-func floatPtr(f float64) *float64 {
-	return new(f)
-}
-
-//go:fix inline
-func durationPtr(d time.Duration) *time.Duration {
-	return new(d)
 }

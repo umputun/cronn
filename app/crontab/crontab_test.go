@@ -339,17 +339,16 @@ func TestParser_ChangesFileCreatedLater(t *testing.T) {
 	require.NoError(t, err, "Changes() should not error when file doesn't exist")
 	require.NotNil(t, ch, "channel should be returned")
 
-	// create file after a short delay
+	// create file after a short delay, writing atomically (temp file + rename) so the
+	// poll-based watcher never observes the empty intermediate file, which would yield
+	// zero jobs and flake the test
 	time.AfterFunc(time.Millisecond*300, func() {
-		f, e := os.Create(filePath) //nolint:gosec // test file in temp directory
-		if e != nil {
-			panic("failed to create test file: " + e.Error())
-		}
-		if _, e = f.WriteString("1 * * * * ls\n"); e != nil {
+		tmp := filePath + ".tmp"
+		if e := os.WriteFile(tmp, []byte("1 * * * * ls\n"), 0o600); e != nil { //nolint:gosec // test file in temp directory
 			panic("failed to write test file: " + e.Error())
 		}
-		if e = f.Close(); e != nil {
-			panic("failed to close test file: " + e.Error())
+		if e := os.Rename(tmp, filePath); e != nil {
+			panic("failed to rename test file: " + e.Error())
 		}
 	})
 

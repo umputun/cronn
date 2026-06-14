@@ -33,6 +33,14 @@ type conn struct {
 	intToTime         bool
 	textToTime        bool
 	integerTimeFormat string
+
+	// inMemory records whether the underlying database resides only in
+	// memory (DSN like ":memory:", "file::memory:", or a shared-cache
+	// memory URI). For such databases, dropping the *only* connection
+	// also drops the database itself, so IsValid must not discard the
+	// connection just because an in-flight query was interrupted.
+	// See #196.
+	inMemory bool
 }
 
 func newConn(dsn string) (*conn, error) {
@@ -74,6 +82,18 @@ func newConn(dsn string) (*conn, error) {
 		return nil, err
 	}
 
+	// sqlite3_db_filename returns an empty string for databases that
+	// are not backed by a file (":memory:", "file::memory:", shared-cache
+	// memory URIs, temporary databases). Cache the answer once so we
+	// don't have to re-derive it on every IsValid call.
+	zMain, mainErr := libc.CString("main")
+	if mainErr != nil {
+		c.Close()
+		return nil, mainErr
+	}
+	defer libc.Xfree(c.tls, zMain)
+	c.inMemory = libc.GoString(sqlite3.Xsqlite3_db_filename(c.tls, c.db, zMain)) == ""
+
 	if err = applyQueryParams(c, query); err != nil {
 		c.Close()
 		return nil, err
@@ -82,29 +102,49 @@ func newConn(dsn string) (*conn, error) {
 	return c, nil
 }
 
-// Attempt to parse s as a time. Return (s, false) if s is not
-// recognized as a valid time encoding.
-func (c *conn) parseTime(s string) (interface{}, bool) {
+// parseTime attempts to parse s as a time encoding. If hintIdx is a valid
+// index into parseTimeFormats, that format is tried before the rest of the
+// list; otherwise the search runs in declaration order. The returned int is
+// the index of the format that matched, or -1 if the parseTimeString
+// (t.String()) branch matched or all formats failed. Callers that scan many
+// rows of a same-format column can feed the previous match back as hintIdx
+// to skip the redundant time.Parse attempts that would otherwise run for
+// every row.
+//
+// Return value contract is preserved: (parsed-value, ok). On failure the
+// value is the original input string and ok is false.
+func (c *conn) parseTime(s string, hintIdx int) (interface{}, bool, int) {
 	if v, ok := c.parseTimeString(s, strings.Index(s, "m=")); ok {
-		return v, true
+		return v, true, -1
 	}
 
 	ts, hadZ := strings.CutSuffix(s, "Z")
 
-	for _, f := range parseTimeFormats {
-		var t time.Time
-		var err error
+	tryFormat := func(f string) (time.Time, error) {
 		if c.loc != nil && !hadZ {
-			t, err = time.ParseInLocation(f, ts, c.loc)
-		} else {
-			t, err = time.Parse(f, ts)
+			return time.ParseInLocation(f, ts, c.loc)
 		}
-		if err == nil {
-			return c.applyTimezone(t), true
+		return time.Parse(f, ts)
+	}
+
+	// Try the caller's hint first, if any.
+	if hintIdx >= 0 && hintIdx < len(parseTimeFormats) {
+		if t, err := tryFormat(parseTimeFormats[hintIdx]); err == nil {
+			return c.applyTimezone(t), true, hintIdx
 		}
 	}
 
-	return s, false
+	// Sequential fallthrough, skipping the hint we already tried.
+	for i, f := range parseTimeFormats {
+		if i == hintIdx {
+			continue
+		}
+		if t, err := tryFormat(f); err == nil {
+			return c.applyTimezone(t), true, i
+		}
+	}
+
+	return s, false, -1
 }
 
 // Attempt to parse s as a time string produced by t.String().  If x > 0 it's
@@ -191,9 +231,19 @@ func (c *conn) columnText(pstmt uintptr, iCol int) (v string, err error) {
 		return "", nil
 	}
 
+	// Copy the SQLite-owned UTF-8 bytes into a fresh Go-owned buffer, then
+	// reinterpret that buffer as a string without a second copy. The default
+	// string(b) conversion calls runtime.slicebytetostring, which mallocs a
+	// new backing array and memcpys b into it because the compiler must
+	// assume the caller could mutate b. Here b is local to this function and
+	// is never written to again after the copy above, so it is safe to view
+	// it as the string's backing memory directly. The string is immutable
+	// from Go's perspective, b becomes unreachable as a []byte after we
+	// return, and the GC keeps the underlying array alive for as long as the
+	// returned string is reachable.
 	b := make([]byte, len)
 	copy(b, (*libc.RawMem)(unsafe.Pointer(p))[:len:len])
-	return string(b), nil
+	return unsafe.String(unsafe.SliceData(b), len), nil
 }
 
 // C documentation
@@ -822,7 +872,18 @@ func (c *conn) IsValid() bool {
 }
 
 func (c *conn) usable() bool {
-	return c.db != 0 && sqlite3.Xsqlite3_is_interrupted(c.tls, c.db) == 0
+	if c.db == 0 {
+		return false
+	}
+	// For in-memory databases the connection is the database: discarding
+	// it because the previous query was interrupted destroys all the data.
+	// Treat an interrupted in-memory connection as still valid so that
+	// database/sql returns it to the pool instead of dropping it. See #196
+	// (regressed by the fix for #198 which added the is_interrupted check).
+	if c.inMemory {
+		return true
+	}
+	return sqlite3.Xsqlite3_is_interrupted(c.tls, c.db) == 0
 }
 
 type userDefinedFunction struct {

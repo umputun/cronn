@@ -264,7 +264,7 @@ func (api *Client) SendMessageContext(ctx context.Context, channelID string, opt
 		api.Debugf("Sending request: %s", redactToken(reqBody))
 	}
 
-	if err = doPost(api.httpclient, req, parser(&response), api); err != nil {
+	if _, err = doPost(api.httpclient, req, parser(&response), api); err != nil {
 		return "", "", "", err
 	}
 
@@ -278,12 +278,7 @@ func (api *Client) SendMessageContext(ctx context.Context, channelID string, opt
 func redactToken(b []byte) []byte {
 	// See https://api.slack.com/authentication/token-types
 	// and https://api.slack.com/authentication/rotation
-	re, err := regexp.Compile(`(token=x[a-z.]+)-[0-9A-Za-z-]+`)
-	if err != nil {
-		// The regular expression above should never result in errors,
-		// but just in case, do no harm.
-		return b
-	}
+	re := regexp.MustCompile(`(token=x[a-z.]+)-[0-9A-Za-z-]+`)
 	// Keep "token=" and the first element of the token, which identifies its type
 	// (this could be useful for debugging, e.g. when using a wrong token).
 	return re.ReplaceAll(b, []byte("$1-REDACTED"))
@@ -375,13 +370,15 @@ func (t sendConfig) BuildRequestContext(ctx context.Context, token, channelID st
 			deleteOriginal:  t.deleteOriginal,
 		}.BuildRequestContext(ctx)
 	default:
-		return formSender{endpoint: t.endpoint, values: t.values}.BuildRequestContext(ctx)
+		return formSender{endpoint: t.endpoint, values: t.values, attachments: t.attachments, blocks: t.blocks}.BuildRequestContext(ctx)
 	}
 }
 
 type formSender struct {
-	endpoint string
-	values   url.Values
+	endpoint    string
+	values      url.Values
+	attachments []Attachment
+	blocks      Blocks
 }
 
 func (t formSender) BuildRequest() (*http.Request, func(*chatResponseFull) responseParser, error) {
@@ -389,6 +386,22 @@ func (t formSender) BuildRequest() (*http.Request, func(*chatResponseFull) respo
 }
 
 func (t formSender) BuildRequestContext(ctx context.Context) (*http.Request, func(*chatResponseFull) responseParser, error) {
+	if t.attachments != nil {
+		attachmentBytes, err := json.Marshal(t.attachments)
+		if err != nil {
+			return nil, nil, err
+		}
+		t.values.Set("attachments", string(attachmentBytes))
+	}
+
+	if t.blocks.BlockSet != nil {
+		blockBytes, err := json.Marshal(t.blocks.BlockSet)
+		if err != nil {
+			return nil, nil, err
+		}
+		t.values.Set("blocks", string(blockBytes))
+	}
+
 	req, err := formReq(ctx, t.endpoint, t.values)
 	return req, func(resp *chatResponseFull) responseParser {
 		return newJSONParser(resp)
@@ -626,6 +639,7 @@ func MsgOptionDeleteOriginal(responseURL string) MsgOption {
 // MsgOptionAsUser whether or not to send the message as the user.
 func MsgOptionAsUser(b bool) MsgOption {
 	return func(config *sendConfig) error {
+		//lint:ignore S1002 - we want to explicitly check against the constant
 		if b != DEFAULT_MESSAGE_ASUSER {
 			config.values.Set("as_user", "true")
 		}
@@ -670,33 +684,24 @@ func MsgOptionAttachments(attachments ...Attachment) MsgOption {
 
 		config.attachments = attachments
 
-		// FIXME: We are setting the attachments on the message twice: above for
-		// the json version, and below for the html version.  The marshalled bytes
-		// we put into config.values below don't work directly in the Msg version.
-
-		attachmentBytes, err := json.Marshal(attachments)
-		if err == nil {
-			config.values.Set("attachments", string(attachmentBytes))
-		}
-
-		return err
+		return nil
 	}
 }
 
-// MsgOptionBlocks sets blocks for the message
+// MsgOptionBlocks sets blocks for the message.
+// Calling with no arguments or an empty slice sends "blocks=[]" to clear blocks.
+// To skip setting blocks entirely, do not include this option.
 func MsgOptionBlocks(blocks ...Block) MsgOption {
 	return func(config *sendConfig) error {
-		if blocks == nil {
-			return nil
+		if len(blocks) == 0 {
+			// Explicitly set to empty slice (not nil) so the sender
+			// knows to marshal "[]" and clear blocks on the message.
+			config.blocks.BlockSet = []Block{}
+		} else {
+			config.blocks.BlockSet = append(config.blocks.BlockSet, blocks...)
 		}
 
-		config.blocks.BlockSet = append(config.blocks.BlockSet, blocks...)
-
-		blocks, err := json.Marshal(blocks)
-		if err == nil {
-			config.values.Set("blocks", string(blocks))
-		}
-		return err
+		return nil
 	}
 }
 
@@ -902,6 +907,24 @@ func MsgOptionMarkdownText(text string) MsgOption {
 	}
 }
 
+// TaskDisplayMode controls how task_card / task_update chunks render in a
+// streamed message. Used with chat.startStream.
+type TaskDisplayMode string
+
+const (
+	TaskDisplayModeTimeline TaskDisplayMode = "timeline"
+	TaskDisplayModePlan     TaskDisplayMode = "plan"
+)
+
+// MsgOptionTaskDisplayMode sets task_display_mode on chat.startStream,
+// controlling whether tasks render as a sequential timeline or a grouped plan.
+func MsgOptionTaskDisplayMode(mode TaskDisplayMode) MsgOption {
+	return func(config *sendConfig) error {
+		config.values.Set("task_display_mode", string(mode))
+		return nil
+	}
+}
+
 // UnsafeMsgOptionEndpoint deliver the message to the specified endpoint.
 // NOTE: USE AT YOUR OWN RISK: No issues relating to the use of this Option
 // will be supported by the library, it is subject to change without notice that
@@ -936,15 +959,19 @@ func MsgOptionPostMessageParameters(params PostMessageParameters) MsgOption {
 			config.values.Set("link_names", "1")
 		}
 
+		//lint:ignore S1002 - we want to explicitly check against the constant
 		if params.UnfurlLinks != DEFAULT_MESSAGE_UNFURL_LINKS {
 			config.values.Set("unfurl_links", "true")
 		}
 
 		// I want to send a message with explicit `as_user` `true` and `unfurl_links` `false` in request.
 		// Because setting `as_user` to `true` will change the default value for `unfurl_links` to `true` on Slack API side.
+		//lint:ignore S1002 - we want to explicitly check against the constants
 		if params.AsUser != DEFAULT_MESSAGE_ASUSER && params.UnfurlLinks == DEFAULT_MESSAGE_UNFURL_LINKS {
 			config.values.Set("unfurl_links", "false")
 		}
+
+		//lint:ignore S1002 - we want to explicitly check against the constant
 		if params.UnfurlMedia != DEFAULT_MESSAGE_UNFURL_MEDIA {
 			config.values.Set("unfurl_media", "false")
 		}
@@ -954,6 +981,7 @@ func MsgOptionPostMessageParameters(params PostMessageParameters) MsgOption {
 		if params.IconEmoji != DEFAULT_MESSAGE_ICON_EMOJI {
 			config.values.Set("icon_emoji", params.IconEmoji)
 		}
+		//lint:ignore S1002 - we want to explicitly check against the constant
 		if params.Markdown != DEFAULT_MESSAGE_MARKDOWN {
 			config.values.Set("mrkdwn", "false")
 		}
@@ -961,6 +989,7 @@ func MsgOptionPostMessageParameters(params PostMessageParameters) MsgOption {
 		if params.ThreadTimestamp != DEFAULT_MESSAGE_THREAD_TIMESTAMP {
 			config.values.Set("thread_ts", params.ThreadTimestamp)
 		}
+		//lint:ignore S1002 - we want to explicitly check against the constant
 		if params.ReplyBroadcast != DEFAULT_MESSAGE_REPLY_BROADCAST {
 			config.values.Set("reply_broadcast", "true")
 		}

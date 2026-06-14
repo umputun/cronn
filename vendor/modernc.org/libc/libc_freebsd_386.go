@@ -725,3 +725,6 @@ func Xchflags(t *TLS, path uintptr, flags uint32) int32 {
 	}
 	return 0
 }
+
+// setTmGmtoff stores off into tm.Ftm_gmtoff at the platform-native width.
+func setTmGmtoff(tm *time.Tm, off int) { tm.Ftm_gmtoff = int32(off) }

@@ -954,3 +954,6 @@ func Xlocaleconv(tls *TLS) uintptr { /* localeconv.c:31:14: */
 func X__tolower(tls *TLS, c int32) int32 { /* table.c:1878:20: */
 	return Xtolower(tls, c)
 }
+
+// setTmGmtoff stores off into tm.Ftm_gmtoff at the platform-native width.
+func setTmGmtoff(tm *time.Tm, off int) { tm.Ftm_gmtoff = int64(off) }

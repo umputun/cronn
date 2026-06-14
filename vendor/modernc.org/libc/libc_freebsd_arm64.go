@@ -896,3 +896,6 @@ func Xclock(t *TLS) time.Clock_t {
 	}
 	return time.Clock_t(gotime.Since(startTime) * gotime.Duration(time.CLOCKS_PER_SEC) / gotime.Second)
 }
+
+// setTmGmtoff stores off into tm.Ftm_gmtoff at the platform-native width.
+func setTmGmtoff(tm *time.Tm, off int) { tm.Ftm_gmtoff = int64(off) }

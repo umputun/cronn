@@ -310,6 +310,7 @@ func (api *Client) GetFilesContext(ctx context.Context, params GetFilesParameter
 	if params.Page != DEFAULT_FILES_PAGE {
 		values.Add("page", strconv.Itoa(params.Page))
 	}
+	//lint:ignore S1002 - we want to explicitly check against the constant
 	if params.ShowHidden != DEFAULT_FILES_SHOW_HIDDEN {
 		values.Add("show_files_hidden_by_limit", strconv.FormatBool(params.ShowHidden))
 	}
@@ -476,12 +477,13 @@ func (api *Client) GetUploadURLExternalContext(ctx context.Context, params GetUp
 // This is not a Slack API method, but a helper function to upload files to the URL
 func (api *Client) UploadToURL(ctx context.Context, params UploadToURLParameters) (err error) {
 	values := url.Values{}
-	if params.Content != "" {
+	switch {
+	case params.Content != "":
 		contentReader := strings.NewReader(params.Content)
 		err = postWithMultipartResponse(ctx, api.httpclient, params.UploadURL, params.Filename, "file", api.token, values, contentReader, nil, api)
-	} else if params.File != "" {
+	case params.File != "":
 		err = postLocalWithMultipartResponse(ctx, api.httpclient, params.UploadURL, params.File, "file", api.token, values, nil, api)
-	} else if params.Reader != nil {
+	case params.Reader != nil:
 		err = postWithMultipartResponse(ctx, api.httpclient, params.UploadURL, params.Filename, "file", api.token, values, params.Reader, nil, api)
 	}
 	return err

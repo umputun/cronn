@@ -19,8 +19,12 @@ const (
 	MBTVideo          MessageBlockType = "video"
 	MBTMarkdown       MessageBlockType = "markdown"
 	MBTTable          MessageBlockType = "table"
+	MBTDataTable      MessageBlockType = "data_table"
 	MBTTaskCard       MessageBlockType = "task_card"
 	MBTPlan           MessageBlockType = "plan"
+	MBTAlert          MessageBlockType = "alert"
+	MBTCard           MessageBlockType = "card"
+	MBTCarousel       MessageBlockType = "carousel"
 )
 
 // Block defines an interface all block types should implement

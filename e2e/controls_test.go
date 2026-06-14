@@ -68,15 +68,8 @@ func TestTheme_ToggleDarkLight(t *testing.T) {
 	initialTheme, err := page.Locator("html").GetAttribute("data-theme")
 	require.NoError(t, err)
 
-	// click theme toggle (triggers HX-Refresh which does full page reload)
-	require.NoError(t, page.Locator(".theme-toggle").Click())
-
-	// wait for page reload by waiting for header to be visible again
-	waitVisible(t, page.Locator(".header"))
-
-	// get new theme
-	newTheme, err := page.Locator("html").GetAttribute("data-theme")
-	require.NoError(t, err)
+	// toggle and wait for the HX-Refresh reload to apply a new theme
+	newTheme := clickThemeToggle(t, page, initialTheme)
 
 	// verify theme changed
 	assert.NotEqual(t, initialTheme, newTheme, "theme should change after toggle")
@@ -199,19 +192,16 @@ func TestTheme_DarkThemeWorks(t *testing.T) {
 	navigateToDashboard(t, page)
 
 	// toggle until we get dark theme
-	for i := 0; i < 3; i++ {
-		theme, err := page.Locator("html").GetAttribute("data-theme")
-		require.NoError(t, err)
+	theme, err := page.Locator("html").GetAttribute("data-theme")
+	require.NoError(t, err)
+	for range 3 {
 		if theme == "dark" {
 			break
 		}
-		require.NoError(t, page.Locator(".theme-toggle").Click())
-		waitVisible(t, page.Locator(".header"))
+		theme = clickThemeToggle(t, page, theme)
 	}
 
 	// verify we're in dark theme
-	theme, err := page.Locator("html").GetAttribute("data-theme")
-	require.NoError(t, err)
 	assert.Equal(t, "dark", theme, "should be in dark theme")
 
 	// verify page works in dark theme
@@ -226,7 +216,7 @@ func TestTheme_DarkThemeWorks(t *testing.T) {
 	assert.GreaterOrEqual(t, count, 1, "job cards should be visible in dark theme")
 
 	// verify modal works in dark theme
-	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
+	clickAndAwait(t, page, page.Locator(".job-card .info-btn").First(), jobModalRe)
 	waitVisible(t, page.Locator("#job-modal"))
 
 	visible, err = page.Locator(".job-modal").IsVisible()
@@ -247,19 +237,15 @@ func TestTheme_LightThemeWorks(t *testing.T) {
 	require.NoError(t, err)
 
 	// toggle until we get light theme
-	for i := 0; i < 3; i++ {
-		theme, err := page.Locator("html").GetAttribute("data-theme")
-		require.NoError(t, err)
+	theme := initialTheme
+	for range 3 {
 		if theme == "light" {
 			break
 		}
-		require.NoError(t, page.Locator(".theme-toggle").Click())
-		waitVisible(t, page.Locator(".header"))
+		theme = clickThemeToggle(t, page, theme)
 	}
 
 	// verify we're in light theme
-	theme, err := page.Locator("html").GetAttribute("data-theme")
-	require.NoError(t, err)
 	assert.Equal(t, "light", theme, "should be in light theme")
 
 	// verify page still works in light theme - check key elements
@@ -286,15 +272,12 @@ func TestTheme_LightThemeWorks(t *testing.T) {
 	assert.True(t, visible, "list view should work in light theme")
 
 	// restore original theme if different
-	if initialTheme != "light" {
-		for i := 0; i < 3; i++ {
-			currentTheme, _ := page.Locator("html").GetAttribute("data-theme")
-			if currentTheme == initialTheme {
-				break
-			}
-			require.NoError(t, page.Locator(".theme-toggle").Click())
-			waitVisible(t, page.Locator(".header"))
+	currentTheme := theme
+	for range 3 {
+		if currentTheme == initialTheme {
+			break
 		}
+		currentTheme = clickThemeToggle(t, page, currentTheme)
 	}
 }
 
@@ -306,13 +289,8 @@ func TestTheme_PersistsAcrossReload(t *testing.T) {
 	initialTheme, err := page.Locator("html").GetAttribute("data-theme")
 	require.NoError(t, err)
 
-	// toggle theme
-	require.NoError(t, page.Locator(".theme-toggle").Click())
-	waitVisible(t, page.Locator(".header"))
-
-	// verify theme changed
-	newTheme, err := page.Locator("html").GetAttribute("data-theme")
-	require.NoError(t, err)
+	// toggle theme and wait for the HX-Refresh reload to apply it
+	newTheme := clickThemeToggle(t, page, initialTheme)
 	assert.NotEqual(t, initialTheme, newTheme)
 
 	// reload page

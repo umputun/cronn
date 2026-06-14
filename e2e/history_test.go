@@ -15,9 +15,8 @@ import (
 func runJobAndWaitForCompletion(t *testing.T, page playwright.Page) {
 	t.Helper()
 
-	// click run button on first job
-	require.NoError(t, page.Locator(".job-card .btn-compact").First().Click())
-	waitVisible(t, page.Locator("#confirm-dialog"))
+	// click run button on first job (lives in the auto-refreshing #jobs-container)
+	clickUntilVisible(t, page.Locator(".job-card .btn-compact").First(), page.Locator("#confirm-dialog"))
 
 	// click confirm to run the job
 	require.NoError(t, page.Locator(".btn-confirm").Click())
@@ -42,7 +41,7 @@ func TestHistory_ModalOpensAfterJobRun(t *testing.T) {
 
 	// now click history button (should be enabled after job ran)
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// verify history modal is visible
@@ -64,7 +63,7 @@ func TestHistory_ShowsExecutionRecords(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// verify history table exists
@@ -93,7 +92,7 @@ func TestHistory_ShowsCommandInModal(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// verify command is shown in modal
@@ -112,12 +111,12 @@ func TestHistory_ViewLogsButton(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// click view logs button
 	logsBtn := page.Locator(".btn-logs").First()
-	require.NoError(t, logsBtn.Click())
+	clickAndAwait(t, page, logsBtn, logsPathRe)
 
 	// wait for logs view to load
 	waitVisible(t, page.Locator(".logs-output"))
@@ -143,16 +142,16 @@ func TestHistory_BackButtonFromLogs(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// click view logs button
 	logsBtn := page.Locator(".btn-logs").First()
-	require.NoError(t, logsBtn.Click())
+	clickAndAwait(t, page, logsBtn, logsPathRe)
 	waitVisible(t, page.Locator(".logs-output"))
 
 	// click back button
-	require.NoError(t, page.Locator(".modal-back").Click())
+	clickAndAwait(t, page, page.Locator(".modal-back"), historyPathRe)
 
 	// wait for history table to reappear
 	waitVisible(t, page.Locator(".history-table"))
@@ -173,7 +172,7 @@ func TestHistory_ModalClosesOnBackdropClick(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// click on backdrop to close
@@ -194,7 +193,7 @@ func TestHistory_ModalClosesWithCloseButton(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// click close button
@@ -215,12 +214,12 @@ func TestHistory_LogsShowJobOutput(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// click view logs button
 	logsBtn := page.Locator(".btn-logs").First()
-	require.NoError(t, logsBtn.Click())
+	clickAndAwait(t, page, logsBtn, logsPathRe)
 	waitVisible(t, page.Locator(".logs-output"))
 
 	// verify logs contain expected output (echo commands output their text)
@@ -250,12 +249,12 @@ func TestHistory_LogsShowExitCode(t *testing.T) {
 
 	// open history modal
 	historyBtn := page.Locator(".job-card .history-btn:not([disabled])").First()
-	require.NoError(t, historyBtn.Click())
+	clickAndAwait(t, page, historyBtn, historyPathRe)
 	waitVisible(t, page.Locator("#history-modal"))
 
 	// click view logs button
 	logsBtn := page.Locator(".btn-logs").First()
-	require.NoError(t, logsBtn.Click())
+	clickAndAwait(t, page, logsBtn, logsPathRe)
 	waitVisible(t, page.Locator(".logs-output"))
 
 	// verify status shows exit code

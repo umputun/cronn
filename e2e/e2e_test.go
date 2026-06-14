@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -115,8 +117,8 @@ func TestMain(m *testing.M) {
 		slowMo = 50 // slow down visible browser for easier observation
 	}
 	browser, err = pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(headless),
-		SlowMo:   playwright.Float(slowMo),
+		Headless: new(headless),
+		SlowMo:   new(slowMo),
 	})
 	if err != nil {
 		fmt.Printf("failed to launch browser: %v\n", err)
@@ -145,6 +147,9 @@ func createTestCrontab() error {
 0 0 * * * echo "job3: daily at midnight"
 30 8 * * 1-5 echo "job4: weekdays at 8:30"
 `
+	if err := os.MkdirAll(filepath.Dir("../"+testCrontab), 0o750); err != nil {
+		return fmt.Errorf("failed to create test crontab dir: %w", err)
+	}
 	if err := os.WriteFile("../"+testCrontab, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("failed to write test crontab: %w", err)
 	}
@@ -255,6 +260,70 @@ func defaultClickOpts() playwright.LocatorClickOptions {
 	return playwright.LocatorClickOptions{
 		Position: &playwright.Position{X: 5, Y: 5},
 	}
+}
+
+// HTMX endpoint patterns used to await the network request behind a click before
+// asserting on the swapped-in content. avoids races where the assertion runs before
+// the htmx afterSwap completes (or the click lands mid-swap and never fires).
+var (
+	historyPathRe = regexp.MustCompile(`/api/jobs/.+/history`)
+	logsPathRe    = regexp.MustCompile(`/api/jobs/.+/executions/\d+/logs`)
+	jobModalRe    = regexp.MustCompile(`/api/jobs/.+/modal`)
+	settingsRe    = regexp.MustCompile(`/api/settings/modal`)
+)
+
+// clickAndAwait clicks loc and waits for the HTMX request whose URL matches urlRe to
+// complete, so subsequent DOM assertions run after the swap rather than racing it.
+// the dashboard auto-refreshes #jobs-container every 5s; a click landing during that
+// swap is swallowed and its request never fires, so retry until it does. urlRe must be
+// an idempotent GET (history/logs/modal), since a retry may issue the request twice.
+func clickAndAwait(t *testing.T, page playwright.Page, loc playwright.Locator, urlRe *regexp.Regexp) {
+	t.Helper()
+	var lastErr error
+	for range 6 {
+		_, lastErr = page.ExpectResponse(urlRe, func() error {
+			return loc.Click(playwright.LocatorClickOptions{Timeout: new(3000.0)})
+		}, playwright.PageExpectResponseOptions{Timeout: new(4000.0)})
+		if lastErr == nil {
+			return
+		}
+	}
+	require.NoError(t, lastErr)
+}
+
+// clickUntilVisible clicks loc until want becomes visible, retrying if a periodic
+// #jobs-container refresh (every 5s) swallows the click before it registers. checks
+// want first each iteration to avoid clicking again once it is already showing. use for
+// clicks whose effect is client-side (e.g. opening the confirm dialog) with no response.
+func clickUntilVisible(t *testing.T, loc, want playwright.Locator) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		if v, _ := want.IsVisible(); v {
+			return true
+		}
+		_ = loc.Click(playwright.LocatorClickOptions{Timeout: new(2000.0)})
+		v, _ := want.IsVisible()
+		return v
+	}, 30*time.Second, 200*time.Millisecond)
+}
+
+// clickThemeToggle clicks the theme toggle and waits for the HX-Refresh full-page
+// reload to settle on a theme different from prev, returning the new data-theme value.
+// the toggle triggers a reload, so reading data-theme right after the click is racy;
+// poll until it changes instead of relying on a shared element being visible.
+func clickThemeToggle(t *testing.T, page playwright.Page, prev string) string {
+	t.Helper()
+	require.NoError(t, page.Locator(".theme-toggle").Click())
+	var cur string
+	require.Eventually(t, func() bool {
+		v, e := page.Locator("html").GetAttribute("data-theme")
+		if e != nil {
+			return false
+		}
+		cur = v
+		return v != prev
+	}, 5*time.Second, 50*time.Millisecond)
+	return cur
 }
 
 // --- dashboard tests ---

@@ -26,8 +26,7 @@ func TestManualRun_ConfirmDialogOpens(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// click run button on first enabled job
-	require.NoError(t, page.Locator(".job-card .btn-compact").First().Click())
-	waitVisible(t, page.Locator("#confirm-dialog"))
+	clickUntilVisible(t, page.Locator(".job-card .btn-compact").First(), page.Locator("#confirm-dialog"))
 
 	// verify confirm dialog is visible
 	assert.True(t, isModalVisible(t, page, "#confirm-dialog"), "confirm dialog should be visible")
@@ -44,8 +43,7 @@ func TestManualRun_ConfirmDialogCancel(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// click run button
-	require.NoError(t, page.Locator(".job-card .btn-compact").First().Click())
-	waitVisible(t, page.Locator("#confirm-dialog"))
+	clickUntilVisible(t, page.Locator(".job-card .btn-compact").First(), page.Locator("#confirm-dialog"))
 
 	// click cancel button
 	require.NoError(t, page.Locator(".btn-cancel").Click())
@@ -61,8 +59,7 @@ func TestManualRun_ConfirmDialogShowsCommand(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// click run button
-	require.NoError(t, page.Locator(".job-card .btn-compact").First().Click())
-	waitVisible(t, page.Locator("#confirm-dialog"))
+	clickUntilVisible(t, page.Locator(".job-card .btn-compact").First(), page.Locator("#confirm-dialog"))
 
 	// verify command textarea has content
 	command, err := page.Locator("#confirm-command").InputValue()
@@ -81,8 +78,7 @@ func TestManualRun_ConfirmDialogHasDateField(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// click run button
-	require.NoError(t, page.Locator(".job-card .btn-compact").First().Click())
-	waitVisible(t, page.Locator("#confirm-dialog"))
+	clickUntilVisible(t, page.Locator(".job-card .btn-compact").First(), page.Locator("#confirm-dialog"))
 
 	// verify date field exists (may be hidden by default)
 	dateField := page.Locator("#confirm-date-field")
@@ -116,8 +112,7 @@ func TestManualRun_RunButtonInListView(t *testing.T) {
 	assert.GreaterOrEqual(t, count, 1, "should have run buttons in list view")
 
 	// click run button in list view
-	require.NoError(t, page.Locator(".job-row .btn-compact").First().Click())
-	waitVisible(t, page.Locator("#confirm-dialog"))
+	clickUntilVisible(t, page.Locator(".job-row .btn-compact").First(), page.Locator("#confirm-dialog"))
 
 	// verify confirm dialog opens
 	assert.True(t, isModalVisible(t, page, "#confirm-dialog"), "confirm dialog should open from list view")

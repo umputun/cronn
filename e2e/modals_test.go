@@ -15,7 +15,7 @@ func TestModal_JobDetailsOpens(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// click info button on first job
-	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
+	clickAndAwait(t, page, page.Locator(".job-card .info-btn").First(), jobModalRe)
 	waitVisible(t, page.Locator("#job-modal"))
 
 	// verify modal is visible
@@ -33,7 +33,7 @@ func TestModal_JobDetailsShowsContent(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// click info button on first job
-	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
+	clickAndAwait(t, page, page.Locator(".job-card .info-btn").First(), jobModalRe)
 	waitVisible(t, page.Locator("#job-modal"))
 
 	// verify modal shows job details
@@ -56,7 +56,7 @@ func TestModal_JobDetailsCloses(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// open modal
-	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
+	clickAndAwait(t, page, page.Locator(".job-card .info-btn").First(), jobModalRe)
 	waitVisible(t, page.Locator("#job-modal"))
 
 	// click close button
@@ -72,7 +72,7 @@ func TestModal_SettingsOpens(t *testing.T) {
 	navigateToDashboard(t, page)
 
 	// click settings button in header
-	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
+	clickAndAwait(t, page, page.Locator(".control-btn[title='Settings & About']"), settingsRe)
 	waitVisible(t, page.Locator("#settings-modal"))
 
 	// verify settings modal is visible
@@ -88,9 +88,11 @@ func TestModal_SettingsShowsConfiguration(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	// open settings modal
-	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
+	// open settings modal; the backdrop shows immediately via onclick, but the
+	// content loads via hx-get, so wait for the swapped-in content before asserting
+	clickAndAwait(t, page, page.Locator(".control-btn[title='Settings & About']"), settingsRe)
 	waitVisible(t, page.Locator("#settings-modal"))
+	waitVisible(t, page.Locator(".settings-modal"))
 
 	// verify settings sections
 	visible, err := page.Locator(".settings-modal:has-text('Application')").IsVisible()
@@ -111,7 +113,7 @@ func TestModal_SettingsCloses(t *testing.T) {
 	navigateToDashboard(t, page)
 
 	// open settings modal
-	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
+	clickAndAwait(t, page, page.Locator(".control-btn[title='Settings & About']"), settingsRe)
 	waitVisible(t, page.Locator("#settings-modal"))
 
 	// click close button
@@ -130,7 +132,7 @@ func TestModal_JobDetailsClosesOnBackdropClick(t *testing.T) {
 	waitForJobsLoaded(t, page)
 
 	// open modal
-	require.NoError(t, page.Locator(".job-card .info-btn").First().Click())
+	clickAndAwait(t, page, page.Locator(".job-card .info-btn").First(), jobModalRe)
 	waitVisible(t, page.Locator("#job-modal"))
 
 	// click on backdrop (not on modal content)
@@ -147,7 +149,7 @@ func TestModal_SettingsClosesOnBackdropClick(t *testing.T) {
 	navigateToDashboard(t, page)
 
 	// open settings modal
-	require.NoError(t, page.Locator(".control-btn[title='Settings & About']").Click())
+	clickAndAwait(t, page, page.Locator(".control-btn[title='Settings & About']"), settingsRe)
 	waitVisible(t, page.Locator("#settings-modal"))
 
 	// click on backdrop

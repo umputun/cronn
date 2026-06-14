@@ -3,26 +3,39 @@
 package e2e
 
 import (
+	"regexp"
 	"testing"
+	"time"
 
 	"github.com/playwright-community/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// enableAllJobs re-enables any disabled jobs (cards view)
+// togglePathRe matches the job toggle endpoint, used to await the HTMX request.
+var togglePathRe = regexp.MustCompile(`/api/jobs/.+/toggle`)
+
+// enableAllJobs re-enables any disabled jobs (cards view) and waits until none remain.
+// job enabled-state is server-global and persists across tests, so this is the reset
+// between tests and must be reliable. each iteration awaits the toggle request and then
+// the refresh-jobs swap actually reducing the disabled count, avoiding races where the
+// list is briefly empty mid-swap.
 func enableAllJobs(t *testing.T, page playwright.Page) {
 	t.Helper()
 	for {
-		disabledCount, err := page.Locator(".job-card.job-disabled").Count()
+		count, err := page.Locator(".job-card.job-disabled").Count()
 		require.NoError(t, err)
-		if disabledCount == 0 {
+		if count == 0 {
 			return
 		}
-		require.NoError(t, page.Locator(".job-card.job-disabled .btn-toggle").First().Click())
-		require.NoError(t, page.Locator(".job-card.job-disabled").WaitFor(playwright.LocatorWaitForOptions{
-			State: playwright.WaitForSelectorStateHidden,
-		}))
+		_, err = page.ExpectResponse(togglePathRe, func() error {
+			return page.Locator(".job-card.job-disabled .btn-toggle").First().Click()
+		})
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			cur, e := page.Locator(".job-card.job-disabled").Count()
+			return e == nil && cur < count
+		}, 10*time.Second, 100*time.Millisecond)
 	}
 }
 

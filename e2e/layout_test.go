@@ -52,7 +52,7 @@ func TestListView_InfoButtonOpensModal(t *testing.T) {
 	waitVisible(t, page.Locator(".jobs-table"))
 
 	// click info button on first job row
-	require.NoError(t, page.Locator(".job-row .info-btn").First().Click())
+	clickAndAwait(t, page, page.Locator(".job-row .info-btn").First(), jobModalRe)
 	waitVisible(t, page.Locator("#job-modal"))
 
 	// verify modal is visible

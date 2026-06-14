@@ -114,6 +114,11 @@ svc := service.New(..., service.WithManualTrigger(manualJobChan))
 manualJobChan <- jobID
 ```
 
+### Custom Date and EOD Interaction
+- Run confirm modal (rendered client-side by `customConfirm` in `app/web/static/app.js`) lets the user edit the command and enter an optional date (YYYYMMDD); the date field is shown only when the command contains `{{...}}` or `[[...]]` templates
+- Empty date → `time.Now()` used for template resolution; custom date → that date is parsed at midnight via `ParseInLocation("20060102", ..., time.Local)` (hour 0)
+- Because hour 0 < eodHour (17:00), EOD templates (`{{.YYYYMMDDEOD}}`) take the "previous business day" branch when a custom date is supplied: a custom date of D resolves EOD to the business day before D
+
 ## Job Enable/Disable Toggle
 
 ### Toggle Mechanism

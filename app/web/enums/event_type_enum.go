@@ -4,6 +4,7 @@ package enums
 import (
 	"database/sql/driver"
 	"fmt"
+	"strings"
 )
 
 // EventType is the exported type for the enum
@@ -73,13 +74,12 @@ var _eventTypeParseMap = map[string]EventType{
 	"failed":    EventTypeFailed,
 }
 
-// ParseEventType converts string to eventType enum value
+// ParseEventType converts string to eventType enum value.
+// Parsing is always case-insensitive.
 func ParseEventType(v string) (EventType, error) {
-
-	if val, ok := _eventTypeParseMap[v]; ok {
+	if val, ok := _eventTypeParseMap[strings.ToLower(v)]; ok {
 		return val, nil
 	}
-
 	return EventType{}, fmt.Errorf("invalid eventType: %s", v)
 }
 

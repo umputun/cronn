@@ -249,7 +249,7 @@
         <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     <span class="filter-label" id="filter-label">
-        {{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else}}Failed{{end}}
+        {{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else if eq .FilterMode.String "failed"}}Failed{{else}}Idle{{end}}
     </span>
     {{if ne .FilterMode.String "all"}}
     <span class="filter-indicator {{.FilterMode.String}}"></span>
@@ -324,8 +324,52 @@
 {{if .IsOOB}}
 <span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span>
 <span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span>
-<span id="total-count" hx-swap-oob="innerHTML">{{.TotalCount}}</span>
 {{end}}
+{{end}}
+
+{{define "stats-total"}}
+<button class="stat-total{{if eq .FilterMode.String "all"}} active{{end}}" id="stat-total"
+        {{if .IsOOB}}hx-swap-oob="outerHTML:#stat-total"{{end}}
+        hx-post="{{url "/api/filter-mode"}}"
+        hx-vals="js:{filter: 'all', search: document.querySelector('[name=search]')?.value || ''}"
+        hx-target="#jobs-container"
+        hx-swap="innerHTML"
+        title="Show all jobs">
+    <span class="stat-value" id="total-count">{{.TotalCount}}</span>
+    <span class="stat-label">Total Jobs</span>
+</button>
+{{end}}
+
+{{define "stats-breakdown"}}
+<div class="stat-breakdown" id="stats-breakdown" {{if .IsOOB}}hx-swap-oob="outerHTML:#stats-breakdown"{{end}}>
+    <button class="breakdown-item breakdown-ok{{if eq .FilterMode.String "success"}} active{{end}}"
+            hx-post="{{url "/api/filter-mode"}}"
+            hx-vals="js:{filter: 'success', search: document.querySelector('[name=search]')?.value || ''}"
+            hx-target="#jobs-container"
+            hx-swap="innerHTML"
+            title="Filter by succeeded jobs">
+        <span class="breakdown-count" id="success-count">{{.SuccessCount}}</span>
+        <span class="breakdown-label">ok</span>
+    </button>
+    <button class="breakdown-item breakdown-failed{{if eq .FilterMode.String "failed"}} active{{end}}"
+            hx-post="{{url "/api/filter-mode"}}"
+            hx-vals="js:{filter: 'failed', search: document.querySelector('[name=search]')?.value || ''}"
+            hx-target="#jobs-container"
+            hx-swap="innerHTML"
+            title="Filter by failed jobs">
+        <span class="breakdown-count" id="failed-count">{{.FailedCount}}</span>
+        <span class="breakdown-label">failed</span>
+    </button>
+    <button class="breakdown-item breakdown-idle{{if eq .FilterMode.String "idle"}} active{{end}}"
+            hx-post="{{url "/api/filter-mode"}}"
+            hx-vals="js:{filter: 'idle', search: document.querySelector('[name=search]')?.value || ''}"
+            hx-target="#jobs-container"
+            hx-swap="innerHTML"
+            title="Filter by never-run jobs">
+        <span class="breakdown-count" id="idle-count">{{.IdleCount}}</span>
+        <span class="breakdown-label">idle</span>
+    </button>
+</div>
 {{end}}
 
 {{define "job-modal"}}

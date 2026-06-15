@@ -4,6 +4,7 @@ package enums
 import (
 	"database/sql/driver"
 	"fmt"
+	"strings"
 )
 
 // ViewMode is the exported type for the enum
@@ -72,13 +73,12 @@ var _viewModeParseMap = map[string]ViewMode{
 	"list":  ViewModeList,
 }
 
-// ParseViewMode converts string to viewMode enum value
+// ParseViewMode converts string to viewMode enum value.
+// Parsing is always case-insensitive.
 func ParseViewMode(v string) (ViewMode, error) {
-
-	if val, ok := _viewModeParseMap[v]; ok {
+	if val, ok := _viewModeParseMap[strings.ToLower(v)]; ok {
 		return val, nil
 	}
-
 	return ViewMode{}, fmt.Errorf("invalid viewMode: %s", v)
 }
 

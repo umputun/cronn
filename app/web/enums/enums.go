@@ -113,4 +113,5 @@ const (
 	filterModeRunning
 	filterModeSuccess
 	filterModeFailed
+	filterModeIdle
 )

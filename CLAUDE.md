@@ -281,6 +281,16 @@ require.Eventually(t, func() bool {
 }, time.Second, 10*time.Millisecond)
 ```
 
+### E2E Test Requirement
+**CRITICAL: Every UI change must ship with corresponding e2e tests.** Any change to templates (`app/web/templates/`), static assets (`app/web/static/*.css`, `*.js`), or web handlers that affects rendered output requires an e2e test asserting the new behavior in the browser — unit tests on handlers alone are not sufficient.
+
+- Tests live in `e2e/` as Go + Playwright (`//go:build e2e` tag), organized by feature (`e2e_test.go`, `controls_test.go`, `toggle_test.go`, etc.), not one-file-per-source
+- Run with `make e2e` (headless) or `make e2e-ui` (visible browser for debugging)
+- `TestMain` builds the binary once and starts a **single shared server + DB** for the whole run; tests share state and run in file/definition order
+- **Shared-state pattern**: because other tests mutate job state, assert invariants rather than fixed numbers to avoid order-dependent flakiness. Example: verify `total == running + success + failed + idle` instead of hardcoding each count
+- The e2e crontab (`createTestCrontab` in `e2e_test.go`) includes a `*/5` job, so a job may flip to `success` if a run crosses a 5-minute boundary — assert invariants, never an all-idle baseline
+- **Bound every test run by scope and time**: the full e2e suite is slow (~50s per run). Target specific tests with `-run 'TestName'` and always pass `-timeout`; never loop the full suite repeatedly to chase a flake. To confirm a flake fix, run the single affected test, not the whole suite
+
 ## Testing and Development Workflow
 
 ### Restarting Services

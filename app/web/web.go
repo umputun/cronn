@@ -116,6 +116,9 @@ type TemplateData struct {
 	RunningCount       int    // for stats display
 	NextRunTime        string // formatted next run time for stats
 	TotalCount         int    // total jobs before filtering
+	SuccessCount       int    // jobs whose last run succeeded
+	FailedCount        int    // jobs whose last run failed
+	IdleCount          int    // jobs that have not run yet
 	IsOOB              bool   // for OOB template rendering
 	AuthEnabled        bool   // whether authentication is enabled
 	Version            string // application version (short form)
@@ -145,6 +148,9 @@ type jobsStats struct {
 	runningCount int
 	nextRunTime  string
 	totalCount   int
+	successCount int
+	failedCount  int
+	idleCount    int
 }
 
 // Config holds server configuration
@@ -377,6 +383,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /sort-mode", s.handleSortModeChange)
 		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
 		api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
+		api.HandleFunc("POST /filter-mode", s.handleFilterModeChange)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 		api.HandleFunc("POST /jobs/{id}/toggle", s.handleToggleJob)
 		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
@@ -549,7 +556,7 @@ func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode) {
 	})
 }
 
-// cycleFilterMode cycles through filter modes: all -> running -> success -> failed -> all
+// cycleFilterMode cycles through filter modes: all -> running -> success -> failed -> idle -> all
 func (s *Server) cycleFilterMode(current enums.FilterMode) enums.FilterMode {
 	switch current {
 	case enums.FilterModeAll:
@@ -559,6 +566,8 @@ func (s *Server) cycleFilterMode(current enums.FilterMode) enums.FilterMode {
 	case enums.FilterModeSuccess:
 		return enums.FilterModeFailed
 	case enums.FilterModeFailed:
+		return enums.FilterModeIdle
+	case enums.FilterModeIdle:
 		return enums.FilterModeAll
 	default:
 		return enums.FilterModeAll

@@ -4,6 +4,7 @@ package enums
 import (
 	"database/sql/driver"
 	"fmt"
+	"strings"
 )
 
 // SortMode is the exported type for the enum
@@ -73,13 +74,12 @@ var _sortModeParseMap = map[string]SortMode{
 	"nextrun": SortModeNextrun,
 }
 
-// ParseSortMode converts string to sortMode enum value
+// ParseSortMode converts string to sortMode enum value.
+// Parsing is always case-insensitive.
 func ParseSortMode(v string) (SortMode, error) {
-
-	if val, ok := _sortModeParseMap[v]; ok {
+	if val, ok := _sortModeParseMap[strings.ToLower(v)]; ok {
 		return val, nil
 	}
-
 	return SortMode{}, fmt.Errorf("invalid sortMode: %s", v)
 }
 

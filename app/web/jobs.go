@@ -374,6 +374,10 @@ func (s *Server) filterJobs(jobs []persistence.JobInfo, filterMode enums.FilterM
 			if job.LastStatus == enums.JobStatusFailed {
 				filtered = append(filtered, job)
 			}
+		case enums.FilterModeIdle:
+			if job.LastStatus == enums.JobStatusIdle {
+				filtered = append(filtered, job)
+			}
 		}
 	}
 	return filtered

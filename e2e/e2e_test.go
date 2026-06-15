@@ -20,6 +20,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -376,6 +378,37 @@ func TestDashboard_ShowsStatsBar(t *testing.T) {
 	visible, err := page.Locator(".stats-bar").IsVisible()
 	require.NoError(t, err)
 	assert.True(t, visible, "stats bar should be visible")
+}
+
+func TestDashboard_ShowsStatsBreakdown(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+
+	// breakdown line under the total tile should be visible
+	visible, err := page.Locator(".stat-breakdown").IsVisible()
+	require.NoError(t, err)
+	assert.True(t, visible, "stats breakdown should be visible")
+
+	// counts depend on shared server state mutated by other tests, so assert the
+	// invariant total == running + success + failed + idle rather than fixed numbers
+	total := statCount(t, page, "#total-count")
+	running := statCount(t, page, "#running-count")
+	success := statCount(t, page, "#success-count")
+	failed := statCount(t, page, "#failed-count")
+	idle := statCount(t, page, "#idle-count")
+
+	assert.Equal(t, 4, total, "should have the 4 crontab jobs")
+	assert.Equal(t, total, running+success+failed+idle, "breakdown should sum to total")
+}
+
+// statCount reads the integer text content of a stat span by selector
+func statCount(t *testing.T, page playwright.Page, selector string) int {
+	t.Helper()
+	text, err := page.Locator(selector).TextContent()
+	require.NoError(t, err)
+	n, err := strconv.Atoi(strings.TrimSpace(text))
+	require.NoError(t, err, "stat %s should be an integer, got %q", selector, text)
+	return n
 }
 
 func TestDashboard_HasSearchBox(t *testing.T) {

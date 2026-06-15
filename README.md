@@ -305,9 +305,9 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 - **Multiple view modes**: Card view and compact list view with toggle button
 - **Sorting options**: Sort jobs by original order, last run time, or next run time
 - **Job enable/disable toggle**: Disable individual jobs from the dashboard without editing config files
-- **Status filtering**: Filter jobs by status (all, running, success, failed)
+- **Status filtering**: Filter jobs by status (all, running, success, failed, idle)
 - **Light, dark, and auto themes** with automatic system preference detection
-- **Job statistics bar** showing total jobs, currently running jobs, and next execution time
+- **Job statistics bar** showing total jobs with a success/failed/idle breakdown, currently running jobs, and next execution time. The total and each breakdown count are clickable to filter jobs by that status, kept in sync with the filter button
 - **Detailed job information** including schedules, commands, and execution history
 - **Status indicators** with color-coded job states (idle, running, success, failed)
 - **Cookie-based preferences** for persistent theme, view mode, sort order, and filter settings

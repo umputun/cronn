@@ -27,6 +27,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	data.RunningCount = stats.runningCount
 	data.NextRunTime = stats.nextRunTime
 	data.TotalCount = stats.totalCount
+	data.SuccessCount = stats.successCount
+	data.FailedCount = stats.failedCount
+	data.IdleCount = stats.idleCount
 	data.AuthEnabled = s.passwordHash != ""
 	data.Version = shortVersion(s.version)
 	data.FullVersion = s.version
@@ -39,6 +42,9 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 	s.jobsMu.RLock()
 	allJobs := make([]persistence.JobInfo, 0, len(s.jobs))
 	runningCount := 0
+	successCount := 0
+	failedCount := 0
+	idleCount := 0
 	var nearestNextRun *time.Time
 
 	// first collect all jobs and calculate stats
@@ -53,6 +59,16 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 		// count running jobs
 		if jobCopy.IsRunning {
 			runningCount++
+		}
+
+		// count jobs by last status; running jobs have LastStatus running, so they fall out of these
+		switch jobCopy.LastStatus {
+		case enums.JobStatusSuccess:
+			successCount++
+		case enums.JobStatusFailed:
+			failedCount++
+		case enums.JobStatusIdle:
+			idleCount++
 		}
 
 		// find nearest next run (skip disabled jobs)
@@ -85,6 +101,9 @@ func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.Filt
 		runningCount: runningCount,
 		nextRunTime:  nextRunTime,
 		totalCount:   totalCount,
+		successCount: successCount,
+		failedCount:  failedCount,
+		idleCount:    idleCount,
 	}
 }
 
@@ -98,6 +117,9 @@ func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
 	data.RunningCount = stats.runningCount
 	data.NextRunTime = stats.nextRunTime
 	data.TotalCount = stats.totalCount
+	data.SuccessCount = stats.successCount
+	data.FailedCount = stats.failedCount
+	data.IdleCount = stats.idleCount
 	data.IsOOB = true // enable OOB for stats updates
 
 	// render jobs partial with stats updates
@@ -141,6 +163,18 @@ func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) e
 		}
 	}
 
+	// render total tile and breakdown if OOB to refresh status counts and active filter highlight during polling
+	var totalHTML bytes.Buffer
+	var breakdownHTML bytes.Buffer
+	if data.IsOOB {
+		if err := tmpl.ExecuteTemplate(&totalHTML, "stats-total", data); err != nil {
+			return fmt.Errorf("failed to render stats total: %w", err)
+		}
+		if err := tmpl.ExecuteTemplate(&breakdownHTML, "stats-breakdown", data); err != nil {
+			return fmt.Errorf("failed to render stats breakdown: %w", err)
+		}
+	}
+
 	// write response
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -153,6 +187,16 @@ func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) e
 	if buttonHTML.Len() > 0 {
 		if _, err := w.Write(buttonHTML.Bytes()); err != nil {
 			log.Printf("[ERROR] failed to write button HTML: %v", err)
+		}
+	}
+	if totalHTML.Len() > 0 {
+		if _, err := w.Write(totalHTML.Bytes()); err != nil {
+			log.Printf("[ERROR] failed to write total HTML: %v", err)
+		}
+	}
+	if breakdownHTML.Len() > 0 {
+		if _, err := w.Write(breakdownHTML.Bytes()); err != nil {
+			log.Printf("[ERROR] failed to write breakdown HTML: %v", err)
 		}
 	}
 
@@ -188,6 +232,9 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	data.TotalCount = stats.totalCount
 	data.RunningCount = stats.runningCount
 	data.NextRunTime = stats.nextRunTime
+	data.SuccessCount = stats.successCount
+	data.FailedCount = stats.failedCount
+	data.IdleCount = stats.idleCount
 	data.CurrentYear = time.Now().Year()
 	data.IsOOB = true
 
@@ -265,6 +312,9 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	data.RunningCount = stats.runningCount
 	data.NextRunTime = stats.nextRunTime
 	data.TotalCount = stats.totalCount
+	data.SuccessCount = stats.successCount
+	data.FailedCount = stats.failedCount
+	data.IdleCount = stats.idleCount
 
 	// render jobs and send response with OOB updates
 	if err := s.renderSortedJobs(w, data); err != nil {
@@ -332,6 +382,40 @@ func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
 	data.RunningCount = stats.runningCount
 	data.NextRunTime = stats.nextRunTime
 	data.TotalCount = stats.totalCount
+	data.SuccessCount = stats.successCount
+	data.FailedCount = stats.failedCount
+	data.IdleCount = stats.idleCount
+
+	// render jobs and send response with OOB updates
+	if err := s.renderFilteredJobs(w, data); err != nil {
+		log.Printf("[ERROR] failed to render filtered jobs: %v", err)
+		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
+	}
+}
+
+// handleFilterModeChange sets a specific filter mode (used by the clickable status breakdown)
+func (s *Server) handleFilterModeChange(w http.ResponseWriter, r *http.Request) {
+	filterMode, err := enums.ParseFilterMode(r.FormValue("filter"))
+	if err != nil {
+		log.Printf("[WARN] invalid filter mode %q: %v", r.FormValue("filter"), err)
+		filterMode = enums.FilterModeAll
+	}
+	s.setFilterCookie(w, filterMode)
+
+	// get filtered jobs for the selected mode
+	searchTerm := r.FormValue("search")
+	stats := s.getJobsWithStats(s.getSortMode(r), filterMode, searchTerm)
+
+	// prepare template data
+	data := s.newTemplateData(r)
+	data.Jobs = stats.jobs
+	data.FilterMode = filterMode
+	data.RunningCount = stats.runningCount
+	data.NextRunTime = stats.nextRunTime
+	data.TotalCount = stats.totalCount
+	data.SuccessCount = stats.successCount
+	data.FailedCount = stats.failedCount
+	data.IdleCount = stats.idleCount
 
 	// render jobs and send response with OOB updates
 	if err := s.renderFilteredJobs(w, data); err != nil {
@@ -375,11 +459,24 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
 		RunningCount: data.RunningCount,
 		NextRunTime:  data.NextRunTime,
 		TotalCount:   data.TotalCount,
+		SuccessCount: data.SuccessCount,
+		FailedCount:  data.FailedCount,
+		IdleCount:    data.IdleCount,
 		IsOOB:        true,
 	}
 	var statsHTML bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&statsHTML, "stats-updates", statsData); err != nil {
 		return fmt.Errorf("failed to render stats updates template: %w", err)
+	}
+
+	// render total tile and breakdown with OOB to sync active filter highlight and status counts
+	var totalHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&totalHTML, "stats-total", buttonData); err != nil {
+		return fmt.Errorf("failed to render stats total template: %w", err)
+	}
+	var breakdownHTML bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&breakdownHTML, "stats-breakdown", buttonData); err != nil {
+		return fmt.Errorf("failed to render stats breakdown template: %w", err)
 	}
 
 	// write response with all OOB updates
@@ -392,6 +489,12 @@ func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) er
 	}
 	if _, err := w.Write(statsHTML.Bytes()); err != nil {
 		log.Printf("[ERROR] failed to write stats HTML: %v", err)
+	}
+	if _, err := w.Write(totalHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write total HTML: %v", err)
+	}
+	if _, err := w.Write(breakdownHTML.Bytes()); err != nil {
+		log.Printf("[ERROR] failed to write breakdown HTML: %v", err)
 	}
 
 	return nil

@@ -150,8 +150,8 @@ func TestFilter_FullCycle(t *testing.T) {
 	navigateToDashboard(t, page)
 	waitForJobsLoaded(t, page)
 
-	// cycle through all filter modes: all -> running -> success -> failed -> all
-	modes := []string{"All Jobs", "Running", "Success", "Failed", "All Jobs"}
+	// cycle through all filter modes: all -> running -> success -> failed -> idle -> all
+	modes := []string{"All Jobs", "Running", "Success", "Failed", "Idle", "All Jobs"}
 
 	for i, expected := range modes {
 		text, err := page.Locator(".filter-button .filter-label").TextContent()
@@ -163,6 +163,41 @@ func TestFilter_FullCycle(t *testing.T) {
 			require.NoError(t, page.Locator(".filter-button .filter-label:has-text('"+modes[i+1]+"')").WaitFor())
 		}
 	}
+}
+
+func TestFilter_BreakdownClickFilters(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	waitForJobsLoaded(t, page)
+
+	// click the "idle" breakdown item in the Total tile
+	require.NoError(t, page.Locator(".breakdown-idle").Click())
+
+	// breakdown item becomes active and filter button reflects the selected mode
+	require.NoError(t, page.Locator(".breakdown-idle.active").WaitFor())
+	require.NoError(t, page.Locator(".filter-button .filter-label:has-text('Idle')").WaitFor())
+
+	label, err := page.Locator(".filter-button .filter-label").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, label, "Idle")
+
+	// every visible job card must match the idle filter
+	nonIdle, err := page.Locator(".job-card:not([data-job-status='idle'])").Count()
+	require.NoError(t, err)
+	assert.Equal(t, 0, nonIdle, "only idle jobs should be visible after filtering by idle")
+
+	idle, err := page.Locator(".job-card").Count()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, idle, 1, "should show at least one idle job")
+
+	// clicking the Total tile clears the filter back to all
+	require.NoError(t, page.Locator(".stat-total").Click())
+	require.NoError(t, page.Locator(".stat-total.active").WaitFor())
+	require.NoError(t, page.Locator(".filter-button .filter-label:has-text('All Jobs')").WaitFor())
+
+	label, err = page.Locator(".filter-button .filter-label").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, label, "All Jobs")
 }
 
 func TestSort_FullCycle(t *testing.T) {

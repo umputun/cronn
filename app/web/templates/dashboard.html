@@ -3,8 +3,8 @@
     <!-- Stats bar -->
     <div class="stats-bar">
         <div class="stat">
-            <span class="stat-value" id="total-count">{{.TotalCount}}</span>
-            <span class="stat-label">Total Jobs</span>
+            {{template "stats-total" .}}
+            {{template "stats-breakdown" .}}
         </div>
         <div class="stat">
             <span class="stat-value" id="running-count">{{.RunningCount}}</span>

@@ -4,6 +4,7 @@ package enums
 import (
 	"database/sql/driver"
 	"fmt"
+	"strings"
 )
 
 // FilterMode is the exported type for the enum
@@ -72,15 +73,15 @@ var _filterModeParseMap = map[string]FilterMode{
 	"running": FilterModeRunning,
 	"success": FilterModeSuccess,
 	"failed":  FilterModeFailed,
+	"idle":    FilterModeIdle,
 }
 
-// ParseFilterMode converts string to filterMode enum value
+// ParseFilterMode converts string to filterMode enum value.
+// Parsing is always case-insensitive.
 func ParseFilterMode(v string) (FilterMode, error) {
-
-	if val, ok := _filterModeParseMap[v]; ok {
+	if val, ok := _filterModeParseMap[strings.ToLower(v)]; ok {
 		return val, nil
 	}
-
 	return FilterMode{}, fmt.Errorf("invalid filterMode: %s", v)
 }
 
@@ -99,6 +100,7 @@ var (
 	FilterModeRunning = FilterMode{name: "running", value: 1}
 	FilterModeSuccess = FilterMode{name: "success", value: 2}
 	FilterModeFailed  = FilterMode{name: "failed", value: 3}
+	FilterModeIdle    = FilterMode{name: "idle", value: 4}
 )
 
 // FilterModeValues contains all possible enum values
@@ -107,6 +109,7 @@ var FilterModeValues = []FilterMode{
 	FilterModeRunning,
 	FilterModeSuccess,
 	FilterModeFailed,
+	FilterModeIdle,
 }
 
 // FilterModeNames contains all possible enum names
@@ -115,6 +118,7 @@ var FilterModeNames = []string{
 	"running",
 	"success",
 	"failed",
+	"idle",
 }
 
 // FilterModeIter returns a function compatible with Go 1.23's range-over-func syntax.
@@ -146,5 +150,7 @@ var _ = func() bool {
 	var _ filterMode = filterModeSuccess
 	// This avoids "defined but not used" linter error for filterModeFailed
 	var _ filterMode = filterModeFailed
+	// This avoids "defined but not used" linter error for filterModeIdle
+	var _ filterMode = filterModeIdle
 	return true
 }()

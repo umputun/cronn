@@ -256,10 +256,11 @@ func TestToggle_WorksInListView(t *testing.T) {
 	require.NoError(t, page.Locator(".view-toggle").Click())
 	waitVisible(t, page.Locator(".jobs-table"))
 
-	// click toggle on first row
-	require.NoError(t, page.Locator(".job-row .btn-toggle").First().Click())
-
-	// wait for HTMX refresh
+	// click toggle once, awaiting the toggle request so a 5s poll swap can't drop the click or double-toggle
+	_, err := page.ExpectResponse(togglePathRe, func() error {
+		return page.Locator(".job-row .btn-toggle").First().Click()
+	})
+	require.NoError(t, err)
 	require.NoError(t, page.Locator(".job-row.job-disabled").First().WaitFor())
 
 	count, err := page.Locator(".job-row.job-disabled").Count()

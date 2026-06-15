@@ -4,6 +4,7 @@ package enums
 import (
 	"database/sql/driver"
 	"fmt"
+	"strings"
 )
 
 // Theme is the exported type for the enum
@@ -72,13 +73,12 @@ var _themeParseMap = map[string]Theme{
 	"dark":  ThemeDark,
 }
 
-// ParseTheme converts string to theme enum value
+// ParseTheme converts string to theme enum value.
+// Parsing is always case-insensitive.
 func ParseTheme(v string) (Theme, error) {
-
-	if val, ok := _themeParseMap[v]; ok {
+	if val, ok := _themeParseMap[strings.ToLower(v)]; ok {
 		return val, nil
 	}
-
 	return Theme{}, fmt.Errorf("invalid theme: %s", v)
 }
 

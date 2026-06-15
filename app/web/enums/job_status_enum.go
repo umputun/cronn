@@ -4,6 +4,7 @@ package enums
 import (
 	"database/sql/driver"
 	"fmt"
+	"strings"
 )
 
 // JobStatus is the exported type for the enum
@@ -74,13 +75,12 @@ var _jobStatusParseMap = map[string]JobStatus{
 	"failed":  JobStatusFailed,
 }
 
-// ParseJobStatus converts string to jobStatus enum value
+// ParseJobStatus converts string to jobStatus enum value.
+// Parsing is always case-insensitive.
 func ParseJobStatus(v string) (JobStatus, error) {
-
-	if val, ok := _jobStatusParseMap[v]; ok {
+	if val, ok := _jobStatusParseMap[strings.ToLower(v)]; ok {
 		return val, nil
 	}
-
 	return JobStatus{}, fmt.Errorf("invalid jobStatus: %s", v)
 }
 

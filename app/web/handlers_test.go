@@ -586,6 +586,68 @@ func TestServer_handleSortToggle(t *testing.T) {
 	}
 }
 
+func TestServer_handleFilterModeChange(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	parser := crontab.New("test-crontab", 0, nil)
+	server, err := New(Config{DBPath: dbPath, UpdateInterval: time.Minute, JobsProvider: parser})
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	server.jobs = map[string]persistence.JobInfo{
+		"1": {ID: "1", Command: "cmd1", IsRunning: true, LastStatus: enums.JobStatusRunning},
+		"2": {ID: "2", Command: "cmd2", LastStatus: enums.JobStatusSuccess},
+		"3": {ID: "3", Command: "cmd3", LastStatus: enums.JobStatusFailed},
+		"4": {ID: "4", Command: "cmd4", LastStatus: enums.JobStatusIdle},
+	}
+
+	tmpl := template.New("partials")
+	tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}} {{end}}`))
+	tmpl = template.Must(tmpl.New("jobs-list").Parse(`{{range .Jobs}}{{.Command}} {{end}}`))
+	tmpl = template.Must(tmpl.New("filter-button").Parse(`<button><span id="filter-label">{{.FilterMode.String}}</span></button>`))
+	tmpl = template.Must(tmpl.New("stats-updates").Parse(`{{if .IsOOB}}<span id="running-count">{{.RunningCount}}</span>{{end}}`))
+	tmpl = template.Must(tmpl.New("stats-total").Parse(`<button id="stat-total" class="stat-total{{if eq .FilterMode.String "all"}} active{{end}}">{{.TotalCount}}</button>`))
+	tmpl = template.Must(tmpl.New("stats-breakdown").Parse(`<div id="stats-breakdown"><button class="breakdown-{{.FilterMode.String}} active">x</button></div>`))
+	server.templates = map[string]*template.Template{"partials/jobs.html": tmpl}
+
+	tests := []struct {
+		name       string
+		filter     string
+		wantCookie string
+		wantJobs   string // command expected in the filtered jobs body
+		wantActive string // active breakdown class expected
+	}{
+		{"success", "success", "success", "cmd2", "breakdown-success active"},
+		{"failed", "failed", "failed", "cmd3", "breakdown-failed active"},
+		{"idle", "idle", "idle", "cmd4", "breakdown-idle active"},
+		{"invalid falls back to all", "bogus", "all", "cmd1", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/filter-mode", strings.NewReader("filter="+tc.filter))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			server.handleFilterModeChange(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+
+			cookies := resp.Cookies()
+			require.Len(t, cookies, 1)
+			assert.Equal(t, "filter-mode", cookies[0].Name)
+			assert.Equal(t, tc.wantCookie, cookies[0].Value)
+
+			body := w.Body.String()
+			assert.Contains(t, body, tc.wantJobs)
+			if tc.wantActive != "" {
+				assert.Contains(t, body, tc.wantActive)
+			}
+		})
+	}
+}
+
 func TestServer_handleFilterToggle(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -610,8 +672,10 @@ func TestServer_handleFilterToggle(t *testing.T) {
 	tmpl := template.New("partials")
 	tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
 	tmpl = template.Must(tmpl.New("jobs-list").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
-	tmpl = template.Must(tmpl.New("filter-button").Parse(`<button><span id="filter-label">{{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else}}Failed{{end}}</span></button>`))
-	tmpl = template.Must(tmpl.New("stats-updates").Parse(`{{if .IsOOB}}<span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span><span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span><span id="total-count" hx-swap-oob="innerHTML">{{.TotalCount}}</span>{{end}}`))
+	tmpl = template.Must(tmpl.New("filter-button").Parse(`<button><span id="filter-label">{{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else if eq .FilterMode.String "failed"}}Failed{{else}}Idle{{end}}</span></button>`))
+	tmpl = template.Must(tmpl.New("stats-updates").Parse(`{{if .IsOOB}}<span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span><span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span>{{end}}`))
+	tmpl = template.Must(tmpl.New("stats-total").Parse(`<button id="stat-total" class="stat-total{{if eq .FilterMode.String "all"}} active{{end}}">{{.TotalCount}}</button>`))
+	tmpl = template.Must(tmpl.New("stats-breakdown").Parse(`<div id="stats-breakdown"><button class="breakdown-ok{{if eq .FilterMode.String "success"}} active{{end}}">{{.SuccessCount}}</button><button class="breakdown-failed{{if eq .FilterMode.String "failed"}} active{{end}}">{{.FailedCount}}</button><button class="breakdown-idle{{if eq .FilterMode.String "idle"}} active{{end}}">{{.IdleCount}}</button></div>`))
 	server.templates = map[string]*template.Template{
 		"partials/jobs.html": tmpl,
 	}
@@ -624,7 +688,8 @@ func TestServer_handleFilterToggle(t *testing.T) {
 		{"all", "running", "Running"},
 		{"running", "success", "Success"},
 		{"success", "failed", "Failed"},
-		{"failed", "all", "All Jobs"},
+		{"failed", "idle", "Idle"},
+		{"idle", "all", "All Jobs"},
 	}
 
 	for _, tc := range tests {
@@ -711,6 +776,9 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 		assert.Len(t, stats.jobs, 5)
 		assert.Equal(t, 2, stats.runningCount)
 		assert.Equal(t, 5, stats.totalCount)
+		assert.Equal(t, 2, stats.successCount)
+		assert.Equal(t, 1, stats.failedCount)
+		assert.Equal(t, 0, stats.idleCount)
 		assert.NotEqual(t, "-", stats.nextRunTime)
 	})
 
@@ -751,6 +819,46 @@ func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
 				assert.True(t, stats.jobs[i-1].NextRun.Before(stats.jobs[i].NextRun) ||
 					stats.jobs[i-1].NextRun.Equal(stats.jobs[i].NextRun))
 			}
+		}
+	})
+}
+
+func TestServer_getJobsWithStats_StatusBreakdown(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	parser := crontab.New("test-crontab", 0, nil)
+	server, err := New(Config{DBPath: dbPath, UpdateInterval: time.Minute, JobsProvider: parser})
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	now := time.Now()
+	server.jobs = map[string]persistence.JobInfo{
+		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour), Enabled: true},
+		"2": {ID: "2", Command: "success1", LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour), Enabled: true},
+		"3": {ID: "3", Command: "success2", LastStatus: enums.JobStatusSuccess, NextRun: now.Add(3 * time.Hour), Enabled: true},
+		"4": {ID: "4", Command: "failed1", LastStatus: enums.JobStatusFailed, NextRun: now.Add(4 * time.Hour), Enabled: true},
+		"5": {ID: "5", Command: "idle1", LastStatus: enums.JobStatusIdle, NextRun: now.Add(5 * time.Hour), Enabled: true},
+		"6": {ID: "6", Command: "idle2", LastStatus: enums.JobStatusIdle, Enabled: false},
+	}
+
+	// breakdown counts are computed over all jobs before filtering, so they stay constant across filter modes
+	for _, fm := range []enums.FilterMode{enums.FilterModeAll, enums.FilterModeRunning, enums.FilterModeSuccess, enums.FilterModeFailed, enums.FilterModeIdle} {
+		t.Run(fm.String(), func(t *testing.T) {
+			stats := server.getJobsWithStats(enums.SortModeDefault, fm, "")
+			assert.Equal(t, 6, stats.totalCount)
+			assert.Equal(t, 1, stats.runningCount)
+			assert.Equal(t, 2, stats.successCount)
+			assert.Equal(t, 1, stats.failedCount)
+			assert.Equal(t, 2, stats.idleCount)
+		})
+	}
+
+	t.Run("filter idle returns only idle jobs", func(t *testing.T) {
+		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeIdle, "")
+		assert.Len(t, stats.jobs, 2)
+		for _, job := range stats.jobs {
+			assert.Equal(t, enums.JobStatusIdle, job.LastStatus)
 		}
 	})
 }

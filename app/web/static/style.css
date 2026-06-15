@@ -24,7 +24,11 @@
     --color-warning: #d97706;
     --color-info: #2563eb;
     --color-running: #2563eb;
-    
+    --color-idle: #d6a93a;
+    --color-idle-bg: #fef6da;
+    --color-idle-border: #fdeeb8;
+    --color-idle-text: #8a6d1f;
+
     /* Spacing - 4/8/12/16/24/32/48 scale */
     --spacing-1: 4px;
     --spacing-2: 8px;
@@ -89,6 +93,10 @@
     --color-warning: #fbbf24;
     --color-info: #60a5fa;
     --color-running: #60a5fa;
+    --color-idle: #d6b24a;
+    --color-idle-bg: #4a4128;
+    --color-idle-border: #5a5038;
+    --color-idle-text: #d6bd78;
 }
 
 /* Auto theme - follows system */
@@ -108,6 +116,10 @@
         --color-warning: #fbbf24;
         --color-info: #60a5fa;
         --color-running: #60a5fa;
+        --color-idle: #d6b24a;
+        --color-idle-bg: #4a4128;
+        --color-idle-border: #5a5038;
+        --color-idle-text: #d6bd78;
     }
 }
 
@@ -661,11 +673,7 @@ code {
 }
 
 .job-card[data-job-status="idle"] {
-    border-left-color: #d6a93a;
-}
-
-[data-theme="dark"] .job-card[data-job-status="idle"] {
-    border-left-color: #d6b24a;
+    border-left-color: var(--color-idle);
 }
 
 .job-status {
@@ -686,11 +694,7 @@ code {
 }
 
 .status-indicator.idle {
-    background: #d6a93a;
-}
-
-[data-theme="dark"] .status-indicator.idle {
-    background: #d6b24a;
+    background: var(--color-idle);
 }
 
 .status-indicator.running {
@@ -936,23 +940,13 @@ code {
 }
 
 .status-badge.idle {
-    background: #fef6da;
-    color: #8a6d1f;
-    border: 1px solid #fdeeb8;
+    background: var(--color-idle-bg);
+    color: var(--color-idle-text);
+    border: 1px solid var(--color-idle-border);
 }
 
 .status-badge.idle .status-dot {
-    background: #d6a93a;
-}
-
-[data-theme="dark"] .status-badge.idle {
-    background: #4a4128;
-    color: #d6bd78;
-    border: 1px solid #5a5038;
-}
-
-[data-theme="dark"] .status-badge.idle .status-dot {
-    background: #d6b24a;
+    background: var(--color-idle);
 }
 
 .status-badge.running {

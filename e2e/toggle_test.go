@@ -256,8 +256,12 @@ func TestToggle_WorksInListView(t *testing.T) {
 	require.NoError(t, page.Locator(".view-toggle").Click())
 	waitVisible(t, page.Locator(".jobs-table"))
 
-	// click toggle on first row; retry to survive races with the 5s auto-refresh poll swapping the table
-	clickUntilVisible(t, page.Locator(".job-row .btn-toggle").First(), page.Locator(".job-row.job-disabled").First())
+	// click toggle once, awaiting the toggle request so a 5s poll swap can't drop the click or double-toggle
+	_, err := page.ExpectResponse(togglePathRe, func() error {
+		return page.Locator(".job-row .btn-toggle").First().Click()
+	})
+	require.NoError(t, err)
+	require.NoError(t, page.Locator(".job-row.job-disabled").First().WaitFor())
 
 	count, err := page.Locator(".job-row.job-disabled").Count()
 	require.NoError(t, err)

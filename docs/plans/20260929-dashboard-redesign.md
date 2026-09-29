@@ -104,7 +104,7 @@ If a previous task shipped a violation (spotted later by user, reviewer, or your
   (`container: app / inline-size`) give three layouts: inspector docked beside the table at 1180px and up;
   below that the schedule folds under the command, Last/Next share one labelled column, and the inspector
   overlays the table; under 600px rows become two-line blocks and the inspector is full screen with a Back
-  bar. Controls are 44px below 1180px. The mockup's `gen/dash.css` rules are the reference
+  bar. Controls are 44px below 1180px. The mockup's `docs/plans/dashboard-redesign/gen/dash.css` rules are the reference
 - **one render path**: `Server.renderJobs` builds the table, filter tabs, counts, match count, empty state and
   selected-row mark for every request that changes the list (poll, search, filter, sort, toggle, run)
 - **inspector** lives in a permanent `#inspector` target outside the polled `#jobs-container`. The job name in
@@ -189,16 +189,16 @@ If a previous task shipped a violation (spotted later by user, reviewer, or your
 - Modify: `app/web/persistence/sqlite.go`, `app/web/persistence/sqlite_test.go`
 - Modify: `app/web/jobs.go`, `app/web/jobs_test.go`
 
-- [ ] add `Name`, `LastExitCode`, `LastDuration` to `JobInfo`, CREATE TABLE, `SaveJobs`/`LoadJobs` column lists
-- [ ] migrate existing databases: table-driven `{table, column, ddl}` list (the two `executions` columns
+- [x] add `Name`, `LastExitCode`, `LastDuration` to `JobInfo`, CREATE TABLE, `SaveJobs`/`LoadJobs` column lists
+- [x] migrate existing databases: table-driven `{table, column, ddl}` list (the two `executions` columns
       included); backfill `last_exit_code`/`last_duration` from the latest retained execution when the column is new
-- [ ] `loadJobsFromCrontab` sets `Name` from `spec.Name` in both the update and create branches
-- [ ] `handleJobEvent` sets `LastExitCode` and `LastDuration` (`FinishedAt - StartedAt`) on completed/failed
-- [ ] tests: round-trip save/load with the new fields (nil and non-nil exit code); an old-schema fixture with a
+- [x] `loadJobsFromCrontab` sets `Name` from `spec.Name` in both the update and create branches
+- [x] `handleJobEvent` sets `LastExitCode` and `LastDuration` (`FinishedAt - StartedAt`) on completed/failed
+- [x] tests: round-trip save/load with the new fields (nil and non-nil exit code); an old-schema fixture with a
       failed job and its execution (exit 7, 45s) migrates and reopens with exit 7 and 45s; an old-schema job
       without executions keeps nil; name carried from crontab (new job, existing job, renamed job); exit
       code/duration set by completed and failed events
-- [ ] run tests - must pass before next task
+- [x] run tests - must pass before next task
 
 ### Task 2: Readable schedule text
 
@@ -312,7 +312,7 @@ List render and routes:
 
 Table and layout:
 - [ ] one table template with `data-job-id` rows: status dot, `.job-open` name button stretched over the row,
-      command, folded schedule, schedule (readable + raw), last run (relative, exit code when known, duration),
+      command, folded schedule, schedule (readable + raw), last run (relative; exit code and duration only when known),
       next, labelled When column, Run and ⋯ above the stretched area; filter tabs with counts, sort select,
       match count, empty state with Clear search / Show all jobs; state markers per mockup, disabled rows
       tagged with Enable
@@ -346,7 +346,7 @@ Run form:
 Tests:
 - [ ] unit: counts with disabled jobs, each filter incl. disabled, search by name, sort change with the old sort
       cookie still on the request renders in the new order, removed routes 404, fragment contains
-      names/readable schedule/exit code (and none when unknown)/empty state, `HX-Request` without a session
+      names/readable schedule/exit code and duration (neither when unknown)/empty state, `HX-Request` without a session
       gets `HX-Redirect` while curl keeps 401/303
 - [ ] unit: inspector for success/failed/never-ran/disabled jobs, silent failed run shows exit code, manual run
       shows executed command, unknown job/execution 404
@@ -368,7 +368,7 @@ Tests:
 
 ### Task 4: Verify acceptance criteria
 - [ ] verify all requirements from Overview are implemented; compare against `docs/plans/dashboard-redesign/proposal.html`
-- [ ] verify `app/web/static/` holds only `htmx.min.js` and `ui.js`, and every inline `hx-on` and `ui.js`
+- [ ] verify the only `*.js` files in `app/web/static/` are `htmx.min.js` and `ui.js`, and every inline `hx-on` and `ui.js`
       function is one listed in Technical Details
 - [ ] run full test suite: `cd app && go test -race -count=1 ./...`
 - [ ] run e2e tests: `make e2e`

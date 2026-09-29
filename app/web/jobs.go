@@ -135,6 +135,7 @@ func (s *Server) loadJobsFromCrontab() error {
 
 		// update or create job
 		if job, exists := s.jobs[id]; exists {
+			job.Name = spec.Name
 			job.Schedule = spec.Spec
 			job.NextRun = schedule.Next(time.Now())
 			job.UpdatedAt = time.Now()
@@ -144,6 +145,7 @@ func (s *Server) loadJobsFromCrontab() error {
 		} else {
 			s.jobs[id] = persistence.JobInfo{
 				ID:         id,
+				Name:       spec.Name,
 				Command:    spec.Command,
 				Schedule:   spec.Spec,
 				NextRun:    schedule.Next(time.Now()),
@@ -241,6 +243,8 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	case enums.EventTypeCompleted:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusSuccess
+		job.LastExitCode = &event.ExitCode
+		job.LastDuration = event.FinishedAt.Sub(event.StartedAt)
 		if job.Enabled {
 			s.updateNextRun(&job)
 		}
@@ -249,6 +253,8 @@ func (s *Server) handleJobEvent(event JobEvent) {
 	case enums.EventTypeFailed:
 		job.IsRunning = false
 		job.LastStatus = enums.JobStatusFailed
+		job.LastExitCode = &event.ExitCode
+		job.LastDuration = event.FinishedAt.Sub(event.StartedAt)
 		if job.Enabled {
 			s.updateNextRun(&job)
 		}

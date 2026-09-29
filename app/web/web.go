@@ -48,6 +48,7 @@ type Server struct {
 	jobsMu             sync.RWMutex
 	jobs               map[string]persistence.JobInfo // job id -> job info
 	parser             cron.Parser                    // for schedule parsing (NextRun calculations)
+	schedule           *scheduleDescriber             // readable schedule text for templates
 	jobsProvider       JobsProvider                   // for loading job specifications
 	eventChan          chan JobEvent
 	updateInterval     time.Duration
@@ -231,6 +232,11 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("web server initialization failed: JobsProvider is required")
 	}
 
+	schedule, err := newScheduleDescriber()
+	if err != nil {
+		return nil, fmt.Errorf("web server initialization failed: %w", err)
+	}
+
 	// create persistence store (it initializes itself)
 	store, err := persistence.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
@@ -252,6 +258,7 @@ func New(cfg Config) (*Server, error) {
 		store:              store,
 		jobs:               make(map[string]persistence.JobInfo),
 		parser:             parser,
+		schedule:           schedule,
 		jobsProvider:       cfg.JobsProvider,
 		eventChan:          make(chan JobEvent, 1000),
 		updateInterval:     cfg.UpdateInterval,
@@ -442,12 +449,13 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	templates := make(map[string]*template.Template)
 
 	funcMap := template.FuncMap{
-		"humanTime":     s.humanTime,
-		"humanDuration": s.humanDuration,
-		"truncate":      s.truncate,
-		"timeUntil":     s.timeUntil,
-		"since":         s.since,
-		"url":           s.url,
+		"humanTime":        s.humanTime,
+		"humanDuration":    s.humanDuration,
+		"truncate":         s.truncate,
+		"timeUntil":        s.timeUntil,
+		"since":            s.since,
+		"url":              s.url,
+		"describeSchedule": s.schedule.describe,
 	}
 
 	// parse base template with all partials

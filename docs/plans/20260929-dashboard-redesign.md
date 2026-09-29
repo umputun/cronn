@@ -225,12 +225,12 @@ Exports (justification per item: who outside the package calls this?):
 `Server` gets a `schedule *scheduleDescriber` field set in `New`; the funcMap entry is
 `"describeSchedule": s.schedule.describe`.
 
-- [ ] add `github.com/lnquy/cron` v1.1.1, `go mod vendor`; import with an alias (robfig/cron is already `cron`)
-- [ ] implement `scheduleDescriber.describe`: descriptors formatted by hand, other specs through the library,
+- [x] add `github.com/lnquy/cron` v1.1.1, `go mod vendor`; imported as `crondesc`
+- [x] implement `scheduleDescriber.describe`: descriptors formatted by hand, other specs through the library,
       raw spec returned when the library errors
-- [ ] register `describeSchedule` in the template funcMap
-- [ ] tests (table-driven): 5-field specs from the example crontab, each descriptor, `@every 1h15m`, invalid spec
-- [ ] run tests - must pass before next task
+- [x] register `describeSchedule` in the template funcMap (rendered and tested by Task 3's templates)
+- [x] tests (table-driven): 5-field specs from the example crontab, each descriptor, `@every 1h15m`, invalid spec
+- [x] run tests - must pass before next task
 
 ### Task 3: UI cutover: responsive job table, inspector and run form
 

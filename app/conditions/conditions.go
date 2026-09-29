@@ -31,7 +31,12 @@ type Config struct {
 type Checker struct {
 	maxConcurrent int
 	semaphore     chan struct{}
-	cpuPercent    func() ([]float64, error) // replaceable so tests don't depend on host CPU load
+
+	// host metric readers, replaceable so tests don't depend on the machine's state
+	cpuPercent      func() ([]float64, error)
+	memPercent      func() (float64, error)
+	loadAvg         func() (float64, error)
+	diskUsedPercent func(path string) (float64, error)
 }
 
 // NewChecker creates a new condition checker with specified concurrency limit
@@ -45,6 +50,27 @@ func NewChecker(maxConcurrent int) *Checker {
 		semaphore:     make(chan struct{}, maxConcurrent),
 		// 1s interval gives an accurate sample; a zero interval compares against the previous call
 		cpuPercent: func() ([]float64, error) { return cpu.Percent(time.Second, false) },
+		memPercent: func() (float64, error) {
+			v, err := mem.VirtualMemory()
+			if err != nil {
+				return 0, fmt.Errorf("virtual memory: %w", err)
+			}
+			return v.UsedPercent, nil
+		},
+		loadAvg: func() (float64, error) {
+			loads, err := load.Avg()
+			if err != nil {
+				return 0, fmt.Errorf("load average: %w", err)
+			}
+			return loads.Load1, nil
+		},
+		diskUsedPercent: func(path string) (float64, error) {
+			usage, err := disk.Usage(path)
+			if err != nil {
+				return 0, fmt.Errorf("disk usage: %w", err)
+			}
+			return usage.UsedPercent, nil
+		},
 	}
 }
 
@@ -147,11 +173,11 @@ func (c *Checker) checkCPU(threshold int) (bool, string) {
 
 // checkMemory checks if memory usage is below threshold
 func (c *Checker) checkMemory(threshold int) (bool, string) {
-	v, err := mem.VirtualMemory()
+	used, err := c.memPercent()
 	if err != nil {
 		return false, fmt.Sprintf("failed to get memory: %v", err)
 	}
-	current := int(v.UsedPercent)
+	current := int(used)
 	if current >= threshold {
 		return false, fmt.Sprintf("memory: current=%d%%, threshold=%d%%", current, threshold)
 	}
@@ -160,23 +186,23 @@ func (c *Checker) checkMemory(threshold int) (bool, string) {
 
 // checkLoadAvg checks if load average is below threshold
 func (c *Checker) checkLoadAvg(threshold float64) (bool, string) {
-	loads, err := load.Avg()
+	load1, err := c.loadAvg()
 	if err != nil {
 		return false, fmt.Sprintf("failed to get load average: %v", err)
 	}
-	if loads.Load1 >= threshold {
-		return false, fmt.Sprintf("load average: current=%.2f, threshold=%.2f", loads.Load1, threshold)
+	if load1 >= threshold {
+		return false, fmt.Sprintf("load average: current=%.2f, threshold=%.2f", load1, threshold)
 	}
 	return true, ""
 }
 
 // checkDiskFree checks if disk free space is above threshold
 func (c *Checker) checkDiskFree(minFreePercent int, path string) (bool, string) {
-	usage, err := disk.Usage(path)
+	used, err := c.diskUsedPercent(path)
 	if err != nil {
 		return false, fmt.Sprintf("failed to get disk usage for %s: %v", path, err)
 	}
-	freePercent := 100 - int(usage.UsedPercent)
+	freePercent := 100 - int(used)
 	if freePercent < minFreePercent {
 		return false, fmt.Sprintf("disk free: current=%d%%, threshold=%d%%, path=%s", freePercent, minFreePercent, path)
 	}

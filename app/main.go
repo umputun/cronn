@@ -39,6 +39,7 @@ var opts struct {
 	DeDup               bool          `long:"dedup" env:"CRONN_DEDUP" description:"prevent duplicated jobs"`
 	MaxConcurrentChecks int           `long:"max-concurrent-checks" env:"CRONN_MAX_CONCURRENT_CHECKS" default:"10" description:"max concurrent condition checks"`
 	AltTemplate         bool          `long:"alt-template" env:"CRONN_ALT_TEMPLATE" description:"use alternative templates, i.e. [[.YYYYMMDD]]"`
+	EODHour             int           `long:"eod-hour" env:"CRONN_EOD_HOUR" default:"17" description:"end-of-day hour for EOD templates"`
 
 	Repeater struct {
 		Attempts int           `long:"attempts" env:"ATTEMPTS" default:"1" description:"how many time repeat failed job"`
@@ -120,6 +121,10 @@ func main() {
 
 	if opts.Version {
 		os.Exit(0)
+	}
+	if err := validateEODHour(opts.EODHour); err != nil {
+		log.Printf("[ERROR] %v", err)
+		os.Exit(1)
 	}
 
 	stdout := setupLogs()
@@ -230,6 +235,7 @@ func main() {
 		ManualTrigger:     manualTrigger,
 		IsJobDisabled:     isJobDisabled,
 		AltTemplate:       opts.AltTemplate,
+		EODHour:           opts.EODHour,
 	}
 
 	cronService.RepeaterDefaults.Attempts = opts.Repeater.Attempts
@@ -285,6 +291,13 @@ func makeHostName() string {
 		return "unknown"
 	}
 	return host
+}
+
+func validateEODHour(h int) error {
+	if h < 0 || h > 23 {
+		return fmt.Errorf("end-of-day hour must be between 0 and 23, got %d", h)
+	}
+	return nil
 }
 
 // validateBaseURL validates and normalizes base URL

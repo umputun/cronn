@@ -65,6 +65,7 @@ type Scheduler struct {
 	ManualTrigger   chan ManualJobRequest   // channel for manual job triggers
 	IsJobDisabled   func(jobID string) bool // callback to check if a job is disabled via web UI
 	AltTemplate     bool                    // use alternative template format [[.YYYYMMDD]]
+	EODHour         int                     // end-of-day hour for EOD templates, 0 means midnight
 }
 
 // ManualJobRequest represents a request to manually trigger a job
@@ -207,7 +208,7 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	}
 
 	// parse the command through template
-	cmd, err := NewDayTemplate(templateTime, AltTemplateFormat(s.AltTemplate)).Parse(commandToParse)
+	cmd, err := NewDayTemplate(templateTime, AltTemplateFormat(s.AltTemplate), EndOfDay(s.EODHour)).Parse(commandToParse)
 	if err != nil {
 		return err
 	}

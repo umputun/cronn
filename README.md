@@ -134,6 +134,7 @@ W-prefixed templates without EOD use the current day if it is a business day, ot
 **Business Day Logic:**
 
 - EOD (End of Day) templates use a threshold hour (default: 17:00/5pm) to determine which business day to use
+- Set `--eod-hour` or `CRONN_EOD_HOUR` to an hour from 0 to 23 (default: 17) for both `{{.YYYYMMDDEOD}}` and `{{.WYYYYMMDDEOD}}`; 0 means midnight
 - If current time is before EOD threshold, uses previous business day
 - If current time is at or after EOD threshold, uses current business day
 - Weekday templates skip Saturday and Sunday by default
@@ -168,7 +169,7 @@ that conflict with cronn's default `{{` and `}}` delimiters.
 
 ### Business Day Template Examples
 
-Weekday and EOD templates are useful for financial systems, reporting, and backup jobs that need to align with business days:
+Weekday and EOD templates are useful for financial systems, reporting, and backup jobs that need to align with business days. These examples use the default EOD cutoff of 17:00 (5pm):
 
 ```bash
 # Backup with current or most recent business day date (skips weekends)
@@ -814,6 +815,7 @@ When enabled, notifications are sent to the specified destinations on job failur
       --jitter-duration=          jitter duration (default: 10s) [$CRONN_JITTER_DURATION]
       --dedup                     prevent duplicated jobs [$CRONN_DEDUP]
       --alt-template              use alternative templates, i.e. [[.YYYYMMDD]] [$CRONN_ALT_TEMPLATE]
+      --eod-hour=                 end-of-day hour for EOD templates (default: 17) [$CRONN_EOD_HOUR]
 
 web:
       --web.enabled               enable web dashboard [$CRONN_WEB_ENABLED]

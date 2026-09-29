@@ -77,6 +77,31 @@ func Test_validateBaseURL(t *testing.T) {
 	}
 }
 
+func Test_validateEODHour(t *testing.T) {
+	tests := []struct {
+		name string
+		hour int
+		err  string
+	}{
+		{name: "negative", hour: -1, err: "end-of-day hour must be between 0 and 23, got -1"},
+		{name: "midnight", hour: 0},
+		{name: "default", hour: 17},
+		{name: "last hour", hour: 23},
+		{name: "out of range", hour: 24, err: "end-of-day hour must be between 0 and 23, got 24"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateEODHour(tt.hour)
+			if tt.err != "" {
+				require.EqualError(t, err, tt.err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func Test_resolveHostname(t *testing.T) {
 	assert.Equal(t, "test-host", resolveHostname("test-host"))
 

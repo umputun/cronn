@@ -31,6 +31,7 @@ type Config struct {
 type Checker struct {
 	maxConcurrent int
 	semaphore     chan struct{}
+	cpuPercent    func() ([]float64, error) // replaceable so tests don't depend on host CPU load
 }
 
 // NewChecker creates a new condition checker with specified concurrency limit
@@ -42,6 +43,8 @@ func NewChecker(maxConcurrent int) *Checker {
 	return &Checker{
 		maxConcurrent: maxConcurrent,
 		semaphore:     make(chan struct{}, maxConcurrent),
+		// 1s interval gives an accurate sample; a zero interval compares against the previous call
+		cpuPercent: func() ([]float64, error) { return cpu.Percent(time.Second, false) },
 	}
 }
 
@@ -128,8 +131,7 @@ func (c *Checker) validateThresholds(conditions Config) error {
 
 // checkCPU checks if CPU usage is below threshold
 func (c *Checker) checkCPU(threshold int) (bool, string) {
-	// use 1 second interval for accurate CPU sampling
-	cpuPercent, err := cpu.Percent(time.Second, false)
+	cpuPercent, err := c.cpuPercent()
 	if err != nil {
 		return false, fmt.Sprintf("failed to get CPU: %v", err)
 	}

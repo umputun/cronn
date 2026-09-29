@@ -1,6 +1,7 @@
 package conditions
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/load"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -17,7 +17,8 @@ import (
 )
 
 func TestCheck(t *testing.T) {
-	checker := NewChecker(0) // use default
+	checker := NewChecker(0)
+	checker.cpuPercent = fixedCPU(10)
 
 	tests := []struct {
 		name       string
@@ -36,10 +37,6 @@ func TestCheck(t *testing.T) {
 			name: "cpu below threshold passes",
 			conditions: Config{
 				CPUBelow: new(90),
-			},
-			setupMocks: func() {
-				// real CPU check, should pass with high threshold
-				// use Eventually to handle CPU fluctuations
 			},
 			wantOK:     true,
 			wantReason: "",
@@ -113,18 +110,10 @@ func TestCheck(t *testing.T) {
 				tt.setupMocks()
 			}
 
-			// use Eventually for CPU tests to handle fluctuations
-			if strings.Contains(tt.name, "cpu") {
-				require.Eventually(t, func() bool {
-					gotOK, _ := checker.Check(tt.conditions)
-					return gotOK == tt.wantOK
-				}, 5*time.Second, 500*time.Millisecond, "CPU check should eventually match expected result")
-			} else {
-				gotOK, gotReason := checker.Check(tt.conditions)
-				assert.Equal(t, tt.wantOK, gotOK)
-				if tt.wantReason != "" {
-					assert.Equal(t, tt.wantReason, gotReason)
-				}
+			gotOK, gotReason := checker.Check(tt.conditions)
+			assert.Equal(t, tt.wantOK, gotOK)
+			if tt.wantReason != "" {
+				assert.Equal(t, tt.wantReason, gotReason)
 			}
 		})
 	}
@@ -132,6 +121,7 @@ func TestCheck(t *testing.T) {
 
 func TestCheck_ValidationBoundaries(t *testing.T) {
 	checker := NewChecker(0)
+	checker.cpuPercent = fixedCPU(10)
 
 	tests := []struct {
 		name       string
@@ -154,8 +144,8 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 		{
 			name:       "valid CPU at boundary 0",
 			conditions: Config{CPUBelow: new(0)},
-			wantOK:     false, // will fail because CPU is always > 0
-			wantReason: "CPU: current=",
+			wantOK:     false,
+			wantReason: "CPU: current=10%, threshold=0%",
 		},
 		{
 			name:       "valid CPU at boundary 100",
@@ -218,7 +208,7 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 			gotOK, gotReason := checker.Check(tt.conditions)
 			assert.Equal(t, tt.wantOK, gotOK)
 			if tt.wantReason != "" {
-				if strings.HasPrefix(tt.wantReason, "CPU: current=") || strings.HasPrefix(tt.wantReason, "load average: current=") || strings.HasPrefix(tt.wantReason, "disk free: current=") {
+				if strings.HasPrefix(tt.wantReason, "load average: current=") || strings.HasPrefix(tt.wantReason, "disk free: current=") {
 					// for runtime checks, just verify it contains the expected prefix
 					assert.Contains(t, gotReason, tt.wantReason)
 				} else {
@@ -231,18 +221,36 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 }
 
 func TestCheckCPU(t *testing.T) {
-	checker := NewChecker(0)
+	tests := []struct {
+		name       string
+		sampler    func() ([]float64, error)
+		threshold  int
+		wantOK     bool
+		wantReason string
+	}{
+		{name: "below threshold", sampler: fixedCPU(89), threshold: 90, wantOK: true},
+		{name: "at threshold", sampler: fixedCPU(90), threshold: 90, wantReason: "CPU: current=90%, threshold=90%"},
+		{name: "above threshold", sampler: fixedCPU(95), threshold: 90, wantReason: "CPU: current=95%, threshold=90%"},
+		{name: "zero threshold", sampler: fixedCPU(0), threshold: 0, wantReason: "CPU: current=0%, threshold=0%"},
+		{name: "sampler error", sampler: func() ([]float64, error) { return nil, errors.New("boom") }, threshold: 90,
+			wantReason: "failed to get CPU: boom"},
+		{name: "empty sample", sampler: func() ([]float64, error) { return []float64{}, nil }, threshold: 90,
+			wantReason: "no CPU data available"},
+	}
 
-	// test with real CPU data - should pass with high threshold
-	ok, reason := checker.checkCPU(99)
-	assert.True(t, ok)
-	assert.Empty(t, reason)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(0)
+			checker.cpuPercent = tt.sampler
+			ok, reason := checker.checkCPU(tt.threshold)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantReason, reason)
+		})
+	}
+}
 
-	// test with very low threshold - likely to fail
-	ok, reason = checker.checkCPU(0)
-	assert.False(t, ok)
-	assert.Contains(t, reason, "CPU: current=")
-	assert.Contains(t, reason, "threshold=0%")
+func fixedCPU(v float64) func() ([]float64, error) {
+	return func() ([]float64, error) { return []float64{v}, nil }
 }
 
 func TestCheckMemory(t *testing.T) {
@@ -388,6 +396,7 @@ fi`
 
 func TestCheckMultipleConditions(t *testing.T) {
 	checker := NewChecker(0)
+	checker.cpuPercent = fixedCPU(10)
 
 	// test with all conditions passing
 	conditions := Config{
@@ -456,7 +465,7 @@ func TestRealSystemMetrics(t *testing.T) {
 	// without errors - important for integration testing
 
 	t.Run("cpu metrics", func(t *testing.T) {
-		cpuPercent, err := cpu.Percent(time.Second, false)
+		cpuPercent, err := NewChecker(0).cpuPercent()
 		require.NoError(t, err)
 		assert.NotEmpty(t, cpuPercent)
 		assert.GreaterOrEqual(t, cpuPercent[0], 0.0)

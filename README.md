@@ -121,15 +121,15 @@ Cronn also understands various day-realted templates evaluated at the time of jo
 
 **Weekday Templates (W-prefixed):**
 
-These templates automatically skip backward to the previous business day (skipping weekends by default):
+W-prefixed templates without EOD use the current day if it is a business day, otherwise the most recent business day before it (weekends are skipped by default):
 
-- `{{.WYYYYMMDD}}` - previous business day
-- `{{.WYYYYMMDDEOD}}` - previous business day with EOD logic
-- `{{.WYYYY}}` - year from previous business day
-- `{{.WYYYYMM}}` - year-month from previous business day
-- `{{.WYYMMDD}}` - short date from previous business day
-- `{{.WISODATE}}` - ISO date from previous business day
-- `{{.WYY}}`, `{{.WMM}}`, `{{.WDD}}` - year/month/day components from previous business day
+- `{{.WYYYYMMDD}}` - current or most recent business day
+- `{{.WYYYYMMDDEOD}}` - same as `{{.YYYYMMDDEOD}}`, EOD logic already skips non-business days
+- `{{.WYYYY}}` - year from that business day
+- `{{.WYYYYMM}}` - year-month from that business day
+- `{{.WYYMMDD}}` - short date from that business day
+- `{{.WISODATE}}` - ISO date from that business day
+- `{{.WYY}}`, `{{.WMM}}`, `{{.WDD}}` - year/month/day components from that business day
 
 **Business Day Logic:**
 
@@ -137,7 +137,7 @@ These templates automatically skip backward to the previous business day (skippi
 - If current time is before EOD threshold, uses previous business day
 - If current time is at or after EOD threshold, uses current business day
 - Weekday templates skip Saturday and Sunday by default
-- Example: Running on Monday at 9am, `{{.WYYYYMMDD}}` returns Friday's date (skipping weekend)
+- Example: Running on Sunday, `{{.WYYYYMMDD}}` returns Friday's date (skipping weekend); running on Monday, it returns Monday's date
 
 
 Templates can be passed in command line or crontab file and will be evaluated and replaced at the moment 
@@ -171,7 +171,7 @@ that conflict with cronn's default `{{` and `}}` delimiters.
 Weekday and EOD templates are useful for financial systems, reporting, and backup jobs that need to align with business days:
 
 ```bash
-# Backup with previous business day date (skips weekends)
+# Backup with current or most recent business day date (skips weekends)
 cronn -c "0 1 * * 1-5" backup.sh --date={{.WYYYYMMDD}}
 
 # Report for business day based on EOD logic
@@ -181,12 +181,12 @@ cronn -c "0 18 * * *" generate-report.sh {{.YYYYMMDDEOD}}
 # Example behavior:
 # Monday 2025-01-06 at 9am:
 #   {{.YYYYMMDD}}     → 20250106 (current day)
-#   {{.WYYYYMMDD}}    → 20250103 (Friday, skipped weekend)
+#   {{.WYYYYMMDD}}    → 20250106 (Monday is a business day)
 #   {{.YYYYMMDDEOD}}  → 20250103 (before 5pm EOD, uses previous business day)
 
 # Monday 2025-01-06 at 6pm:
 #   {{.YYYYMMDD}}     → 20250106 (current day)
-#   {{.WYYYYMMDD}}    → 20250103 (Friday, skipped weekend)
+#   {{.WYYYYMMDD}}    → 20250106 (Monday is a business day)
 #   {{.YYYYMMDDEOD}}  → 20250106 (after 5pm EOD, uses current day)
 ```
 

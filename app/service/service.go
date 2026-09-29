@@ -248,8 +248,7 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	if s.JobEventHandler != nil {
 		exitCode := 0
 		if err != nil {
-			var exitError *exec.ExitError
-			if errors.As(err, &exitError) {
+			if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
 				exitCode = exitError.ExitCode()
 			} else {
 				exitCode = 1 // generic error for non-exec errors

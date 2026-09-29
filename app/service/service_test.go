@@ -1987,6 +1987,46 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 	})
 }
 
+func TestScheduler_EODHour(t *testing.T) {
+	tests := []struct {
+		name    string
+		eodHour int
+		day     time.Time
+		want    string
+	}{
+		{"before midnight cutoff", 0, time.Date(2025, 1, 6, 23, 59, 59, 0, time.Local), "20250106"},
+		{"at midnight cutoff", 0, time.Date(2025, 1, 7, 0, 0, 0, 0, time.Local), "20250107"},
+		{"before default cutoff", 17, time.Date(2025, 1, 6, 16, 59, 59, 0, time.Local), "20250103"},
+		{"at default cutoff", 17, time.Date(2025, 1, 6, 17, 0, 0, 0, time.Local), "20250106"},
+		{"before custom cutoff", 10, time.Date(2025, 1, 6, 9, 59, 59, 0, time.Local), "20250103"},
+		{"at custom cutoff", 10, time.Date(2025, 1, 6, 10, 0, 0, 0, time.Local), "20250106"},
+		{"weekend at midnight cutoff", 0, time.Date(2025, 1, 5, 0, 0, 0, 0, time.Local), "20250103"},
+	}
+
+	for _, tt := range tests {
+		for _, alt := range []bool{false, true} {
+			t.Run(tt.name+"/alt="+strconv.FormatBool(alt), func(t *testing.T) {
+				var output bytes.Buffer
+				svc := Scheduler{
+					EODHour:     tt.eodHour,
+					AltTemplate: alt,
+					Stdout:      &output,
+					Resumer:     resumer.New("", false),
+					DeDup:       NewDeDup(false),
+				}
+				command := "echo {{.YYYYMMDDEOD}} {{.WYYYYMMDDEOD}}"
+				if alt {
+					command = "echo [[.YYYYMMDDEOD]] [[.WYYYYMMDDEOD]]"
+				}
+				job := crontab.JobSpec{Spec: "* * * * *", Command: command}
+				err := svc.runJobWithCommand(t.Context(), job, command, &tt.day, repeater.New(&strategy.Once{}), true)
+				require.NoError(t, err)
+				assert.Equal(t, tt.want+" "+tt.want+"\n", output.String())
+			})
+		}
+	}
+}
+
 func TestScheduler_disableToggle(t *testing.T) {
 	resmr := &mocks.ResumerMock{
 		OnStartFunc:  func(cmd string) (string, error) { return "resume.file", nil },

@@ -183,6 +183,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// htmx follows a plain redirect and would swap the login page into the dashboard
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", s.url("/login"))
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
 		// no valid auth, redirect to login
 		if r.Header.Get("Accept") == "" || strings.Contains(r.Header.Get("Accept"), "text/html") {
 			// browser request, redirect to login

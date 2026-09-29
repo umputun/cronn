@@ -359,7 +359,8 @@ func (s *Server) sortJobs(jobs []persistence.JobInfo, sortMode enums.SortMode) {
 	}
 }
 
-// filterJobs filters jobs based on the selected filter mode
+// filterJobs filters jobs based on the selected filter mode. Disabled jobs appear only under all and disabled,
+// so the result filters answer what will run
 func (s *Server) filterJobs(jobs []persistence.JobInfo, filterMode enums.FilterMode) []persistence.JobInfo {
 	if filterMode == enums.FilterModeAll {
 		return jobs
@@ -367,29 +368,27 @@ func (s *Server) filterJobs(jobs []persistence.JobInfo, filterMode enums.FilterM
 
 	filtered := make([]persistence.JobInfo, 0, len(jobs))
 	for _, job := range jobs {
+		var match bool
 		switch filterMode {
+		case enums.FilterModeDisabled:
+			match = !job.Enabled
 		case enums.FilterModeRunning:
-			if job.IsRunning {
-				filtered = append(filtered, job)
-			}
+			match = job.Enabled && job.IsRunning
 		case enums.FilterModeSuccess:
-			if job.LastStatus == enums.JobStatusSuccess {
-				filtered = append(filtered, job)
-			}
+			match = job.Enabled && job.LastStatus == enums.JobStatusSuccess
 		case enums.FilterModeFailed:
-			if job.LastStatus == enums.JobStatusFailed {
-				filtered = append(filtered, job)
-			}
+			match = job.Enabled && job.LastStatus == enums.JobStatusFailed
 		case enums.FilterModeIdle:
-			if job.LastStatus == enums.JobStatusIdle {
-				filtered = append(filtered, job)
-			}
+			match = job.Enabled && job.LastStatus == enums.JobStatusIdle
+		}
+		if match {
+			filtered = append(filtered, job)
 		}
 	}
 	return filtered
 }
 
-// searchJobs filters jobs by search term (case-insensitive command search)
+// searchJobs filters jobs by search term, matching name or command case-insensitively
 func (s *Server) searchJobs(jobs []persistence.JobInfo, searchTerm string) []persistence.JobInfo {
 	if searchTerm == "" {
 		return jobs
@@ -398,7 +397,7 @@ func (s *Server) searchJobs(jobs []persistence.JobInfo, searchTerm string) []per
 	searchLower := strings.ToLower(searchTerm)
 	filtered := make([]persistence.JobInfo, 0, len(jobs))
 	for _, job := range jobs {
-		if strings.Contains(strings.ToLower(job.Command), searchLower) {
+		if strings.Contains(strings.ToLower(job.Command), searchLower) || strings.Contains(strings.ToLower(job.Name), searchLower) {
 			filtered = append(filtered, job)
 		}
 	}

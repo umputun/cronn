@@ -44,7 +44,6 @@ package enums
 
 //go:generate go run github.com/go-pkgz/enum@latest -type jobStatus -lower -sql
 //go:generate go run github.com/go-pkgz/enum@latest -type eventType -lower -sql
-//go:generate go run github.com/go-pkgz/enum@latest -type viewMode -lower -sql
 //go:generate go run github.com/go-pkgz/enum@latest -type theme -lower -sql
 //go:generate go run github.com/go-pkgz/enum@latest -type sortMode -lower -sql
 //go:generate go run github.com/go-pkgz/enum@latest -type filterMode -lower -sql
@@ -70,16 +69,6 @@ const (
 	eventTypeStarted eventType = iota
 	eventTypeCompleted
 	eventTypeFailed
-)
-
-// viewMode represents UI view modes.
-// This is an unexported type used only as input for the code generator.
-// Use the exported ViewMode type and its constants in actual code.
-type viewMode int
-
-const (
-	viewModeCards viewMode = iota
-	viewModeList
 )
 
 // theme represents UI themes.
@@ -114,4 +103,5 @@ const (
 	filterModeSuccess
 	filterModeFailed
 	filterModeIdle
+	filterModeDisabled
 )

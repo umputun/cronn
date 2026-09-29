@@ -1,33 +1,18 @@
 {{define "main"}}
-<div class="dashboard">
-    <!-- Stats bar -->
-    <div class="stats-bar">
-        <div class="stat">
-            {{template "stats-total" .}}
-            {{template "stats-breakdown" .}}
-        </div>
-        <div class="stat">
-            <span class="stat-value" id="running-count">{{.RunningCount}}</span>
-            <span class="stat-label">Running</span>
-        </div>
-        <div class="stat">
-            <span class="stat-value" id="next-run">{{.NextRunTime}}</span>
-            <span class="stat-label">Next Run</span>
-        </div>
-    </div>
+<div id="failing-alert">{{template "failing-alert" .}}</div>
 
-    <!-- Jobs container with auto-refresh -->
+<div id="jobs-controls" class="bar">{{template "jobs-controls" .}}</div>
+
+<div class="work">
     <div id="jobs-container"
          hx-get="{{url "/api/jobs"}}"
-         hx-trigger="load, every 5s"
-         hx-swap="innerHTML settle:0ms"
-         hx-include="[name='search']"
-         class="jobs-container {{.ViewMode}}">
-        <!-- Jobs will be loaded here via HTMX -->
-        <div class="loading">
-            <div class="spinner"></div>
-            <span>Loading jobs...</span>
-        </div>
+         hx-trigger="load, every 5s, refresh-jobs from:body"
+         hx-include="#search, #selected-job"
+         hx-swap="innerHTML"
+         hx-on::after-request="uiPollDone(this, event)">
+        {{template "jobs-table" .}}
     </div>
+    <div class="scrim"></div>
+    <aside id="inspector" aria-label="Job inspector" hx-on::after-swap="uiInspectorSwapped(this, event)"></aside>
 </div>
 {{end}}

@@ -3,160 +3,156 @@
 package e2e
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/playwright-community/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// --- list view tests ---
-
-func TestListView_ShowsTableStructure(t *testing.T) {
-	page := newPage(t)
+func TestTable_ShowsColumnsOnWideScreens(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
 
-	// switch to list view
-	require.NoError(t, page.Locator(".view-toggle").Click())
-	waitVisible(t, page.Locator(".jobs-table"))
-
-	// verify table headers
-	visible, err := page.Locator(".jobs-table th:has-text('Status')").IsVisible()
+	headers, err := page.Locator("table.jobs thead th:visible").AllTextContents()
 	require.NoError(t, err)
-	assert.True(t, visible, "should show Status header")
-
-	visible, err = page.Locator(".jobs-table th:has-text('Schedule')").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "should show Schedule header")
-
-	visible, err = page.Locator(".jobs-table th:has-text('Command')").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "should show Command header")
-
-	visible, err = page.Locator(".jobs-table th:has-text('Next Run')").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "should show Next Run header")
-
-	visible, err = page.Locator(".jobs-table th:has-text('Last Run')").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "should show Last Run header")
+	joined := strings.ToLower(strings.Join(headers, "|"))
+	for _, h := range []string{"job", "schedule", "last run", "next"} {
+		assert.Contains(t, joined, h)
+	}
+	assert.NotContains(t, joined, "when", "the merged column is only for narrow layouts")
 }
 
-func TestListView_InfoButtonOpensModal(t *testing.T) {
-	page := newPage(t)
+func TestTable_NarrowLayoutFoldsScheduleAndLabelsTimes(t *testing.T) {
+	page := newPageSized(t, 820, 1180)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
 
-	// switch to list view
-	require.NoError(t, page.Locator(".view-toggle").Click())
-	waitVisible(t, page.Locator(".jobs-table"))
-
-	// click info button on first job row
-	clickAndAwait(t, page, page.Locator(".job-row .info-btn").First(), jobModalRe)
-	waitVisible(t, page.Locator("#job-modal"))
-
-	// verify modal is visible
-	assert.True(t, isModalVisible(t, page, "#job-modal"), "job modal should be visible from list view")
+	visible, err := row(page, jobHourly).Locator("td.c-sched").IsVisible()
+	require.NoError(t, err)
+	assert.False(t, visible, "the schedule column folds away")
+	fold, err := row(page, jobHourly).Locator(".fold-sched").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, fold, "Every hour")
+	when, err := row(page, jobHourly).Locator("td.c-time").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, when, "Last")
+	assert.Contains(t, when, "Next")
 }
 
-// --- footer tests ---
-
-func TestFooter_ShowsLinks(t *testing.T) {
-	page := newPage(t)
-	navigateToDashboard(t, page)
-
-	// verify footer is visible
-	visible, err := page.Locator(".footer").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "footer should be visible")
-
-	// verify GitHub link
-	visible, err = page.Locator(".footer a[href='https://github.com/umputun/cronn']").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "GitHub link should be visible")
+func TestTable_TouchTargetsBelowWideLayout(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{820, 1180}, {390, 844}} {
+		t.Run(fmt.Sprintf("%dx%d", size.w, size.h), func(t *testing.T) {
+			page := newPageSized(t, size.w, size.h)
+			navigateToDashboard(t, page)
+			small, err := page.Evaluate(`() => [...document.querySelectorAll('.run-btn, .toggle-btn, .tab, select[name=sort], .iconbtn, #search-box')]
+				.filter(el => el.offsetParent !== null)
+				.filter(el => { const r = el.getBoundingClientRect(); return r.height < 43.5; })
+				.map(el => el.className || el.id)`)
+			require.NoError(t, err)
+			assert.Empty(t, small, "controls should be at least 44px tall")
+		})
+	}
 }
 
-func TestFooter_ShowsCopyright(t *testing.T) {
+func TestResponsive_NoHorizontalScroll(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{320, 640}, {390, 844}, {600, 900}, {820, 1180}, {1024, 768}, {1440, 900}} {
+		t.Run(fmt.Sprintf("%dx%d", size.w, size.h), func(t *testing.T) {
+			page := newPageSized(t, size.w, size.h)
+			navigateToDashboard(t, page)
+			assert.True(t, noHorizontalScroll(t, page), "page must not scroll sideways")
+		})
+	}
+}
+
+func TestResponsive_PhoneRowsAreTwoLineBlocks(t *testing.T) {
+	page := newPageSized(t, 390, 844)
+	navigateToDashboard(t, page)
+
+	visible, err := page.Locator("table.jobs thead").IsVisible()
+	require.NoError(t, err)
+	assert.False(t, visible)
+	display, err := row(page, jobHourly).Evaluate(`el => getComputedStyle(el).display`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "grid", display)
+	visible, err = page.Locator("#search").IsVisible()
+	require.NoError(t, err)
+	assert.True(t, visible, "search stays visible on phones")
+}
+
+func TestFooter_ShowsLinksAndCopyright(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	// verify copyright text
 	text, err := page.Locator(".footer").TextContent()
 	require.NoError(t, err)
 	assert.Contains(t, text, "Umputun")
+	href, err := page.Locator(".footer a[href*='github.com/umputun/cronn']").GetAttribute("href")
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/umputun/cronn", href)
 }
 
-func TestFooter_UsesFlexboxForCentering(t *testing.T) {
+func TestHTMX_PollingIsConfigured(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	// verify footer uses flexbox for cross-browser vertical centering
-	result, err := page.Evaluate("() => getComputedStyle(document.querySelector('.footer')).display")
-	require.NoError(t, err)
-	assert.Equal(t, "flex", result, "footer should use flexbox for cross-browser centering")
-
-	// verify flex alignment
-	result, err = page.Evaluate("() => getComputedStyle(document.querySelector('.footer')).alignItems")
-	require.NoError(t, err)
-	assert.Equal(t, "center", result, "footer should vertically center items")
-}
-
-// --- htmx polling tests ---
-
-func TestHTMX_AutoRefreshIsConfigured(t *testing.T) {
-	page := newPage(t)
-	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
-
-	// verify jobs container has htmx polling configured
 	trigger, err := page.Locator("#jobs-container").GetAttribute("hx-trigger")
 	require.NoError(t, err)
-	assert.Contains(t, trigger, "every 5s", "jobs container should have 5s polling")
+	assert.Equal(t, "load, every 5s, refresh-jobs from:body", trigger)
+	scripts, err := page.Evaluate(`() => [...document.querySelectorAll("script[src]")].map(s => s.src.split("/").pop())`)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []any{"htmx.min.js", "ui.js"}, scripts)
 }
 
-// --- responsive tests ---
-
-func TestResponsive_MobileLayout(t *testing.T) {
+func TestHTMX_FailedPollShowsNoticeAndRecovers(t *testing.T) {
 	page := newPage(t)
-
-	// set mobile viewport before navigation
-	err := page.SetViewportSize(375, 667)
-	require.NoError(t, err)
-
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
+	notice := page.Locator(".fresh-failed")
 
-	// verify page loads on mobile
-	visible, err := page.Locator(".header").IsVisible()
+	require.NoError(t, page.Route(jobsRe, func(r playwright.Route) {
+		_ = r.Fulfill(playwright.RouteFulfillOptions{Status: new(500), Body: "boom"})
+	}))
+	waitVisible(t, notice)
+	count, err := page.Locator("tr.row").Count()
 	require.NoError(t, err)
-	assert.True(t, visible, "header should be visible on mobile")
+	assert.Equal(t, totalJobs, count, "the last table stays while polls fail")
 
-	// verify jobs container is visible
-	visible, err = page.Locator("#jobs-container").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "jobs container should be visible on mobile")
+	require.NoError(t, page.Unroute(jobsRe))
+	require.NoError(t, notice.WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateHidden, Timeout: new(8000.0),
+	}))
 }
 
-// --- job status display tests ---
-
-func TestJobStatus_ShowsIdleState(t *testing.T) {
+func TestHTMX_InspectorRequestFailureDoesNotMarkPollFailed(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
 
-	// verify at least one job has idle status (since no jobs have run yet)
-	count, err := page.Locator(".status-indicator.idle").Count()
+	require.NoError(t, page.Route(inspectorRe, func(r playwright.Route) {
+		_ = r.Fulfill(playwright.RouteFulfillOptions{Status: new(500), Body: "boom"})
+	}))
+	_, err := page.ExpectResponse(inspectorRe, func() error { return row(page, jobHourly).Locator(".job-open").Click() })
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, count, 1, "should show idle status indicators for unrun jobs")
+	assert.Never(t, func() bool {
+		v, e := page.Locator(".fresh-failed").IsVisible()
+		return e == nil && v
+	}, 1*time.Second, 100*time.Millisecond, "only the table poll decides the notice")
+	require.NoError(t, page.Unroute(inspectorRe))
 }
 
-func TestJobStatus_HistoryButtonDisabledForIdleJobs(t *testing.T) {
+func TestJobStatus_NeverRanIsNotAWarning(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
 
-	// verify history button is disabled for idle jobs
-	count, err := page.Locator(".job-card .history-btn[disabled]").Count()
+	state, err := row(page, jobTemplated).GetAttribute("data-state")
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, count, 1, "history button should be disabled for idle jobs")
+	require.Equal(t, "never", state, "no test runs the templated job")
+	dotColor, err := row(page, jobTemplated).Locator(".dot").Evaluate(`el => getComputedStyle(el).backgroundColor`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "rgba(0, 0, 0, 0)", dotColor, "a job that never ran gets a hollow marker, not a warning color")
+	text, err := row(page, jobTemplated).Locator("td.c-last").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, text, "never ran")
+	assert.NotContains(t, text, "exit")
 }

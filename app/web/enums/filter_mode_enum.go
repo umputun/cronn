@@ -69,11 +69,12 @@ func (e *FilterMode) Scan(value interface{}) error {
 
 // _filterModeParseMap is used for efficient string to enum conversion
 var _filterModeParseMap = map[string]FilterMode{
-	"all":     FilterModeAll,
-	"running": FilterModeRunning,
-	"success": FilterModeSuccess,
-	"failed":  FilterModeFailed,
-	"idle":    FilterModeIdle,
+	"all":      FilterModeAll,
+	"running":  FilterModeRunning,
+	"success":  FilterModeSuccess,
+	"failed":   FilterModeFailed,
+	"idle":     FilterModeIdle,
+	"disabled": FilterModeDisabled,
 }
 
 // ParseFilterMode converts string to filterMode enum value.
@@ -96,11 +97,12 @@ func MustFilterMode(v string) FilterMode {
 
 // Public constants for filterMode values
 var (
-	FilterModeAll     = FilterMode{name: "all", value: 0}
-	FilterModeRunning = FilterMode{name: "running", value: 1}
-	FilterModeSuccess = FilterMode{name: "success", value: 2}
-	FilterModeFailed  = FilterMode{name: "failed", value: 3}
-	FilterModeIdle    = FilterMode{name: "idle", value: 4}
+	FilterModeAll      = FilterMode{name: "all", value: 0}
+	FilterModeRunning  = FilterMode{name: "running", value: 1}
+	FilterModeSuccess  = FilterMode{name: "success", value: 2}
+	FilterModeFailed   = FilterMode{name: "failed", value: 3}
+	FilterModeIdle     = FilterMode{name: "idle", value: 4}
+	FilterModeDisabled = FilterMode{name: "disabled", value: 5}
 )
 
 // FilterModeValues contains all possible enum values
@@ -110,6 +112,7 @@ var FilterModeValues = []FilterMode{
 	FilterModeSuccess,
 	FilterModeFailed,
 	FilterModeIdle,
+	FilterModeDisabled,
 }
 
 // FilterModeNames contains all possible enum names
@@ -119,6 +122,7 @@ var FilterModeNames = []string{
 	"success",
 	"failed",
 	"idle",
+	"disabled",
 }
 
 // FilterModeIter returns a function compatible with Go 1.23's range-over-func syntax.
@@ -152,5 +156,7 @@ var _ = func() bool {
 	var _ filterMode = filterModeFailed
 	// This avoids "defined but not used" linter error for filterModeIdle
 	var _ filterMode = filterModeIdle
+	// This avoids "defined but not used" linter error for filterModeDisabled
+	var _ filterMode = filterModeDisabled
 	return true
 }()

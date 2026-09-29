@@ -19,7 +19,7 @@ type authServer struct {
 	cmd *exec.Cmd
 }
 
-// startAuthServer starts a server with authentication enabled on port 18081
+// startAuthServer starts a server with authentication enabled on the auth port
 func startAuthServer(t *testing.T) *authServer {
 	t.Helper()
 
@@ -28,7 +28,7 @@ func startAuthServer(t *testing.T) *authServer {
 		"-f", "../"+testCrontab,
 		"--log.enabled",
 		"--web.enabled",
-		"--web.address=:18081",
+		"--web.address=:"+authPort,
 		"--web.db-path="+authDBPath,
 		"--web.password-hash="+passwordHash,
 		"--web.hostname=e2e-auth-test",
@@ -89,7 +89,7 @@ func ensureAuthLoggedIn(t *testing.T, page playwright.Page) {
 		require.NoError(t, page.Locator("button[type='submit']").Click())
 	}
 
-	waitVisible(t, page.Locator(".header"))
+	waitVisible(t, page.Locator(".top"))
 }
 
 func TestAuth_LoginPageDisplays(t *testing.T) {
@@ -174,6 +174,23 @@ func TestAuth_Logout(t *testing.T) {
 	// verify we're redirected to login page
 	url := page.URL()
 	assert.Contains(t, url, "/login", "should be redirected to login page")
+}
+
+func TestAuth_ExpiredSessionPollRedirectsToLogin(t *testing.T) {
+	srv := startAuthServer(t)
+	defer srv.stop()
+
+	page := newPage(t)
+	ensureAuthLoggedIn(t, page)
+	require.NoError(t, page.Context().ClearCookies())
+
+	require.NoError(t, page.WaitForURL("**/login", playwright.PageWaitForURLOptions{Timeout: new(10000.0)}))
+	visible, err := page.Locator("input[name='password']").IsVisible()
+	require.NoError(t, err)
+	assert.True(t, visible, "the whole page should be the login form, not a fragment inside the dashboard")
+	count, err := page.Locator("#jobs-container").Count()
+	require.NoError(t, err)
+	assert.Zero(t, count)
 }
 
 func TestAuth_ProtectedRouteRedirects(t *testing.T) {

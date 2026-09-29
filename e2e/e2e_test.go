@@ -5,16 +5,20 @@
 // Test organization:
 // - e2e_test.go: TestMain, shared helpers, constants, core dashboard tests
 // - auth_test.go: authentication tests (login/logout)
-// - controls_test.go: UI controls tests (view mode, theme, sort, filter)
-// - search_test.go: search functionality tests
-// - modals_test.go: modal tests (job details, settings)
-// - manual_test.go: manual job execution tests
-// - layout_test.go: layout tests (list view, footer, htmx, responsive, job status)
+// - controls_test.go: theme, sort select and filter tabs
+// - search_test.go: search and the empty state
+// - modals_test.go: settings dialog
+// - manual_test.go: run form (dialog and bottom sheet)
+// - inspector_test.go: job inspector (runs, output, selection, focus)
+// - layout_test.go: table structure, footer, polling, responsive layouts
+// - toggle_test.go: enable/disable jobs
 package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,17 +35,34 @@ import (
 )
 
 const (
-	baseURL     = "http://localhost:18080"
 	testDBPath  = "/tmp/cronn-e2e.db"
-	testCrontab = "e2e/testdata/test-crontab"
+	testCrontab = "e2e/testdata/test-crontab.yml"
+)
+
+var (
+	e2ePort     = envOr("E2E_PORT", "18080")
+	authPort    = envOr("E2E_AUTH_PORT", "18081")
+	baseURL     = "http://localhost:" + e2ePort
+	authBaseURL = "http://localhost:" + authPort
 )
 
 // auth server constants (separate server for auth tests to avoid rate limiting main tests)
 const (
-	authBaseURL  = "http://localhost:18081"
 	authDBPath   = "/tmp/cronn-e2e-auth.db"
 	testPassword = "testpass123"                                                  //nolint:gosec // test password for e2e tests
 	passwordHash = "$2y$10$ZcZnRH/ya6JUmBRGE8qlBupIFUYgvOewRXtpkB8HecWtUnryAHr0S" //nolint:gosec // bcrypt hash of testpass123 for e2e tests
+)
+
+const (
+	jobFiveMin   = "Five minute job"
+	jobHourly    = "Hourly job"
+	jobWeekday   = "Weekday report"
+	jobUnnamed   = `echo "job3: daily at midnight"`
+	jobFailing   = "Vendor feed import"
+	jobSilent    = "Silent failure"
+	jobSlow      = "Slow report"
+	jobTemplated = "Templated job"
+	totalJobs    = 8
 )
 
 var (
@@ -53,6 +74,13 @@ var (
 func TestMain(m *testing.M) {
 	// clean old test data
 	_ = os.Remove(testDBPath)
+
+	for _, port := range []string{e2ePort, authPort} {
+		if err := checkPortFree(port); err != nil {
+			fmt.Printf("port %s is in use, set E2E_PORT / E2E_AUTH_PORT to free ports: %v\n", port, err)
+			os.Exit(1)
+		}
+	}
 
 	// create test crontab
 	if err := createTestCrontab(); err != nil {
@@ -76,7 +104,7 @@ func TestMain(m *testing.M) {
 		"-f", "../"+testCrontab,
 		"--log.enabled",
 		"--web.enabled",
-		"--web.address=:18080",
+		"--web.address=:"+e2ePort,
 		"--web.db-path="+testDBPath,
 		"--web.hostname=e2e-test",
 	)
@@ -143,11 +171,30 @@ func TestMain(m *testing.M) {
 }
 
 func createTestCrontab() error {
-	content := `# test crontab for e2e tests
-*/5 * * * * echo "job1: every 5 minutes"
-0 * * * * echo "job2: hourly"
-0 0 * * * echo "job3: daily at midnight"
-30 8 * * 1-5 echo "job4: weekdays at 8:30"
+	content := `jobs:
+  - spec: "*/5 * * * *"
+    command: 'echo "job1: every 5 minutes"'
+    name: "Five minute job"
+  - spec: "0 * * * *"
+    command: 'echo "job2: hourly"'
+    name: "Hourly job"
+  - spec: "0 0 * * *"
+    command: 'echo "job3: daily at midnight"'
+  - spec: "30 8 * * 1-5"
+    command: 'echo "job4: weekdays at 8:30"'
+    name: "Weekday report"
+  - spec: "0 0 1 1 *"
+    command: "sh -c 'echo fetching; echo boom >&2; exit 3'"
+    name: "Vendor feed import"
+  - spec: "0 0 1 1 *"
+    command: "sh -c 'exit 7'"
+    name: "Silent failure"
+  - spec: "0 0 1 1 *"
+    command: "sleep 3"
+    name: "Slow report"
+  - spec: "0 0 1 1 *"
+    command: "echo run {{.YYYYMMDD}}"
+    name: "Templated job"
 `
 	if err := os.MkdirAll(filepath.Dir("../"+testCrontab), 0o750); err != nil {
 		return fmt.Errorf("failed to create test crontab dir: %w", err)
@@ -156,6 +203,21 @@ func createTestCrontab() error {
 		return fmt.Errorf("failed to write test crontab: %w", err)
 	}
 	return nil
+}
+
+func envOr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
+func checkPortFree(port string) error {
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		return err
+	}
+	return ln.Close()
 }
 
 func waitForServer(url string, timeout time.Duration) error {
@@ -198,46 +260,121 @@ func newPage(t *testing.T) playwright.Page {
 	return page
 }
 
-// navigateToDashboard navigates to the dashboard and waits for it to load
-// Used by non-auth tests (main server runs without authentication)
-func navigateToDashboard(t *testing.T, page playwright.Page) {
+func newPageSized(t *testing.T, width, height int) playwright.Page {
 	t.Helper()
-
-	_, err := page.Goto(baseURL)
-	require.NoError(t, err)
-
-	// wait for header to be visible (confirms dashboard loaded)
-	err = page.Locator(".header").WaitFor(playwright.LocatorWaitForOptions{
-		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(5000),
+	ctx, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		Viewport: &playwright.Size{Width: width, Height: height},
 	})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = ctx.Close() })
+	page, err := ctx.NewPage()
+	require.NoError(t, err)
+	return page
 }
 
-// waitForJobsLoaded waits for HTMX to load jobs (either cards or table rows)
+func navigateToDashboard(t *testing.T, page playwright.Page) {
+	t.Helper()
+	_, err := page.Goto(baseURL)
+	require.NoError(t, err)
+	waitVisible(t, page.Locator(".top"))
+	waitForJobsLoaded(t, page)
+}
+
 func waitForJobsLoaded(t *testing.T, page playwright.Page) {
 	t.Helper()
-	// wait for either job cards or job rows to appear (depending on view mode)
-	err := page.Locator(".job-card, .job-row").First().WaitFor(playwright.LocatorWaitForOptions{
+	err := page.Locator("tr.row").First().WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(5000),
+		Timeout: new(5000.0),
 	})
 	require.NoError(t, err, "jobs should load within 5 seconds")
 }
 
-// isModalVisible checks if a modal element is displayed (style.display !== 'none')
-func isModalVisible(t *testing.T, page playwright.Page, selector string) bool {
+func row(page playwright.Page, name string) playwright.Locator {
+	return page.Locator("tr.row").Filter(playwright.LocatorFilterOptions{
+		Has: page.Locator(".job-open", playwright.PageLocatorOptions{HasText: name}),
+	})
+}
+
+func jobID(t *testing.T, page playwright.Page, name string) string {
 	t.Helper()
-	result, err := page.Evaluate("(selector) => { const el = document.querySelector(selector); return el && el.style.display !== 'none'; }", selector)
+	id, err := row(page, name).GetAttribute("data-job-id")
 	require.NoError(t, err)
-	if result == nil {
-		return false
+	require.NotEmpty(t, id)
+	return id
+}
+
+type apiJob struct {
+	ID         string    `json:"id"`
+	Command    string    `json:"command"`
+	LastRun    time.Time `json:"last_run"`
+	LastStatus string    `json:"last_status"`
+	IsRunning  bool      `json:"is_running"`
+	Enabled    bool      `json:"enabled"`
+}
+
+func jobStatus(t *testing.T, id string) apiJob {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/v1/status") //nolint:noctx // test helper
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var status struct {
+		Jobs []apiJob `json:"jobs"`
 	}
-	visible, ok := result.(bool)
-	if !ok {
-		return false
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&status))
+	for _, j := range status.Jobs {
+		if j.ID == id {
+			return j
+		}
 	}
-	return visible
+	t.Fatalf("job %s not found in status API", id)
+	return apiJob{}
+}
+
+func runJob(t *testing.T, id string) {
+	t.Helper()
+	prev := jobStatus(t, id).LastRun
+	resp, err := http.Post(baseURL+"/api/jobs/"+id+"/run", "application/x-www-form-urlencoded", http.NoBody) //nolint:noctx // test helper
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	require.Eventually(t, func() bool {
+		j := jobStatus(t, id)
+		return j.LastRun.After(prev) && !j.IsRunning
+	}, 15*time.Second, 100*time.Millisecond, "job should finish")
+}
+
+func setEnabled(t *testing.T, id string, enabled bool) {
+	t.Helper()
+	if jobStatus(t, id).Enabled == enabled {
+		return
+	}
+	resp, err := http.Post(baseURL+"/api/jobs/"+id+"/toggle", "application/x-www-form-urlencoded", http.NoBody) //nolint:noctx // test helper
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func evalBool(t *testing.T, page playwright.Page, expr string, args ...any) bool {
+	t.Helper()
+	var arg any
+	if len(args) > 0 {
+		arg = args[0]
+	}
+	res, err := page.Evaluate(expr, arg)
+	require.NoError(t, err)
+	b, ok := res.(bool)
+	require.True(t, ok, "expression %q should return a bool, got %T", expr, res)
+	return b
+}
+
+func activeElementIn(t *testing.T, page playwright.Page, selector string) bool {
+	t.Helper()
+	return evalBool(t, page, `(sel) => { const el = document.querySelector(sel); return !!el && el.contains(document.activeElement); }`, selector)
+}
+
+func noHorizontalScroll(t *testing.T, page playwright.Page) bool {
+	t.Helper()
+	return evalBool(t, page, `() => document.documentElement.scrollWidth <= document.documentElement.clientWidth`)
 }
 
 // waitVisible waits for locator to become visible
@@ -256,29 +393,14 @@ func waitHidden(t *testing.T, loc playwright.Locator) {
 	}))
 }
 
-// defaultClickOpts returns click options for clicking at top-left corner of element
-// useful for clicking on modal backdrop without hitting the modal content
-func defaultClickOpts() playwright.LocatorClickOptions {
-	return playwright.LocatorClickOptions{
-		Position: &playwright.Position{X: 5, Y: 5},
-	}
-}
-
-// HTMX endpoint patterns used to await the network request behind a click before
-// asserting on the swapped-in content. avoids races where the assertion runs before
-// the htmx afterSwap completes (or the click lands mid-swap and never fires).
 var (
-	historyPathRe = regexp.MustCompile(`/api/jobs/.+/history`)
-	logsPathRe    = regexp.MustCompile(`/api/jobs/.+/executions/\d+/logs`)
-	jobModalRe    = regexp.MustCompile(`/api/jobs/.+/modal`)
-	settingsRe    = regexp.MustCompile(`/api/settings/modal`)
+	inspectorRe = regexp.MustCompile(`/api/jobs/[^/]+/inspector(\?.*)?$`)
+	outputRe    = regexp.MustCompile(`/api/jobs/[^/]+/executions/\d+/output`)
+	runFormRe   = regexp.MustCompile(`/api/jobs/[^/]+/run-form`)
+	settingsRe  = regexp.MustCompile(`/api/settings/modal`)
+	jobsRe      = regexp.MustCompile(`/api/jobs(\?.*)?$`)
 )
 
-// clickAndAwait clicks loc and waits for the HTMX request whose URL matches urlRe to
-// complete, so subsequent DOM assertions run after the swap rather than racing it.
-// the dashboard auto-refreshes #jobs-container every 5s; a click landing during that
-// swap is swallowed and its request never fires, so retry until it does. urlRe must be
-// an idempotent GET (history/logs/modal), since a retry may issue the request twice.
 func clickAndAwait(t *testing.T, page playwright.Page, loc playwright.Locator, urlRe *regexp.Regexp) {
 	t.Helper()
 	var lastErr error
@@ -293,29 +415,17 @@ func clickAndAwait(t *testing.T, page playwright.Page, loc playwright.Locator, u
 	require.NoError(t, lastErr)
 }
 
-// clickUntilVisible clicks loc until want becomes visible, retrying if a periodic
-// #jobs-container refresh (every 5s) swallows the click before it registers. checks
-// want first each iteration to avoid clicking again once it is already showing. use for
-// clicks whose effect is client-side (e.g. opening the confirm dialog) with no response.
-func clickUntilVisible(t *testing.T, loc, want playwright.Locator) {
+func openInspector(t *testing.T, page playwright.Page, name string) playwright.Locator {
 	t.Helper()
-	require.Eventually(t, func() bool {
-		if v, _ := want.IsVisible(); v {
-			return true
-		}
-		_ = loc.Click(playwright.LocatorClickOptions{Timeout: new(2000.0)})
-		v, _ := want.IsVisible()
-		return v
-	}, 30*time.Second, 200*time.Millisecond)
+	clickAndAwait(t, page, row(page, name).Locator(".job-open"), inspectorRe)
+	insp := page.Locator("#inspector .insp")
+	waitVisible(t, insp)
+	return insp
 }
 
-// clickThemeToggle clicks the theme toggle and waits for the HX-Refresh full-page
-// reload to settle on a theme different from prev, returning the new data-theme value.
-// the toggle triggers a reload, so reading data-theme right after the click is racy;
-// poll until it changes instead of relying on a shared element being visible.
 func clickThemeToggle(t *testing.T, page playwright.Page, prev string) string {
 	t.Helper()
-	require.NoError(t, page.Locator(".theme-toggle").Click())
+	require.NoError(t, page.Locator(".iconbtn.theme").Click())
 	var cur string
 	require.Eventually(t, func() bool {
 		v, e := page.Locator("html").GetAttribute("data-theme")
@@ -328,6 +438,15 @@ func clickThemeToggle(t *testing.T, page playwright.Page, prev string) string {
 	return cur
 }
 
+func countOf(t *testing.T, page playwright.Page, mode string) int {
+	t.Helper()
+	text, err := page.Locator("#count-" + mode).TextContent()
+	require.NoError(t, err)
+	n, err := strconv.Atoi(strings.TrimSpace(text))
+	require.NoError(t, err, "count %s should be an integer, got %q", mode, text)
+	return n
+}
+
 // --- dashboard tests ---
 
 func TestDashboard_PageLoads(t *testing.T) {
@@ -338,90 +457,88 @@ func TestDashboard_PageLoads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Cronn Dashboard", title)
 
-	// verify header is present (already checked in navigateToDashboard)
-	visible, err := page.Locator(".header").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "header should be visible")
-
-	// verify hostname badge is present
-	visible, err = page.Locator(".hostname-badge").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "hostname badge should be visible")
-
-	// verify hostname shows test value
-	text, err := page.Locator(".hostname-badge").TextContent()
+	text, err := page.Locator(".host").TextContent()
 	require.NoError(t, err)
 	assert.Contains(t, text, "e2e-test")
 }
 
-func TestDashboard_ShowsJobs(t *testing.T) {
-	page := newPage(t)
-	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
-
-	// verify jobs container is present
-	visible, err := page.Locator("#jobs-container").IsVisible()
-	require.NoError(t, err)
-	assert.True(t, visible, "jobs container should be visible")
-
-	// verify we have job cards (at least one)
-	count, err := page.Locator(".job-card").Count()
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, count, 1, "should have at least one job card")
-}
-
-func TestDashboard_ShowsStatsBar(t *testing.T) {
+func TestDashboard_ShowsJobsByName(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	// verify stats bar shows job count
-	visible, err := page.Locator(".stats-bar").IsVisible()
+	count, err := page.Locator("tr.row").Count()
 	require.NoError(t, err)
-	assert.True(t, visible, "stats bar should be visible")
+	assert.Equal(t, totalJobs, count)
+
+	for _, name := range []string{jobFiveMin, jobHourly, jobWeekday, jobFailing, jobSlow} {
+		visible, err := row(page, name).IsVisible()
+		require.NoError(t, err)
+		assert.True(t, visible, "row for %q should be visible", name)
+	}
+
+	cmd, err := row(page, jobHourly).Locator(".cmd").TextContent()
+	require.NoError(t, err)
+	assert.Equal(t, `echo "job2: hourly"`, cmd)
+
+	unnamed, err := row(page, jobUnnamed).Locator(".job-open").TextContent()
+	require.NoError(t, err)
+	assert.Equal(t, jobUnnamed, unnamed, "an unnamed job shows its command as its name")
 }
 
-func TestDashboard_ShowsStatsBreakdown(t *testing.T) {
+func TestDashboard_ShowsReadableSchedule(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	// breakdown line under the total tile should be visible
-	visible, err := page.Locator(".stat-breakdown").IsVisible()
+	text, err := row(page, jobHourly).Locator("td.c-sched").TextContent()
 	require.NoError(t, err)
-	assert.True(t, visible, "stats breakdown should be visible")
+	assert.Contains(t, text, "Every hour")
+	assert.Contains(t, text, "0 * * * *")
 
-	// counts depend on shared server state mutated by other tests, so assert the
-	// invariant total == running + success + failed + idle rather than fixed numbers
-	total := statCount(t, page, "#total-count")
-	running := statCount(t, page, "#running-count")
-	success := statCount(t, page, "#success-count")
-	failed := statCount(t, page, "#failed-count")
-	idle := statCount(t, page, "#idle-count")
-
-	assert.Equal(t, 4, total, "should have the 4 crontab jobs")
-	assert.Equal(t, total, running+success+failed+idle, "breakdown should sum to total")
+	text, err = row(page, jobWeekday).Locator("td.c-sched").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, text, "At 08:30, Monday through Friday")
 }
 
-// statCount reads the integer text content of a stat span by selector
-func statCount(t *testing.T, page playwright.Page, selector string) int {
-	t.Helper()
-	text, err := page.Locator(selector).TextContent()
+func TestDashboard_FilterTabCountsAddUp(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+
+	all := countOf(t, page, "all")
+	sum := countOf(t, page, "failed") + countOf(t, page, "running") + countOf(t, page, "success") +
+		countOf(t, page, "idle") + countOf(t, page, "disabled")
+	assert.Equal(t, totalJobs, all)
+	assert.Equal(t, all, sum, "tab counts should add up to all jobs")
+}
+
+func TestDashboard_FailingAlertOpensInspector(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobFailing)
+	setEnabled(t, id, true)
+	runJob(t, id)
+
+	alert := page.Locator("#failing-alert .alert")
+	require.Eventually(t, func() bool {
+		txt, err := alert.TextContent()
+		return err == nil && strings.Contains(txt, "failing")
+	}, 10*time.Second, 200*time.Millisecond, "alert should appear after the failed run")
+
+	clickAndAwait(t, page, alert.Locator("button.go"), inspectorRe)
+	waitVisible(t, page.Locator("#inspector .insp"))
+	heading, err := page.Locator("#inspector h3").TextContent()
 	require.NoError(t, err)
-	n, err := strconv.Atoi(strings.TrimSpace(text))
-	require.NoError(t, err, "stat %s should be an integer, got %q", selector, text)
-	return n
+	assert.NotEmpty(t, heading)
 }
 
 func TestDashboard_HasSearchBox(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	// verify search input exists (class is search-input, name is search)
-	visible, err := page.Locator(".search-input").IsVisible()
+	visible, err := page.Locator("#search").IsVisible()
 	require.NoError(t, err)
 	assert.True(t, visible, "search input should be visible")
 
-	// verify placeholder text
-	placeholder, err := page.Locator("input[name='search']").GetAttribute("placeholder")
+	placeholder, err := page.Locator("#search").GetAttribute("placeholder")
 	require.NoError(t, err)
-	assert.Equal(t, "Search commands...", placeholder)
+	assert.Equal(t, "Filter by name or command", placeholder)
 }

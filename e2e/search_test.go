@@ -3,156 +3,114 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/playwright-community/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func search(t *testing.T, page playwright.Page, term string) {
+	t.Helper()
+	_, err := page.ExpectResponse(jobsRe, func() error { return page.Locator("#search").Fill(term) },
+		playwright.PageExpectResponseOptions{Timeout: new(5000.0)})
+	require.NoError(t, err)
+}
+
 func TestSearch_FiltersByCommand(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
 
-	// count initial jobs
-	initialCount, err := page.Locator(".job-card").Count()
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, initialCount, 2, "need at least 2 jobs to test search")
-
-	// search for specific job
-	require.NoError(t, page.Locator(".search-input").Fill("job1"))
-
-	// wait for filter to apply (debounce + HTMX)
-	assert.Eventually(t, func() bool {
-		count, e := page.Locator(".job-card").Count()
-		return e == nil && count < initialCount
+	search(t, page, "hourly")
+	require.Eventually(t, func() bool {
+		names := rowNames(t, page)
+		return len(names) == 1 && names[0] == jobHourly
 	}, 5*time.Second, 100*time.Millisecond)
-
-	// verify filtered results
-	filteredCount, err := page.Locator(".job-card").Count()
+	text, err := page.Locator("#match-count").TextContent()
 	require.NoError(t, err)
-	assert.Less(t, filteredCount, initialCount, "filtered count should be less than initial")
-	assert.GreaterOrEqual(t, filteredCount, 1, "should find at least one matching job")
+	assert.Equal(t, "1 of 8 jobs", strings.TrimSpace(text))
 }
 
-func TestSearch_NoResults(t *testing.T) {
+func TestSearch_FiltersByName(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
 
-	// search for non-existent job
-	require.NoError(t, page.Locator(".search-input").Fill("nonexistentjob12345"))
-
-	// wait for filter to apply
-	assert.Eventually(t, func() bool {
-		count, e := page.Locator(".job-card").Count()
-		return e == nil && count == 0
+	search(t, page, "weekday report")
+	require.Eventually(t, func() bool {
+		names := rowNames(t, page)
+		return len(names) == 1 && names[0] == jobWeekday
 	}, 5*time.Second, 100*time.Millisecond)
-
-	// verify no results
-	count, err := page.Locator(".job-card").Count()
-	require.NoError(t, err)
-	assert.Equal(t, 0, count, "should show no jobs for non-matching search")
 }
 
-func TestSearch_ClearRestoresAll(t *testing.T) {
+func TestSearch_NoResultsShowsEmptyStateAndClears(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
+
+	search(t, page, "nonexistent-xyz")
+	zero := page.Locator("#jobs-container .zero")
+	waitVisible(t, zero)
+	text, err := zero.TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, text, "No jobs match “nonexistent-xyz”")
+
+	_, err = page.ExpectResponse(jobsRe, func() error {
+		return zero.Locator("button", playwright.LocatorLocatorOptions{HasText: "Clear search"}).Click()
+	})
+	require.NoError(t, err)
 	waitForJobsLoaded(t, page)
-
-	// count initial jobs
-	initialCount, err := page.Locator(".job-card").Count()
+	value, err := page.Locator("#search").InputValue()
 	require.NoError(t, err)
-
-	// search for something
-	require.NoError(t, page.Locator(".search-input").Fill("job1"))
-
-	// wait for filter to apply
-	assert.Eventually(t, func() bool {
-		count, e := page.Locator(".job-card").Count()
-		return e == nil && count < initialCount
-	}, 5*time.Second, 100*time.Millisecond)
-
-	// clear search
-	require.NoError(t, page.Locator(".search-input").Fill(""))
-
-	// wait for all jobs to return
-	assert.Eventually(t, func() bool {
-		count, e := page.Locator(".job-card").Count()
-		return e == nil && count == initialCount
-	}, 5*time.Second, 100*time.Millisecond)
-
-	// verify all jobs are back
-	finalCount, err := page.Locator(".job-card").Count()
+	assert.Empty(t, value, "Clear search should empty the search box")
+	count, err := page.Locator("tr.row").Count()
 	require.NoError(t, err)
-	assert.Equal(t, initialCount, finalCount, "clearing search should restore all jobs")
+	assert.Equal(t, totalJobs, count)
 }
 
-func TestSearch_WorksInListView(t *testing.T) {
+func TestSearch_EmptyStateNamesTheFilterHidingJobs(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
+	id := jobID(t, page, jobFailing)
+	setEnabled(t, id, true)
+	runJob(t, id)
 
-	// switch to list view
-	require.NoError(t, page.Locator(".view-toggle").Click())
-	waitVisible(t, page.Locator(".jobs-table"))
-
-	// count initial jobs in list view
-	initialCount, err := page.Locator(".job-row").Count()
+	clickTab(t, page, "Failed")
+	search(t, page, "hourly")
+	zero := page.Locator("#jobs-container .zero")
+	waitVisible(t, zero)
+	text, err := zero.TextContent()
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, initialCount, 2, "need at least 2 jobs to test search")
+	assert.Contains(t, text, "No failed jobs match “hourly”")
+	assert.Contains(t, text, "hidden by the search")
 
-	// search for specific job
-	require.NoError(t, page.Locator(".search-input").Fill("job1"))
-
-	// wait for filter to apply
-	assert.Eventually(t, func() bool {
-		count, e := page.Locator(".job-row").Count()
-		return e == nil && count < initialCount
-	}, 5*time.Second, 100*time.Millisecond)
-
-	// verify filtered results in list view
-	filteredCount, err := page.Locator(".job-row").Count()
+	_, err = page.ExpectResponse(`**/api/filter-mode`, func() error {
+		return zero.Locator("button", playwright.LocatorLocatorOptions{HasText: "Show all jobs"}).Click()
+	})
 	require.NoError(t, err)
-	assert.Less(t, filteredCount, initialCount, "filtered count should be less than initial")
-	assert.GreaterOrEqual(t, filteredCount, 1, "should find at least one matching job")
-
-	// verify still in list view (table visible)
-	visible, err := page.Locator(".jobs-table").IsVisible()
+	waitVisible(t, page.Locator(".tabs .tab.on").Filter(playwright.LocatorFilterOptions{HasText: "All"}))
+	value, err := page.Locator("#search").InputValue()
 	require.NoError(t, err)
-	assert.True(t, visible, "should remain in list view after search")
+	assert.Empty(t, value)
+	count, err := page.Locator("tr.row").Count()
+	require.NoError(t, err)
+	assert.Equal(t, totalJobs, count)
 }
 
-func TestSearch_CombinedWithSortAndFilter(t *testing.T) {
+func TestSearch_SurvivesPollAndSortChange(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
-	waitForJobsLoaded(t, page)
 
-	// change sort mode
-	require.NoError(t, page.Locator(".sort-button").Click())
-	require.NoError(t, page.Locator(".sort-button .sort-label:has-text('Last Run')").WaitFor())
+	search(t, page, "echo")
+	selectSort(t, page, "lastrun")
+	for _, name := range rowNames(t, page) {
+		assert.NotContains(t, []string{jobSilent, jobSlow}, name, "search should still apply after a sort change")
+	}
 
-	// apply search
-	require.NoError(t, page.Locator(".search-input").Fill("job"))
-
-	// wait for search to apply
-	assert.Eventually(t, func() bool {
-		count, e := page.Locator(".job-card").Count()
-		return e == nil && count >= 1
-	}, 5*time.Second, 100*time.Millisecond)
-
-	// verify sort mode is preserved
-	sortText, err := page.Locator(".sort-button .sort-label").TextContent()
+	_, err := page.ExpectResponse(jobsRe, func() error { return nil }, playwright.PageExpectResponseOptions{Timeout: new(8000.0)})
 	require.NoError(t, err)
-	assert.Contains(t, sortText, "Last Run", "sort mode should be preserved during search")
-
-	// toggle view mode while search is active
-	require.NoError(t, page.Locator(".view-toggle").Click())
-	waitVisible(t, page.Locator(".jobs-table"))
-
-	// verify search results are shown in list view
-	count, err := page.Locator(".job-row").Count()
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, count, 1, "search results should be visible in list view")
+	for _, name := range rowNames(t, page) {
+		assert.NotContains(t, []string{jobSilent, jobSlow}, name, "search should still apply after a poll")
+	}
+	selectSort(t, page, "default")
 }

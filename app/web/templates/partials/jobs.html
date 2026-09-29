@@ -1,640 +1,207 @@
-{{define "jobs-cards"}}
-{{range .Jobs}}
-<div class="job-card{{if not .Enabled}} job-disabled{{end}}"
-     data-job-id="{{.ID}}"
-     data-job-status="{{.LastStatus}}"
-     data-next-run="{{.NextRun.Unix}}">
+{{define "job-name"}}{{if .Name}}{{.Name}}{{else}}{{.Command}}{{end}}{{end}}
 
-    <!-- Status indicator -->
-    <div class="job-status status-{{.LastStatus}}">
-        {{if .IsRunning}}
-        <div class="status-indicator running">
-            <div class="pulse"></div>
-        </div>
-        {{else if eq .LastStatus.String "success"}}
-        <div class="status-indicator success">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-        </div>
-        {{else if eq .LastStatus.String "failed"}}
-        <div class="status-indicator failed">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </div>
-        {{else}}
-        <div class="status-indicator idle"></div>
-        {{end}}
-    </div>
+{{define "job-dot"}}{{if not .Enabled}}off{{else if .IsRunning}}running{{else if eq .LastStatus.String "success"}}ok{{else if eq .LastStatus.String "failed"}}fail{{else}}never{{end}}{{end}}
 
-    <!-- Schedule and command -->
-    <div class="job-header">
-        <div class="job-schedule" title="{{.Schedule}}">
-            <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-            <code>{{.Schedule}}</code>
-        </div>
-        <div></div><!-- Spacer for grid -->
-        <div class="job-header-actions">
-            <button class="history-btn"
-                    {{if eq .LastStatus.String "idle"}}
-                    disabled
-                    title="No execution history"
-                    {{else}}
-                    hx-get="{{url (printf "/api/jobs/%s/history" .ID)}}"
-                    hx-target="#history-content"
-                    hx-swap="innerHTML"
-                    hx-on::after-request="document.getElementById('history-modal').style.display='flex'"
-                    title="Show execution history"
-                    {{end}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                    <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-            </button>
-            <button class="btn-toggle {{if not .Enabled}}btn-disabled-state{{end}}"
-                    hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}"
-                    hx-swap="none"
-                    title="{{if .Enabled}}Disable{{else}}Enable{{end}} job">
-                <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 2v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-            </button>
-            {{if not $.ManualDisabled}}
-            <button class="btn-compact"
-                    {{if and .Enabled (not .IsRunning)}}
-                    hx-post="{{url (printf "/api/jobs/%s/run" .ID)}}"
-                    hx-swap="none"
-                    hx-confirm='{{.Command}}'
-                    hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
-                    {{else}}
-                    disabled
-                    {{end}}>
-                <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
-                    <path d="M5 3l14 9-14 9V3z" fill="currentColor"/>
-                </svg>
-                <span>Run</span>
-            </button>
-            {{end}}
-        </div>
-    </div>
+{{define "job-state"}}{{if not .Enabled}}Disabled{{else if .IsRunning}}Running{{else if eq .LastStatus.String "success"}}Succeeded{{else if eq .LastStatus.String "failed"}}Failed{{else}}Never ran{{end}}{{end}}
 
-    <div class="job-command">
-        <button class="info-btn"
-                hx-get="{{url (printf "/api/jobs/%s/modal" .ID)}}"
-                hx-target="#modal-content"
-                hx-swap="innerHTML"
-                hx-on::after-request="document.getElementById('job-modal').style.display='flex'"
-                title="Show job details">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                <path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </button>
-        <code title="{{.Command}}">{{truncate .Command 60}}</code>
-    </div>
+{{define "filter-label"}}{{if eq . "failed"}}failed {{else if eq . "running"}}running {{else if eq . "success"}}succeeded {{else if eq . "idle"}}never-run {{else if eq . "disabled"}}disabled {{end}}{{end}}
 
-    <!-- Timing info -->
-    <div class="job-timing">
-        <div class="timing-item">
-            <span class="timing-label">Next run:</span>
-            <span class="timing-value" title="{{if .Enabled}}{{.NextRun.Format "2006-01-02 15:04:05"}}{{else}}disabled{{end}}">
-                {{if not .Enabled}}-{{else}}{{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}{{end}}
-            </span>
-        </div>
-        <div class="timing-item">
-            <span class="timing-label">Last run:</span>
-            <span class="timing-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
-        </div>
-    </div>
+{{define "search-field"}}
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+    <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+</svg>
+<input type="search"
+       id="search"
+       name="search"
+       value="{{.Search}}"
+       placeholder="Filter by name or command"
+       aria-label="Filter jobs by name or command"
+       autocomplete="off"
+       hx-get="{{url "/api/jobs"}}"
+       hx-trigger="input changed delay:300ms, search"
+       hx-target="#jobs-container"
+       hx-swap="innerHTML"
+       hx-include="#selected-job">
+{{end}}
 
+{{define "search-input"}}<label id="search-box" class="search">{{template "search-field" .}}</label>{{end}}
+
+{{define "search-input-oob"}}<label id="search-box" class="search" hx-swap-oob="true">{{template "search-field" .}}</label>{{end}}
+
+{{define "failing-alert"}}
+{{if .Failing}}{{with index .Failing 0}}
+<div class="alert" role="alert">
+    <span class="dot fail" aria-hidden="true"></span>
+    <strong>{{len $.Failing}} {{if eq (len $.Failing) 1}}job{{else}}jobs{{end}} failing</strong>
+    <span class="alert-name">{{template "job-name" .}}</span>
+    <span class="mono">{{with .LastExitCode}}exit {{deref .}} · {{end}}{{ago .LastRun}}</span>
+    <button class="go"
+            hx-get="{{url (printf "/api/jobs/%s/inspector" .ID)}}"
+            hx-target="#inspector"
+            hx-swap="innerHTML">Inspect →</button>
 </div>
-{{end}}
+{{end}}{{end}}
 {{end}}
 
-{{define "jobs-list"}}
-<table class="jobs-table">
+{{define "failing-alert-oob"}}<div id="failing-alert" hx-swap-oob="innerHTML">{{template "failing-alert" .}}</div>{{end}}
+
+{{define "jobs-controls"}}
+<div class="tabs" role="group" aria-label="Filter jobs by state">
+    {{range .Tabs}}
+    <button class="tab{{if .Active}} on{{end}}"
+            aria-pressed="{{if .Active}}true{{else}}false{{end}}"
+            hx-post="{{url "/api/filter-mode"}}"
+            hx-vals='{"filter": "{{.Mode}}"}'
+            hx-target="#jobs-container"
+            hx-swap="innerHTML"
+            hx-include="#search, #selected-job">
+        {{if .Dot}}<span class="d d-{{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}} <em id="count-{{.Mode}}">{{.Count}}</em>
+    </button>
+    {{end}}
+</div>
+<span class="count" id="match-count">{{template "match-count" .}}</span>
+<label class="select">
+    Sort
+    <select name="sort"
+            hx-post="{{url "/api/sort-mode"}}"
+            hx-trigger="change"
+            hx-target="#jobs-container"
+            hx-swap="innerHTML"
+            hx-include="#search, #selected-job">
+        <option value="default"{{if eq .SortMode.String "default"}} selected{{end}}>Crontab order</option>
+        <option value="nextrun"{{if eq .SortMode.String "nextrun"}} selected{{end}}>Next run</option>
+        <option value="lastrun"{{if eq .SortMode.String "lastrun"}} selected{{end}}>Last run</option>
+    </select>
+</label>
+{{end}}
+
+{{define "jobs-controls-oob"}}<div id="jobs-controls" class="bar" hx-swap-oob="innerHTML">{{template "jobs-controls" .}}</div>{{end}}
+
+{{define "match-count"}}{{if eq .MatchCount .TotalCount}}{{.TotalCount}} {{if eq .TotalCount 1}}job{{else}}jobs{{end}}{{else}}{{.MatchCount}} of {{.TotalCount}} jobs{{end}}{{end}}
+
+{{define "jobs-counts-oob"}}
+<em id="count-all" hx-swap-oob="innerHTML">{{.TotalCount}}</em>
+<em id="count-failed" hx-swap-oob="innerHTML">{{.FailedCount}}</em>
+<em id="count-running" hx-swap-oob="innerHTML">{{.RunningCount}}</em>
+<em id="count-success" hx-swap-oob="innerHTML">{{.SuccessCount}}</em>
+<em id="count-idle" hx-swap-oob="innerHTML">{{.IdleCount}}</em>
+<em id="count-disabled" hx-swap-oob="innerHTML">{{.DisabledCount}}</em>
+<span id="match-count" hx-swap-oob="innerHTML">{{template "match-count" .}}</span>
+{{end}}
+
+{{define "jobs-table"}}
+{{if .Jobs}}
+<table class="jobs">
     <thead>
         <tr>
-            <th class="th-status">Status</th>
-            <th class="th-schedule cron">Schedule</th>
-            <th class="th-command">Command</th>
-            <th class="th-next numeric">Next Run</th>
-            <th class="th-last numeric">Last Run</th>
-            <th class="th-actions">Actions</th>
+            <th class="c-st"><span class="sr-only">State</span></th>
+            <th class="c-job">Job</th>
+            <th class="c-sched">Schedule</th>
+            <th class="c-last">Last run</th>
+            <th class="c-next{{if eq .SortMode.String "nextrun"}} sorted{{end}}">Next</th>
+            <th class="c-time">When</th>
+            <th class="c-act"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
-        {{range .Jobs}}
-        <tr class="job-row{{if not .Enabled}} job-disabled{{end}}"
-            data-job-id="{{.ID}}"
-            data-job-status="{{.LastStatus}}"
-            data-next-run="{{.NextRun.Unix}}">
-
-            <td class="td-status">
-                {{if .IsRunning}}
-                <div class="status-badge running">
-                    <div class="status-dot"></div>
-                    Running
+        {{range .Jobs}}{{$j := .}}
+        <tr class="row{{if not .Enabled}} off{{end}}{{if eq .ID $.SelectedJob}} sel{{end}}" data-job-id="{{.ID}}" data-state="{{template "job-dot" .}}">
+            <td class="c-st">
+                <span class="dot {{template "job-dot" .}}" aria-hidden="true"></span>
+                <span class="sr-only">{{template "job-state" .}}</span>
+            </td>
+            <td class="c-job">
+                <div class="name">
+                    <button class="job-open{{if not .Name}} unnamed{{end}}"
+                            id="open-{{.ID}}"
+                            hx-get="{{url (printf "/api/jobs/%s/inspector" .ID)}}"
+                            hx-target="#inspector"
+                            hx-swap="innerHTML">{{template "job-name" .}}</button>
+                    {{if not .Enabled}}<span class="tag off">disabled</span>{{end}}
                 </div>
-                {{else if eq .LastStatus.String "success"}}
-                <div class="status-badge success">
-                    <div class="status-dot"></div>
-                    Success
-                </div>
-                {{else if eq .LastStatus.String "failed"}}
-                <div class="status-badge failed">
-                    <div class="status-dot"></div>
-                    Failed
-                </div>
+                {{if .Name}}<div class="cmd" title="{{.Command}}">{{.Command}}</div>{{end}}
+                <div class="fold-sched">{{describeSchedule .Schedule}} · <span class="mono">{{.Schedule}}</span></div>
+            </td>
+            <td class="c-sched">{{describeSchedule .Schedule}}<span class="mono">{{.Schedule}}</span></td>
+            <td class="c-last">{{template "last-run" .}}</td>
+            <td class="c-next">
+                {{if not .Enabled}}—<small>disabled</small>{{else if .NextRun.IsZero}}—{{else}}in {{timeUntil .NextRun}}<small>{{clock .NextRun}}</small>{{end}}
+            </td>
+            <td class="c-time">
+                <div><span class="k">Last</span>{{template "last-run-short" .}}</div>
+                <div><span class="k">Next</span>{{if not .Enabled}}disabled{{else if .NextRun.IsZero}}—{{else}}in {{timeUntil .NextRun}}{{end}}</div>
+            </td>
+            <td class="c-act">
+                {{if not .Enabled}}
+                <button class="btn ghost" id="toggle-{{.ID}}"
+                        hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}" hx-swap="none"
+                        aria-label="Enable {{template "job-name" .}}">Enable</button>
                 {{else}}
-                <div class="status-badge idle">
-                    <div class="status-dot"></div>
-                    Idle
-                </div>
-                {{end}}
-            </td>
-
-            <td class="td-schedule">
-                <code class="schedule-code">{{.Schedule}}</code>
-            </td>
-
-            <td class="td-command command">
-                <button class="info-btn"
-                        hx-get="{{url (printf "/api/jobs/%s/modal" .ID)}}"
-                        hx-target="#modal-content"
-                        hx-swap="innerHTML"
-                        hx-on::after-request="document.getElementById('job-modal').style.display='flex'"
-                        title="Show job details">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                        <path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    </svg>
-                </button>
-                <code class="command-text" title="{{.Command}}">{{truncate .Command 80}}</code>
-            </td>
-
-            <td class="td-next numeric">
-                <span class="time-value" title="{{if .Enabled}}{{.NextRun.Format "2006-01-02 15:04:05"}}{{else}}disabled{{end}}">
-                    {{if not .Enabled}}-{{else}}{{timeUntil .NextRun}}{{if not .NextRun.IsZero}} ({{.NextRun.Format "Jan 2, 15:04"}}){{end}}{{end}}
-                </span>
-            </td>
-
-            <td class="td-last numeric">
-                <span class="time-value">{{if .LastRun.IsZero}}Never{{else}}{{humanTime .LastRun}}{{end}}</span>
-            </td>
-
-            <td class="td-actions">
-                <button class="history-btn"
-                        {{if eq .LastStatus.String "idle"}}
-                        disabled
-                        title="No execution history"
-                        {{else}}
-                        hx-get="{{url (printf "/api/jobs/%s/history" .ID)}}"
-                        hx-target="#history-content"
-                        hx-swap="innerHTML"
-                        hx-on::after-request="document.getElementById('history-modal').style.display='flex'"
-                        title="Show execution history"
-                        {{end}}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                        <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    </svg>
-                </button>
-                <button class="btn-toggle {{if not .Enabled}}btn-disabled-state{{end}}"
-                        hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}"
-                        hx-swap="none"
-                        title="{{if .Enabled}}Disable{{else}}Enable{{end}} job">
-                    <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <path d="M12 2v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    </svg>
-                </button>
                 {{if not $.ManualDisabled}}
-                <button class="btn-compact"
-                        {{if and .Enabled (not .IsRunning)}}
-                        hx-post="{{url (printf "/api/jobs/%s/run" .ID)}}"
-                        hx-swap="none"
-                        hx-confirm='{{.Command}}'
-                        hx-on::after-request="this.disabled=true; setTimeout(() => this.disabled=false, 2000)"
-                        {{else}}
-                        disabled
-                        {{end}}>
-                    <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <path d="M5 3l14 9-14 9V3z" fill="currentColor"/>
-                    </svg>
-                    <span>Run</span>
-                </button>
+                <button class="btn run-btn" id="run-{{.ID}}"
+                        {{if .IsRunning}}disabled{{end}}
+                        hx-get="{{url (printf "/api/jobs/%s/run-form" .ID)}}"
+                        hx-target="#dialog-slot" hx-swap="innerHTML"
+                        aria-label="Run {{template "job-name" .}} now">▶<span class="lbl"> Run</span></button>
+                {{end}}
+                <button class="btn icon toggle-btn" id="toggle-{{.ID}}"
+                        hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}" hx-swap="none"
+                        title="Disable job" aria-label="Disable {{template "job-name" .}}">⏻</button>
                 {{end}}
             </td>
         </tr>
         {{end}}
     </tbody>
 </table>
-{{end}}
-
-{{define "filter-button"}}
-<button {{if .IsOOB}}hx-swap-oob="outerHTML:.filter-button"{{end}}
-        hx-post="{{url "/api/filter-toggle"}}"
-        hx-target="#jobs-container"
-        hx-swap="innerHTML"
-        hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
-        class="filter-button"
-        title="Filter by status">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="filter-icon">
-        <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-    <span class="filter-label" id="filter-label">
-        {{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else if eq .FilterMode.String "failed"}}Failed{{else}}Idle{{end}}
-    </span>
-    {{if ne .FilterMode.String "all"}}
-    <span class="filter-indicator {{.FilterMode.String}}"></span>
-    {{end}}
-</button>
-{{end}}
-
-{{define "sort-button"}}
-<button {{if .IsOOB}}hx-swap-oob="outerHTML:.sort-button"{{end}}
-        hx-post="{{url "/api/sort-toggle"}}"
-        hx-target="#jobs-container"
-        hx-swap="innerHTML"
-        hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
-        class="sort-button"
-        title="Change sort order">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="sort-icon">
-        <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-    </svg>
-    <span class="sort-label" id="sort-label">
-        {{if eq .SortMode.String "default"}}Original Order{{else if eq .SortMode.String "lastrun"}}Last Run{{else}}Next Run{{end}}
-    </span>
-</button>
-{{end}}
-
-{{define "jobs-container"}}
-<div id="jobs-container"
-     hx-get="{{url "/api/jobs"}}"
-     hx-trigger="load, every 5s"
-     hx-swap="innerHTML settle:0ms"
-     hx-include="[name='search']"
-     class="jobs-container {{.ViewMode}}">
-{{if eq .ViewMode.String "cards"}}
-    {{template "jobs-cards" .}}
 {{else}}
-    {{template "jobs-list" .}}
+{{template "jobs-empty" .}}
 {{end}}
-</div>
 {{end}}
 
-{{define "view-mode-button"}}
-<button hx-post="{{url "/api/view-mode"}}"
-        hx-trigger="click"
-        hx-target="#jobs-container"
-        hx-swap="outerHTML"
-        hx-vals="js:{search: document.querySelector('[name=search]')?.value || ''}"
-        {{if .IsOOB}}hx-swap-oob="outerHTML:.view-toggle"{{end}}
-        class="control-btn view-toggle"
-        title="Toggle view mode">
-    {{if eq .ViewMode.String "cards"}}
-    <!-- List icon (switch to list) -->
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <line x1="8" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <line x1="8" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <circle cx="4" cy="6" r="1" fill="currentColor"/>
-        <circle cx="4" cy="12" r="1" fill="currentColor"/>
-        <circle cx="4" cy="18" r="1" fill="currentColor"/>
-    </svg>
+{{define "last-run"}}
+{{if .IsRunning}}<span class="elapsed">running {{humanDuration (since .LastRun)}}</span>
+{{else if .LastRun.IsZero}}<span class="never-txt">never ran</span>
+{{else}}{{ago .LastRun}}{{with .LastExitCode}}<span class="meta{{if ne (deref .) 0}} bad{{end}}">exit {{deref .}} · {{runDuration $.LastDuration}}</span>{{end}}
+{{end}}
+{{end}}
+
+{{define "last-run-short"}}
+{{if .IsRunning}}<span class="elapsed">running {{humanDuration (since .LastRun)}}</span>
+{{else if .LastRun.IsZero}}<span class="never-txt">never ran</span>
+{{else}}{{ago .LastRun}}{{with .LastExitCode}} · <span class="mono{{if ne (deref .) 0}} bad{{end}}">exit {{deref .}}</span>{{end}}
+{{end}}
+{{end}}
+
+{{define "jobs-empty"}}
+<div class="zero">
+    {{if eq .TotalCount 0}}
+    <b>No jobs configured</b>
+    Add jobs to the crontab file and they will show up here.
+    {{else if .Search}}
+    <b>No {{template "filter-label" .FilterMode.String}}jobs match “{{.Search}}”</b>
+    {{if .HiddenBySearch}}{{.HiddenBySearch}} {{template "filter-label" .FilterMode.String}}{{if eq .HiddenBySearch 1}}job is{{else}}jobs are{{end}} hidden by the search.{{end}}
+    <div class="acts">
+        <button class="btn"
+                hx-get="{{url "/api/jobs"}}"
+                hx-vals='{"search": "", "reset-search": "1"}'
+                hx-target="#jobs-container" hx-swap="innerHTML"
+                hx-include="#selected-job">Clear search</button>
+        <button class="btn ghost"
+                hx-post="{{url "/api/filter-mode"}}"
+                hx-vals='{"filter": "all", "search": "", "reset-search": "1"}'
+                hx-target="#jobs-container" hx-swap="innerHTML"
+                hx-include="#selected-job">Show all jobs</button>
+    </div>
     {{else}}
-    <!-- Card icon (switch to cards) -->
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="3" y="3" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
-        <rect x="13" y="3" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
-        <rect x="3" y="13" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
-        <rect x="13" y="13" width="8" height="8" rx="1" stroke="currentColor" stroke-width="2"/>
-    </svg>
+    <b>No {{template "filter-label" .FilterMode.String}}jobs</b>
+    <div class="acts">
+        <button class="btn"
+                hx-post="{{url "/api/filter-mode"}}"
+                hx-vals='{"filter": "all"}'
+                hx-target="#jobs-container" hx-swap="innerHTML"
+                hx-include="#search, #selected-job">Show all jobs</button>
+    </div>
     {{end}}
-</button>
-{{end}}
-
-{{define "stats-updates"}}
-{{if .IsOOB}}
-<span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span>
-<span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span>
-{{end}}
-{{end}}
-
-{{define "stats-total"}}
-<button class="stat-total{{if eq .FilterMode.String "all"}} active{{end}}" id="stat-total"
-        {{if .IsOOB}}hx-swap-oob="outerHTML:#stat-total"{{end}}
-        hx-post="{{url "/api/filter-mode"}}"
-        hx-vals="js:{filter: 'all', search: document.querySelector('[name=search]')?.value || ''}"
-        hx-target="#jobs-container"
-        hx-swap="innerHTML"
-        title="Show all jobs">
-    <span class="stat-value" id="total-count">{{.TotalCount}}</span>
-    <span class="stat-label">Total Jobs</span>
-</button>
-{{end}}
-
-{{define "stats-breakdown"}}
-<div class="stat-breakdown" id="stats-breakdown" {{if .IsOOB}}hx-swap-oob="outerHTML:#stats-breakdown"{{end}}>
-    <button class="breakdown-item breakdown-ok{{if eq .FilterMode.String "success"}} active{{end}}"
-            hx-post="{{url "/api/filter-mode"}}"
-            hx-vals="js:{filter: 'success', search: document.querySelector('[name=search]')?.value || ''}"
-            hx-target="#jobs-container"
-            hx-swap="innerHTML"
-            title="Filter by succeeded jobs">
-        <span class="breakdown-count" id="success-count">{{.SuccessCount}}</span>
-        <span class="breakdown-label">ok</span>
-    </button>
-    <button class="breakdown-item breakdown-failed{{if eq .FilterMode.String "failed"}} active{{end}}"
-            hx-post="{{url "/api/filter-mode"}}"
-            hx-vals="js:{filter: 'failed', search: document.querySelector('[name=search]')?.value || ''}"
-            hx-target="#jobs-container"
-            hx-swap="innerHTML"
-            title="Filter by failed jobs">
-        <span class="breakdown-count" id="failed-count">{{.FailedCount}}</span>
-        <span class="breakdown-label">failed</span>
-    </button>
-    <button class="breakdown-item breakdown-idle{{if eq .FilterMode.String "idle"}} active{{end}}"
-            hx-post="{{url "/api/filter-mode"}}"
-            hx-vals="js:{filter: 'idle', search: document.querySelector('[name=search]')?.value || ''}"
-            hx-target="#jobs-container"
-            hx-swap="innerHTML"
-            title="Filter by never-run jobs">
-        <span class="breakdown-count" id="idle-count">{{.IdleCount}}</span>
-        <span class="breakdown-label">idle</span>
-    </button>
-</div>
-{{end}}
-
-{{define "job-modal"}}
-<div class="job-modal">
-    <div class="modal-header">
-        <h2>Job Details</h2>
-        <button class="modal-close" onclick="document.getElementById('job-modal').style.display='none'">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </button>
-    </div>
-
-    <div class="modal-body">
-        <div class="modal-row">
-            <div class="modal-section">
-                <div class="modal-label">Status</div>
-                <div class="modal-value">
-                    {{if .IsRunning}}
-                    <div class="status-badge running">
-                        <div class="status-dot"></div>
-                        Running
-                    </div>
-                    {{else if eq .LastStatus.String "success"}}
-                    <div class="status-badge success">
-                        <div class="status-dot"></div>
-                        Success
-                    </div>
-                    {{else if eq .LastStatus.String "failed"}}
-                    <div class="status-badge failed">
-                        <div class="status-dot"></div>
-                        Failed
-                    </div>
-                    {{else}}
-                    <div class="status-badge idle">
-                        <div class="status-dot"></div>
-                        Idle
-                    </div>
-                    {{end}}
-                </div>
-            </div>
-
-            <div class="modal-section">
-                <div class="modal-label">Schedule</div>
-                <div class="modal-value">
-                    <code>{{.Schedule}}</code>
-                </div>
-            </div>
-
-            <div class="modal-section">
-                <div class="modal-label">Enabled</div>
-                <div class="modal-value">
-                    {{if .Enabled}}Yes{{else}}No{{end}}
-                </div>
-            </div>
-        </div>
-
-        <div class="modal-row">
-            <div class="modal-section">
-                <div class="modal-label">Next Run</div>
-                <div class="modal-value">
-                    {{if not .Enabled}}Disabled
-                    {{else if .NextRun.IsZero}}Never
-                    {{else}}{{.NextRun.Format "2006-01-02 15:04:05"}} ({{timeUntil .NextRun}})
-                    {{end}}
-                </div>
-            </div>
-
-            <div class="modal-section">
-                <div class="modal-label">Last Run</div>
-                <div class="modal-value">
-                    {{if .LastRun.IsZero}}
-                    Never
-                    {{else}}
-                    {{.LastRun.Format "2006-01-02 15:04:05"}} ({{humanTime .LastRun}})
-                    {{end}}
-                </div>
-            </div>
-        </div>
-
-        <div class="modal-section modal-section-full">
-            <div class="modal-label">Command</div>
-            <div class="modal-value modal-command">
-                <code>{{.Command}}</code>
-            </div>
-        </div>
-    </div>
-</div>
-{{end}}
-
-{{define "history-modal"}}
-<div class="history-modal">
-    <div class="modal-header">
-        <h2>Execution History</h2>
-        <button class="modal-close" onclick="document.getElementById('history-modal').style.display='none'">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </button>
-    </div>
-
-    <div class="modal-body">
-        <div class="modal-section modal-section-full">
-            <div class="modal-label">Command</div>
-            <div class="modal-value modal-command">
-                <code class="history-command" data-base-command="{{.Job.Command}}">{{.Job.Command}}</code>
-            </div>
-        </div>
-
-        {{if .Executions}}
-        <div class="history-table-container">
-            <table class="history-table">
-                <thead>
-                    <tr>
-                        <th style="width: 30px;"></th>
-                        <th>Started</th>
-                        <th>Finished</th>
-                        <th>Duration</th>
-                        <th>Status</th>
-                        <th style="width: 80px;">Logs</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .Executions}}
-                    <tr {{if .ExecutedCommand}}
-                        class="history-row-clickable"
-                        data-base-command="{{$.Job.Command}}"
-                        data-executed-command="{{.ExecutedCommand}}"
-                        onclick="toggleHistoryCommand(this)"
-                        title="Click to view executed command"
-                        {{end}}>
-                        <td class="history-icon-cell">
-                            {{if .ExecutedCommand}}
-                            <svg class="history-custom-icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
-                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="currentColor"/>
-                            </svg>
-                            {{end}}
-                        </td>
-                        <td class="history-date">{{.StartedAt.Format "Jan 2, 15:04:05"}}</td>
-                        <td class="history-date">
-                            {{if .FinishedAt.IsZero}}
-                            -
-                            {{else}}
-                            {{.FinishedAt.Format "Jan 2, 15:04:05"}}
-                            {{end}}
-                        </td>
-                        <td class="history-duration">
-                            {{if or (.StartedAt.IsZero) (.FinishedAt.IsZero)}}
-                            -
-                            {{else}}
-                            {{humanDuration (.FinishedAt.Sub .StartedAt)}}
-                            {{end}}
-                        </td>
-                        <td>
-                            {{if eq .Status.String "success"}}
-                            <div class="status-badge success">
-                                <div class="status-dot"></div>
-                                Success
-                            </div>
-                            {{else}}
-                            <div class="status-badge failed">
-                                <div class="status-dot"></div>
-                                Failed
-                            </div>
-                            {{end}}
-                        </td>
-                        <td class="history-logs-cell">
-                            {{if .Output}}
-                            <button class="btn-logs"
-                                    hx-get="{{url (printf "/api/jobs/%s/executions/%d/logs" $.Job.ID .ID)}}"
-                                    hx-target="#history-content"
-                                    hx-swap="innerHTML">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-                                    <polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-                                    <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                    <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                    <polyline points="10 9 9 9 8 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                </svg>
-                                View
-                            </button>
-                            {{else}}
-                            <span class="logs-empty">-</span>
-                            {{end}}
-                        </td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
-        </div>
-        {{else}}
-        <div class="history-empty">
-            <p>No execution history available</p>
-        </div>
-        {{end}}
-    </div>
-</div>
-{{end}}
-
-{{define "logs-modal"}}
-<div class="history-modal">
-    <div class="modal-header">
-        <button class="modal-back"
-                hx-get="{{url (printf "/api/jobs/%s/history" .JobID)}}"
-                hx-target="#history-content"
-                hx-swap="innerHTML"
-                title="Back to history">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-        </button>
-        <h2>Execution Logs</h2>
-        <button class="modal-close" onclick="document.getElementById('history-modal').style.display='none'">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </button>
-    </div>
-
-    <div class="modal-body">
-        <div class="logs-info-row">
-            <div class="logs-info-item">
-                <div class="modal-label">Started</div>
-                <div class="modal-value">{{.Execution.StartedAt.Format "Jan 2, 2006 15:04:05"}}</div>
-            </div>
-
-            <div class="logs-info-item">
-                <div class="modal-label">Duration</div>
-                <div class="modal-value">
-                    {{if or (.Execution.StartedAt.IsZero) (.Execution.FinishedAt.IsZero)}}
-                    -
-                    {{else}}
-                    {{humanDuration (.Execution.FinishedAt.Sub .Execution.StartedAt)}}
-                    {{end}}
-                </div>
-            </div>
-
-            <div class="logs-info-item">
-                <div class="modal-label">Status</div>
-                <div class="modal-value">
-                    {{if eq .Execution.Status.String "success"}}
-                    <div class="status-badge success">
-                        <div class="status-dot"></div>
-                        Success (exit code: {{.Execution.ExitCode}})
-                    </div>
-                    {{else}}
-                    <div class="status-badge failed">
-                        <div class="status-dot"></div>
-                        Failed (exit code: {{.Execution.ExitCode}})
-                    </div>
-                    {{end}}
-                </div>
-            </div>
-        </div>
-
-        <div class="modal-section modal-section-full">
-            <div class="modal-label">Output</div>
-            <div class="logs-output">
-                {{if .Execution.Output}}
-                <pre><code>{{.Execution.Output}}</code></pre>
-                {{else}}
-                <p class="logs-empty-message">No output captured</p>
-                {{end}}
-            </div>
-        </div>
-    </div>
 </div>
 {{end}}

@@ -3,7 +3,7 @@
 <html lang="en" data-theme="{{.Theme.String}}">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Cronn Dashboard</title>
     <meta name="description" content="Monitor and manage cron jobs with Cronn">
     <link rel="stylesheet" href="{{url "/static/style.css"}}">
@@ -11,103 +11,57 @@
 </head>
 <body hx-boost="true">
     <div class="app">
-        <!-- Header with controls -->
-        <header class="header">
-            <div class="header-content">
-                <div class="logo">
-                    <svg class="logo-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                        <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    </svg>
-                    <h1 class="logo-text">Cronn{{if .Hostname}}
-                        {{if .NeighborsEnabled}}
-                        <details class="neighbors-selector">
-                            <summary class="hostname-badge hostname-badge-clickable">
-                                {{.Hostname}}
-                                <svg class="dropdown-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </summary>
-                            <div class="neighbors-dropdown"
-                                 hx-get="{{url "/api/neighbors"}}"
-                                 hx-trigger="toggle once from:closest details"
-                                 hx-swap="innerHTML">
-                                <div class="neighbors-loading">Loading...</div>
-                            </div>
-                        </details>
-                        {{else}}
-                        <span class="hostname-badge">{{.Hostname}}</span>
-                        {{end}}
-                    {{end}}</h1>
-                </div>
-                
-                <div class="header-controls">
-                    <!-- Search -->
-                    <div class="search-container">
-                        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
-                            <path d="m21 21-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
-                        <input type="search"
-                               name="search"
-                               placeholder="Search commands..."
-                               hx-get="{{url "/api/jobs"}}"
-                               hx-trigger="input changed delay:500ms, search"
-                               hx-target="#jobs-container"
-                               hx-swap="innerHTML"
-                               class="search-input">
-                    </div>
-
-                    <!-- Sort control -->
-                    {{template "sort-button" .}}
-
-                    <!-- Filter control -->
-                    {{template "filter-button" .}}
-
-                    <!-- View mode toggle -->
-                    {{template "view-mode-button" .}}
-
-                    <!-- Settings button -->
-                    <button hx-get="{{url "/api/settings/modal"}}"
-                            hx-target="#settings-content"
-                            hx-trigger="click"
-                            onclick="document.getElementById('settings-modal').style.display='flex'"
-                            class="control-btn"
-                            title="Settings & About">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                            <path d="M12 16v-4m0-4h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
-                    </button>
-
-                    <!-- Theme toggle -->
-                    <button hx-post="{{url "/api/theme"}}"
-                            hx-trigger="click"
-                            class="control-btn theme-toggle"
-                            title="Toggle theme">
-                        {{if eq .Theme.String "dark"}}
-                        <!-- Sun icon (in dark mode, click for light) -->
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="12" cy="12" r="4" fill="currentColor"/>
-                            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M17.66 6.34l1.41-1.41" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
-                        {{else}}
-                        <!-- Moon icon (in light mode, click for dark) -->
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M20 11.5C19.25 12.3 18.2 12.9 17 12.9C14.5 12.9 12.5 10.9 12.5 8.4C12.5 7.2 13 6.15 13.8 5.4C13.7 5.4 13.6 5.4 13.5 5.4C9.9 5.4 7 8.3 7 11.9S9.9 18.4 13.5 18.4S20 15.5 20 11.9C20 11.8 20 11.65 20 11.5Z" fill="currentColor"/>
-                        </svg>
-                        {{end}}
-                    </button>
-                </div>
+        <header class="top">
+            <div class="brand">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="2"/>
+                    <path d="M12 7v5l3.5 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <span class="bt">cronn</span>
             </div>
+            {{if .Hostname}}
+            {{if .NeighborsEnabled}}
+            <details class="neighbors-selector">
+                <summary class="host host-clickable">{{.Hostname}}</summary>
+                <div class="neighbors-dropdown"
+                     hx-get="{{url "/api/neighbors"}}"
+                     hx-trigger="toggle once from:closest details"
+                     hx-swap="innerHTML">
+                    <div class="neighbors-loading">Loading...</div>
+                </div>
+            </details>
+            {{else}}
+            <span class="host">{{.Hostname}}</span>
+            {{end}}
+            {{end}}
+
+            {{template "search-input" .}}
+
+            <div class="fresh" role="status">
+                <span class="fresh-ok">live</span>
+                <span class="fresh-failed">updates failed</span>
+            </div>
+            <button class="iconbtn theme"
+                    hx-post="{{url "/api/theme"}}"
+                    title="Toggle theme" aria-label="Toggle theme">
+                {{if eq .Theme.String "dark"}}☀{{else}}☾{{end}}
+            </button>
+            <button class="iconbtn"
+                    hx-get="{{url "/api/settings/modal"}}"
+                    hx-target="#dialog-slot"
+                    hx-swap="innerHTML"
+                    title="Settings & About" aria-label="Settings and about">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                    <path d="M12 16v-4m0-4h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
         </header>
 
-        <!-- Main content -->
         <main class="main-content">
             {{template "main" .}}
         </main>
 
-        <!-- Footer -->
         <footer class="footer">
             <span>© {{.CurrentYear}} Umputun</span>
             {{if .Version}}
@@ -123,51 +77,13 @@
         </footer>
     </div>
 
-    <!-- Modal container -->
-    <div id="job-modal" class="modal-backdrop" style="display: none;" onclick="if(event.target === this) this.style.display='none'">
-        <div class="modal-content" id="modal-content"></div>
-    </div>
+    <input type="hidden" id="selected-job" name="selected-job" value="">
+    <input type="hidden" id="selected-run" name="selected-run" value="">
+    <div id="dialog-slot" hx-on::after-settle="uiDialogSwapped(this)"></div>
+    <div id="toasts" class="toast" role="status" aria-live="polite"></div>
 
-    <!-- History modal container -->
-    <div id="history-modal" class="modal-backdrop" style="display: none;" onclick="if(event.target === this) this.style.display='none'">
-        <div class="modal-content" id="history-content"></div>
-    </div>
-
-    <!-- Settings modal container -->
-    <div id="settings-modal" class="modal-backdrop" style="display: none;" onclick="if(event.target === this) this.style.display='none'">
-        <div class="modal-content" id="settings-content"></div>
-    </div>
-
-    <!-- Confirmation dialog -->
-    <div id="confirm-dialog" class="modal-backdrop" style="display: none;">
-        <div class="confirm-modal">
-            <div class="confirm-header">
-                <h3 id="confirm-title">Confirm Manual Run</h3>
-            </div>
-            <div class="confirm-body">
-                <div class="confirm-field">
-                    <label for="confirm-command">Command:</label>
-                    <textarea id="confirm-command" rows="3" {{if not .CommandEditEnabled}}readonly{{end}}></textarea>
-                </div>
-                <div class="confirm-field" id="confirm-date-field" style="display: none;">
-                    <label for="confirm-date">Date (YYYYMMDD):</label>
-                    <input type="text" id="confirm-date" pattern="\d{8}" placeholder="YYYYMMDD (optional)">
-                    <small>Leave empty to use current date</small>
-                </div>
-                <input type="hidden" id="confirm-job-id">
-                <input type="hidden" id="confirm-post-url">
-            </div>
-            <div class="confirm-actions">
-                <button class="btn-cancel" onclick="window.confirmResolve(false)">Cancel</button>
-                <button class="btn-confirm" onclick="window.confirmResolve(true)">Run</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- HTMX -->
     <script src="{{url "/static/htmx.min.js"}}"></script>
-    <script>window.BASE_URL = "{{.BaseURL}}";</script>
-    <script src="{{url "/static/app.js"}}"></script>
+    <script src="{{url "/static/ui.js"}}"></script>
 </body>
 </html>
 {{end}}

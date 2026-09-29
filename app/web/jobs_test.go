@@ -678,16 +678,23 @@ func TestServer_filterJobs(t *testing.T) {
 
 	// create test jobs
 	jobs := []persistence.JobInfo{
-		{ID: "1", Command: "cmd1", IsRunning: true, LastStatus: enums.JobStatusRunning},
-		{ID: "2", Command: "cmd2", IsRunning: false, LastStatus: enums.JobStatusSuccess},
-		{ID: "3", Command: "cmd3", IsRunning: false, LastStatus: enums.JobStatusFailed},
-		{ID: "4", Command: "cmd4", IsRunning: false, LastStatus: enums.JobStatusSuccess},
-		{ID: "5", Command: "cmd5", IsRunning: true, LastStatus: enums.JobStatusRunning},
+		{ID: "1", Command: "cmd1", Enabled: true, IsRunning: true, LastStatus: enums.JobStatusRunning},
+		{ID: "2", Command: "cmd2", Enabled: true, IsRunning: false, LastStatus: enums.JobStatusSuccess},
+		{ID: "3", Command: "cmd3", Enabled: true, IsRunning: false, LastStatus: enums.JobStatusFailed},
+		{ID: "4", Command: "cmd4", Enabled: true, IsRunning: false, LastStatus: enums.JobStatusSuccess},
+		{ID: "5", Command: "cmd5", Enabled: true, IsRunning: true, LastStatus: enums.JobStatusRunning},
+		{ID: "6", Command: "cmd6", Enabled: false, IsRunning: false, LastStatus: enums.JobStatusFailed},
 	}
+
+	t.Run("disabled jobs appear only under all and disabled", func(t *testing.T) {
+		filtered := server.filterJobs(jobs, enums.FilterModeDisabled)
+		require.Len(t, filtered, 1)
+		assert.Equal(t, "6", filtered[0].ID)
+	})
 
 	t.Run("filter all returns everything", func(t *testing.T) {
 		filtered := server.filterJobs(jobs, enums.FilterModeAll)
-		assert.Len(t, filtered, 5)
+		assert.Len(t, filtered, 6)
 	})
 
 	t.Run("filter running", func(t *testing.T) {

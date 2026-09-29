@@ -1,0 +1,41 @@
+{{define "run-form"}}
+<dialog class="run-dialog" data-job-id="{{.JobID}}" aria-labelledby="rf-title" hx-on:close="uiDialogClosed(this)">
+    <div class="runform">
+        <div class="rf-h">
+            <h4 id="rf-title">Run “{{if .Name}}{{.Name}}{{else}}{{.Command}}{{end}}” now</h4>
+            <p>Requests a one-time run. The schedule and crontab stay as they are.</p>
+        </div>
+        <form id="run-form" class="rf-b"
+              hx-post="{{url (printf "/api/jobs/%s/run" .JobID)}}"
+              hx-target="#dialog-slot" hx-swap="innerHTML"
+              hx-indicator="#rf-spin"
+              hx-on::send-error="this.querySelector('.net-error').hidden = false"
+              hx-on::timeout="this.querySelector('.net-error').hidden = false">
+            <div>
+                <label class="lbl" for="rf-cmd">Command {{if .CommandEditable}}<small>edits apply to this run only</small>{{end}}</label>
+                <textarea id="rf-cmd" name="command" class="field" rows="3"{{if not .CommandEditable}} readonly{{end}}>{{.Command}}</textarea>
+            </div>
+            {{if .HasTemplates}}
+            <div>
+                <label class="lbl" for="rf-date">Date for templates</label>
+                <input id="rf-date" name="date" class="field" inputmode="numeric" pattern="\d{8}"
+                       placeholder="YYYYMMDD" value="{{.Date}}" autocomplete="off">
+                <div class="hint">Empty uses the current time; a supplied date is used at 00:00.</div>
+            </div>
+            {{end}}
+            {{if .Error}}<div class="dlg-err" role="alert">Not started: {{.Error}}. Your edits are kept.</div>{{end}}
+            <div class="dlg-err net-error" role="alert" hidden>Not sent: the server could not be reached. Your edits are kept.</div>
+        </form>
+        <div class="rf-f">
+            <form method="dialog"><button class="btn ghost">Cancel</button></form>
+            <button class="btn primary" type="submit" form="run-form">
+                <span class="spin htmx-indicator" id="rf-spin" aria-hidden="true"></span>▶ Run once
+            </button>
+        </div>
+    </div>
+</dialog>
+{{end}}
+
+{{define "run-accepted-oob"}}
+<div id="toasts" hx-swap-oob="innerHTML"><div class="t"><span class="dot ok" aria-hidden="true"></span>Run request accepted: <b>{{template "job-name" .}}</b></div></div>
+{{end}}

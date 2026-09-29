@@ -153,25 +153,29 @@ If a previous task shipped a violation (spotted later by user, reviewer, or your
 - table poll: `hx-trigger="load, every 5s, refresh-jobs from:body"` replaces the `refresh-jobs` JS listener
 - expired session: `authMiddleware` answers htmx requests with `HX-Redirect` to the login page before its
   Accept-based 303/401 branch (`auth.go:186-194`); curl callers keep the 401/redirect they get today
-- `app/web/static/app.js` is deleted. What remains is `static/ui.js` (three small functions) and inline `hx-on`
-  calls, each needed because htmx has no attribute for it:
-  - `ui.js` `restoreFocus(jobID)`: focus the current row's `.job-open` button, re-found by `data-job-id` because
+- `app/web/static/app.js` is deleted. What remains is `static/ui.js` (small functions called from inline
+  `hx-on`) and inline `hx-on` calls, each needed because htmx has no attribute for it:
+  - `uiRestoreFocus(jobID)`: focus the current row's `.job-open` button, re-found by `data-job-id` because
     polling replaces the opener, falling back to the search field
-  - `ui.js` `openInspector()`: move focus to the inspector heading control after it is swapped in (autofocus
-    does not fire for swapped content)
-  - `ui.js` `closeInspector()`: empty `#inspector`, clear the two hidden inputs, restore focus to the row
-  - poll state: on `#jobs-container`, `hx-on::after-request` toggles `.poll-failed` on `.app` from
-    `event.detail.successful`, guarded by `event.detail.requestConfig.elt === this` (row and dialog requests
-    bubble through the container). Shows "updates failed" immediately and clears on the next good poll
-  - run dialog: `#dialog-slot` `hx-on::after-swap` calls `showModal()` on a swapped `<dialog>`, or, when an
-    accepted run left the slot empty, `restoreFocus` (emptying a slot removes an open dialog without firing
-    `close`); the `<dialog>` `close` event (Esc, Cancel) also calls `restoreFocus`
-  - inspector: `#inspector` `hx-on::after-swap` calls `openInspector`
+  - `uiDialogSwapped(slot)`: `#dialog-slot` `hx-on::after-settle` (the dialog's `hx-on:close` is bound
+    only at settle); `showModal()` on a swapped `<dialog>`, or, when
+    an accepted run left the slot empty, `uiRestoreFocus` (emptying a slot removes an open dialog without
+    firing `close`)
+  - `uiDialogClosed(dlg)`: the `<dialog>` `close` event (Esc, Cancel, settings backdrop); removes the dialog
+    and restores focus
+  - `uiInspectorSwapped(panel, evt)`: `#inspector` `hx-on::after-swap`, ignoring the inspector's own polling
+    swaps; moves focus to the heading (autofocus does not fire for swapped content) and, when the inspector
+    overlays the page (tablet drawer, phone full screen), marks the covered page `inert` via `uiSetCovered`
+  - `uiCloseInspector()`: Back/Close `hx-on:click`; empty `#inspector`, clear the two hidden inputs and the
+    `inert` marks, restore focus to the row; the next poll picks up the cleared inputs
+  - `uiPollDone(container, evt)`: `#jobs-container` `hx-on::after-request`; toggles `.poll-failed` on `.app`
+    from `event.detail.successful`, guarded by `event.detail.requestConfig.elt === container` (row and dialog
+    requests bubble through the container). Shows "updates failed" immediately and clears on the next good
+    poll
   - run form transport error: `hx-on::send-error` and `hx-on::timeout` on the form show a network message
     inside the form and keep the edits
-  - inspector Back/Close: `hx-on:click` calls `closeInspector`; the next poll picks up the cleared inputs
-- focus: on narrow layouts the scrim covers the table; tests check that Tab from the inspector does not reach
-  covered table controls
+- focus: on narrow layouts the inspector overlays the table and the covered page is `inert`; tests check that
+  Tab from the inspector does not reach covered controls
 - toasts: `role="status" aria-live="polite"` region replaced whole by each OOB toast (bounded), hidden by CSS
   (`visibility`, `pointer-events`) after a delay; rejections stay in the form; `htmx-request` drives the
   sending indicator
@@ -302,69 +306,69 @@ Exports: none
 
 
 List render and routes:
-- [ ] `jobsQuery`, `getJobsWithStats(q)`, search over name and command; `FilterMode` gains `disabled`;
+- [x] `jobsQuery`, `getJobsWithStats(q)`, search over name and command; `FilterMode` gains `disabled`;
       counts follow Technical Details
-- [ ] `renderJobs` replaces the four render paths; sort and filter handlers pass the new mode in the query
-- [ ] remove view-mode (endpoint, cookie, enum, `TemplateData.ViewMode`, `getViewMode`), sort-toggle,
+- [x] `renderJobs` replaces the four render paths; sort and filter handlers pass the new mode in the query
+- [x] remove view-mode (endpoint, cookie, enum, `TemplateData.ViewMode`, `getViewMode`), sort-toggle,
       filter-toggle, the job/history/logs modal routes and templates (keep `/api/v1` JSON); dashboard route
       becomes `GET /{$}`
-- [ ] `authMiddleware` answers `HX-Request` with `HX-Redirect` to login; curl keeps 401/303
+- [x] `authMiddleware` answers `HX-Request` with `HX-Redirect` to login; curl keeps 401/303
 
 Table and layout:
-- [ ] one table template with `data-job-id` rows: status dot, `.job-open` name button stretched over the row,
+- [x] one table template with `data-job-id` rows: status dot, `.job-open` name button stretched over the row,
       command, folded schedule, schedule (readable + raw), last run (relative; exit code and duration only when known),
       next, labelled When column, Run and ⋯ above the stretched area; filter tabs with counts, sort select,
       match count, empty state with Clear search / Show all jobs; state markers per mockup, disabled rows
       tagged with Enable
-- [ ] container-query CSS for the three layouts and 44px targets below 1180px; light/dark tokens kept
-- [ ] table poll trigger `load, every 5s, refresh-jobs from:body`; poll-failure notice via the scoped
+- [x] container-query CSS for the three layouts and 44px targets below 1180px; light/dark tokens kept
+- [x] table poll trigger `load, every 5s, refresh-jobs from:body`; poll-failure notice via the scoped
       `hx-on::after-request` handler
 
 Inspector:
-- [ ] `GET /api/jobs/{id}/inspector`: header (status, enabled, schedule, full command, Run now, Enable/Disable),
+- [x] `GET /api/jobs/{id}/inspector`: header (status, enabled, schedule, full command, Run now, Enable/Disable),
       last/next run, run list (latest 50 shown, exit code and duration per run, manual tag)
-- [ ] `GET /api/jobs/{id}/executions/{exec_id}/output`: selected run output with its command (Executed for
+- [x] `GET /api/jobs/{id}/executions/{exec_id}/output`: selected run output with its command (Executed for
       manual runs, Job command otherwise) and "No output captured" with exit code when empty
-- [ ] hidden inputs `selected-job`/`selected-run` outside all polled targets, set by sibling OOB fragments;
+- [x] hidden inputs `selected-job`/`selected-run` outside all polled targets, set by sibling OOB fragments;
       table poll includes them; row highlight rendered server-side; a new job clears `selected-run` once;
       refresh after selection via `HX-Trigger-After-Swap`; inspector live part polls itself, output pane does not
-- [ ] drawer/full-screen presentation in CSS via `.app:has(#inspector .insp)`, sticky Back bar; `ui.js`
-      `openInspector`/`closeInspector`/`restoreFocus` wired as listed in Technical Details
+- [x] drawer/full-screen presentation in CSS via `.app:has(#inspector .insp)`, sticky Back bar; `ui.js`
+      functions wired as listed in Technical Details
 
 Run form:
-- [ ] `GET /api/jobs/{id}/run-form`: form with command (read-only when command edit is disabled), date field
+- [x] `GET /api/jobs/{id}/run-form`: form with command (read-only when command edit is disabled), date field
       when the command has templates, hint "Empty uses the current time; a supplied date is used at 00:00"
-- [ ] `POST /api/jobs/{id}/run`: parse command/date before the disabled/running/busy checks; htmx requests
+- [x] `POST /api/jobs/{id}/run`: parse command/date before the disabled/running/busy checks; htmx requests
       get 200 with the form re-rendered (error text, submitted values, no toast, no refresh) on rejection and
       202 with empty content + OOB toast + `HX-Trigger-After-Swap: refresh-jobs` on acceptance; requests
       without `HX-Request` keep today's 202 and 4xx/5xx text
-- [ ] native `<dialog>` in permanent `#dialog-slot` (dialog wide, bottom sheet on phones): `showModal()` on swap,
+- [x] native `<dialog>` in permanent `#dialog-slot` (dialog wide, bottom sheet on phones): `showModal()` on swap,
       separate `method=dialog` Cancel form, focus restored on close and on the accepted empty swap;
       `send-error`/`timeout` show a network message and keep the edits
-- [ ] `role=status` toast region replaced whole per OOB toast, CSS auto-hide; `app.js` and its script tag removed
+- [x] `role=status` toast region replaced whole per OOB toast, CSS auto-hide; `app.js` and its script tag removed
 
 Tests:
-- [ ] unit: counts with disabled jobs, each filter incl. disabled, search by name, sort change with the old sort
+- [x] unit: counts with disabled jobs, each filter incl. disabled, search by name, sort change with the old sort
       cookie still on the request renders in the new order, removed routes 404, fragment contains
       names/readable schedule/exit code and duration (neither when unknown)/empty state, `HX-Request` without a session
       gets `HX-Redirect` while curl keeps 401/303
-- [ ] unit: inspector for success/failed/never-ran/disabled jobs, silent failed run shows exit code, manual run
+- [x] unit: inspector for success/failed/never-ran/disabled jobs, silent failed run shows exit code, manual run
       shows executed command, unknown job/execution 404
-- [ ] unit: run form with/without templates and with edit disabled; each rejection path re-renders the form
+- [x] unit: run form with/without templates and with edit disabled; each rejection path re-renders the form
       with message and values for htmx and keeps plain text + status for curl; acceptance is 202 with toast
-- [ ] e2e (all old-markup tests migrated, none skipped): rows by `data-job-id`, filter tabs, sort select,
+- [x] e2e (all old-markup tests migrated, none skipped): rows by `data-job-id`, filter tabs, sort select,
       search by name, toggle flow, no horizontal scroll at 390x844 and 820x1180, empty state after a no-match
       search, a poll routed to 500 shows the notice and the next good poll clears it
-- [ ] e2e inspector: open by click and by keyboard with `document.activeElement` inside the inspector; exit code
+- [x] e2e inspector: open by click and by keyboard with `document.activeElement` inside the inspector; exit code
       and output of a failed run; select another run; job and run selection survive two polls and clear when
       another job is chosen; Back/Close works with the server unreachable; Tab stays out of covered table
       controls; full screen with Back at 390x844 and 390x460, overlay at 820x1180 and 820x460 with Back
       reachable after scrolling
-- [ ] e2e run form: accepted run closes the dialog, shows the toast and returns focus to the row button;
+- [x] e2e run form: accepted run closes the dialog, shows the toast and returns focus to the row button;
       rejection on a running job keeps the form open with the error and the edited command; network failure
       shows the network message; Esc and Cancel close without a request and return focus after a poll
       replaced the opener; bottom sheet at 390x844 and 390x460 with Cancel/Run visible
-- [ ] run tests - must pass before next task
+- [x] run tests - must pass before next task
 
 ### Task 4: Verify acceptance criteria
 - [ ] verify all requirements from Overview are implemented; compare against `docs/plans/dashboard-redesign/proposal.html`

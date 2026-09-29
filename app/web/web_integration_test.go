@@ -89,9 +89,8 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 		assert.Contains(t, body, "hx-get=\"/api/jobs\"")
 	})
 
-	t.Run("jobs partial - cards view", func(t *testing.T) {
+	t.Run("jobs partial", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
 		w := httptest.NewRecorder()
 
 		server.handleJobsPartial(w, req)
@@ -100,25 +99,8 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		body := w.Body.String()
-		assert.Contains(t, body, "job-card")
-		assert.Contains(t, body, "echo hourly")
-		assert.Contains(t, body, "echo five-minutes")
-		assert.Contains(t, body, "echo daily")
-	})
-
-	t.Run("jobs partial - list view", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "list"})
-		w := httptest.NewRecorder()
-
-		server.handleJobsPartial(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		body := w.Body.String()
-		// list view renders a table
-		assert.Contains(t, body, "jobs-table")
+		assert.Contains(t, body, `<table class="jobs">`)
+		assert.Equal(t, 3, strings.Count(body, `<tr class="row`))
 		assert.Contains(t, body, "echo hourly")
 		assert.Contains(t, body, "echo five-minutes")
 		assert.Contains(t, body, "echo daily")
@@ -138,22 +120,6 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 		require.Len(t, cookies, 1)
 		assert.Equal(t, "theme", cookies[0].Name)
 		assert.Equal(t, "dark", cookies[0].Value)
-	})
-
-	t.Run("view mode toggle", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/toggle-view", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
-		w := httptest.NewRecorder()
-
-		server.handleViewModeToggle(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		cookies := resp.Cookies()
-		require.Len(t, cookies, 1)
-		assert.Equal(t, "view-mode", cookies[0].Name)
-		assert.Equal(t, "list", cookies[0].Value)
 	})
 }
 
@@ -840,9 +806,9 @@ func TestServer_ConcurrentHTTPRequests(t *testing.T) {
 		{"/", "GET", ""},
 		{"/api/jobs", "GET", ""},
 		{"/api/theme", "POST", "theme=dark"},
-		{"/api/view-mode", "POST", "view-mode=list"},
-		{"/api/sort-mode", "POST", "sort-mode=lastrun"},
-		{"/api/sort-toggle", "POST", ""},
+		{"/api/filter-mode", "POST", "filter=failed"},
+		{"/api/sort-mode", "POST", "sort=lastrun"},
+		{"/api/filter-mode", "POST", "filter=all&search=echo"},
 	}
 
 	errors := make(chan error, numClients*requestsPerClient)

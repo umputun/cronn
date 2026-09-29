@@ -83,6 +83,70 @@ func TestDayParser_ParseWithAltTemplate(t *testing.T) {
 	}
 }
 
+func TestDayParser_WeekdayEndOfDay(t *testing.T) {
+	nytz, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		day     time.Time
+		options []Option
+		want    string
+	}{
+		{
+			name: "before threshold",
+			day:  time.Date(2025, 1, 6, 16, 59, 59, 0, nytz),
+			want: "20250103",
+		},
+		{
+			name: "at threshold",
+			day:  time.Date(2025, 1, 6, 17, 0, 0, 0, nytz),
+			want: "20250106",
+		},
+		{
+			name: "weekend",
+			day:  time.Date(2025, 1, 4, 18, 0, 0, 0, nytz),
+			want: "20250103",
+		},
+		{
+			name:    "custom threshold",
+			day:     time.Date(2025, 1, 7, 12, 0, 0, 0, nytz),
+			options: []Option{EndOfDay(10)},
+			want:    "20250107",
+		},
+		{
+			name:    "custom weekend",
+			day:     time.Date(2025, 1, 3, 18, 0, 0, 0, nytz),
+			options: []Option{SkipWeekDays(time.Friday, time.Saturday)},
+			want:    "20250102",
+		},
+		{
+			name: "holiday before weekend",
+			day:  time.Date(2025, 1, 6, 9, 0, 0, 0, nytz),
+			options: []Option{Holiday(HolidayCheckerFunc(func(day time.Time) bool {
+				return day.Day() == 3
+			}))},
+			want: "20250102",
+		},
+	}
+
+	for _, tt := range tests {
+		for _, alt := range []bool{false, true} {
+			t.Run(tt.name+"/alt="+strconv.FormatBool(alt), func(t *testing.T) {
+				options := append([]Option{TimeZone(nytz), AltTemplateFormat(alt)}, tt.options...)
+				parser := NewDayTemplate(tt.day, options...)
+				src := "report --date={{.WYYYYMMDDEOD}}"
+				if alt {
+					src = "report --date=[[.WYYYYMMDDEOD]]"
+				}
+				got, err := parser.Parse(src)
+				require.NoError(t, err)
+				assert.Equal(t, "report --date="+tt.want, got)
+			})
+		}
+	}
+}
+
 func TestDayParser_ParseMalformed(t *testing.T) {
 	nytz, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)

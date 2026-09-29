@@ -1,28 +1,23 @@
 package conditions
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/shirou/gopsutil/v4/cpu"
-	"github.com/shirou/gopsutil/v4/disk"
-	"github.com/shirou/gopsutil/v4/load"
-	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCheck(t *testing.T) {
-	checker := NewChecker(0) // use default
+	checker := fixedChecker()
 
 	tests := []struct {
 		name       string
 		conditions Config
-		setupMocks func()
 		wantOK     bool
 		wantReason string
 	}{
@@ -37,10 +32,6 @@ func TestCheck(t *testing.T) {
 			conditions: Config{
 				CPUBelow: new(90),
 			},
-			setupMocks: func() {
-				// real CPU check, should pass with high threshold
-				// use Eventually to handle CPU fluctuations
-			},
 			wantOK:     true,
 			wantReason: "",
 		},
@@ -48,9 +39,6 @@ func TestCheck(t *testing.T) {
 			name: "memory below threshold passes",
 			conditions: Config{
 				MemoryBelow: new(99),
-			},
-			setupMocks: func() {
-				// real memory check, should pass with high threshold
 			},
 			wantOK:     true,
 			wantReason: "",
@@ -60,9 +48,6 @@ func TestCheck(t *testing.T) {
 			conditions: Config{
 				DiskFreeAbove: new(1),
 				DiskFreePath:  "/",
-			},
-			setupMocks: func() {
-				// real disk check, should pass with low threshold
 			},
 			wantOK:     true,
 			wantReason: "",
@@ -109,29 +94,17 @@ func TestCheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.setupMocks != nil {
-				tt.setupMocks()
-			}
-
-			// use Eventually for CPU tests to handle fluctuations
-			if strings.Contains(tt.name, "cpu") {
-				require.Eventually(t, func() bool {
-					gotOK, _ := checker.Check(tt.conditions)
-					return gotOK == tt.wantOK
-				}, 5*time.Second, 500*time.Millisecond, "CPU check should eventually match expected result")
-			} else {
-				gotOK, gotReason := checker.Check(tt.conditions)
-				assert.Equal(t, tt.wantOK, gotOK)
-				if tt.wantReason != "" {
-					assert.Equal(t, tt.wantReason, gotReason)
-				}
+			gotOK, gotReason := checker.Check(tt.conditions)
+			assert.Equal(t, tt.wantOK, gotOK)
+			if tt.wantReason != "" {
+				assert.Equal(t, tt.wantReason, gotReason)
 			}
 		})
 	}
 }
 
 func TestCheck_ValidationBoundaries(t *testing.T) {
-	checker := NewChecker(0)
+	checker := fixedChecker()
 
 	tests := []struct {
 		name       string
@@ -154,8 +127,8 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 		{
 			name:       "valid CPU at boundary 0",
 			conditions: Config{CPUBelow: new(0)},
-			wantOK:     false, // will fail because CPU is always > 0
-			wantReason: "CPU: current=",
+			wantOK:     false,
+			wantReason: "CPU: current=10%, threshold=0%",
 		},
 		{
 			name:       "valid CPU at boundary 100",
@@ -184,8 +157,8 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 		{
 			name:       "valid load average at boundary 0",
 			conditions: Config{LoadAvgBelow: new(0.0)},
-			wantOK:     false, // will fail because load is always > 0
-			wantReason: "load average: current=",
+			wantOK:     false,
+			wantReason: "load average: current=1.50, threshold=0.00",
 		},
 		{
 			name:       "invalid disk free negative",
@@ -202,14 +175,14 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 		{
 			name:       "valid disk free at boundary 0",
 			conditions: Config{DiskFreeAbove: new(0)},
-			wantOK:     true, // will pass because disk free is always >= 0
+			wantOK:     true,
 			wantReason: "",
 		},
 		{
 			name:       "valid disk free at boundary 100",
 			conditions: Config{DiskFreeAbove: new(100)},
-			wantOK:     false, // will fail because disk free is never 100%
-			wantReason: "disk free: current=",
+			wantOK:     false,
+			wantReason: "disk free: current=60%, threshold=100%, path=/",
 		},
 	}
 
@@ -217,82 +190,140 @@ func TestCheck_ValidationBoundaries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gotOK, gotReason := checker.Check(tt.conditions)
 			assert.Equal(t, tt.wantOK, gotOK)
-			if tt.wantReason != "" {
-				if strings.HasPrefix(tt.wantReason, "CPU: current=") || strings.HasPrefix(tt.wantReason, "load average: current=") || strings.HasPrefix(tt.wantReason, "disk free: current=") {
-					// for runtime checks, just verify it contains the expected prefix
-					assert.Contains(t, gotReason, tt.wantReason)
-				} else {
-					// for validation errors, expect exact match
-					assert.Equal(t, tt.wantReason, gotReason)
-				}
-			}
+			assert.Equal(t, tt.wantReason, gotReason)
 		})
 	}
 }
 
 func TestCheckCPU(t *testing.T) {
+	tests := []struct {
+		name       string
+		sampler    func() ([]float64, error)
+		threshold  int
+		wantOK     bool
+		wantReason string
+	}{
+		{name: "below threshold", sampler: fixedCPU(89), threshold: 90, wantOK: true},
+		{name: "at threshold", sampler: fixedCPU(90), threshold: 90, wantReason: "CPU: current=90%, threshold=90%"},
+		{name: "above threshold", sampler: fixedCPU(95), threshold: 90, wantReason: "CPU: current=95%, threshold=90%"},
+		{name: "zero threshold", sampler: fixedCPU(0), threshold: 0, wantReason: "CPU: current=0%, threshold=0%"},
+		{name: "sampler error", sampler: func() ([]float64, error) { return nil, errors.New("boom") }, threshold: 90,
+			wantReason: "failed to get CPU: boom"},
+		{name: "empty sample", sampler: func() ([]float64, error) { return []float64{}, nil }, threshold: 90,
+			wantReason: "no CPU data available"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(0)
+			checker.cpuPercent = tt.sampler
+			ok, reason := checker.checkCPU(tt.threshold)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantReason, reason)
+		})
+	}
+}
+
+func fixedCPU(v float64) func() ([]float64, error) {
+	return func() ([]float64, error) { return []float64{v}, nil }
+}
+
+func fixedValue(v float64) func() (float64, error) {
+	return func() (float64, error) { return v, nil }
+}
+
+func failingValue() (float64, error) { return 0, errors.New("boom") }
+
+func fixedChecker() *Checker {
 	checker := NewChecker(0)
-
-	// test with real CPU data - should pass with high threshold
-	ok, reason := checker.checkCPU(99)
-	assert.True(t, ok)
-	assert.Empty(t, reason)
-
-	// test with very low threshold - likely to fail
-	ok, reason = checker.checkCPU(0)
-	assert.False(t, ok)
-	assert.Contains(t, reason, "CPU: current=")
-	assert.Contains(t, reason, "threshold=0%")
+	checker.cpuPercent = fixedCPU(10)
+	checker.memPercent = fixedValue(50)
+	checker.loadAvg = fixedValue(1.5)
+	checker.diskUsedPercent = func(string) (float64, error) { return 40, nil }
+	return checker
 }
 
 func TestCheckMemory(t *testing.T) {
-	checker := NewChecker(0)
+	tests := []struct {
+		name       string
+		sampler    func() (float64, error)
+		threshold  int
+		wantOK     bool
+		wantReason string
+	}{
+		{name: "below threshold", sampler: fixedValue(89.9), threshold: 90, wantOK: true},
+		{name: "at threshold", sampler: fixedValue(90), threshold: 90, wantReason: "memory: current=90%, threshold=90%"},
+		{name: "above threshold", sampler: fixedValue(95), threshold: 90, wantReason: "memory: current=95%, threshold=90%"},
+		{name: "sampler error", sampler: failingValue, threshold: 90, wantReason: "failed to get memory: boom"},
+	}
 
-	// test with real memory data - should pass with high threshold
-	ok, reason := checker.checkMemory(99)
-	assert.True(t, ok)
-	assert.Empty(t, reason)
-
-	// test with very low threshold - likely to fail
-	ok, reason = checker.checkMemory(0)
-	assert.False(t, ok)
-	assert.Contains(t, reason, "memory: current=")
-	assert.Contains(t, reason, "threshold=0%")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(0)
+			checker.memPercent = tt.sampler
+			ok, reason := checker.checkMemory(tt.threshold)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantReason, reason)
+		})
+	}
 }
 
 func TestCheckLoadAvg(t *testing.T) {
-	checker := NewChecker(0)
+	tests := []struct {
+		name       string
+		sampler    func() (float64, error)
+		threshold  float64
+		wantOK     bool
+		wantReason string
+	}{
+		{name: "below threshold", sampler: fixedValue(1.99), threshold: 2, wantOK: true},
+		{name: "at threshold", sampler: fixedValue(2), threshold: 2, wantReason: "load average: current=2.00, threshold=2.00"},
+		{name: "above threshold", sampler: fixedValue(101), threshold: 100,
+			wantReason: "load average: current=101.00, threshold=100.00"},
+		{name: "sampler error", sampler: failingValue, threshold: 2, wantReason: "failed to get load average: boom"},
+	}
 
-	// test with real load data - should pass with high threshold
-	ok, reason := checker.checkLoadAvg(100.0)
-	assert.True(t, ok)
-	assert.Empty(t, reason)
-
-	// test with very low threshold - likely to fail on any system
-	ok, reason = checker.checkLoadAvg(0.0)
-	assert.False(t, ok)
-	assert.Contains(t, reason, "load average: current=")
-	assert.Contains(t, reason, "threshold=0.00")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(0)
+			checker.loadAvg = tt.sampler
+			ok, reason := checker.checkLoadAvg(tt.threshold)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantReason, reason)
+		})
+	}
 }
 
 func TestCheckDiskFree(t *testing.T) {
-	checker := NewChecker(0)
+	tests := []struct {
+		name       string
+		used       float64
+		err        error
+		minFree    int
+		wantOK     bool
+		wantReason string
+	}{
+		{name: "above minimum", used: 5, minFree: 90, wantOK: true},
+		{name: "at minimum", used: 10, minFree: 90, wantOK: true},
+		{name: "fractional used rounds free up", used: 10.9, minFree: 90, wantOK: true},
+		{name: "below minimum", used: 11, minFree: 90, wantReason: "disk free: current=89%, threshold=90%, path=/data"},
+		{name: "usage error", err: errors.New("boom"), minFree: 90, wantReason: "failed to get disk usage for /data: boom"},
+	}
 
-	// test with real disk data - should pass with low threshold
-	ok, reason := checker.checkDiskFree(1, "/")
-	assert.True(t, ok)
-	assert.Empty(t, reason)
-
-	// test with very high threshold - likely to fail
-	ok, reason = checker.checkDiskFree(100, "/")
-	assert.False(t, ok)
-	assert.Contains(t, reason, "disk free: current=")
-	assert.Contains(t, reason, "threshold=100%")
-
-	// test with non-existent path
-	ok, reason = checker.checkDiskFree(10, "/non/existent/path")
-	assert.False(t, ok)
-	assert.Contains(t, reason, "failed to get disk usage")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath string
+			checker := NewChecker(0)
+			checker.diskUsedPercent = func(path string) (float64, error) {
+				gotPath = path
+				return tt.used, tt.err
+			}
+			ok, reason := checker.checkDiskFree(tt.minFree, "/data")
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantReason, reason)
+			assert.Equal(t, "/data", gotPath)
+		})
+	}
 }
 
 func TestCheckCustom(t *testing.T) {
@@ -387,9 +418,8 @@ fi`
 }
 
 func TestCheckMultipleConditions(t *testing.T) {
-	checker := NewChecker(0)
+	checker := fixedChecker()
 
-	// test with all conditions passing
 	conditions := Config{
 		CPUBelow:      new(99),
 		MemoryBelow:   new(99),
@@ -403,34 +433,29 @@ func TestCheckMultipleConditions(t *testing.T) {
 	assert.True(t, ok)
 	assert.Empty(t, reason)
 
-	// test with CPU failing
 	conditions.CPUBelow = new(0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "CPU: current=")
+	assert.Equal(t, "CPU: current=10%, threshold=0%", reason)
 
-	// test with memory failing
 	conditions.CPUBelow = new(99)
 	conditions.MemoryBelow = new(0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "memory: current=")
+	assert.Equal(t, "memory: current=50%, threshold=0%", reason)
 
-	// test with load average failing
 	conditions.MemoryBelow = new(99)
 	conditions.LoadAvgBelow = new(0.0)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "load average: current=")
+	assert.Equal(t, "load average: current=1.50, threshold=0.00", reason)
 
-	// test with disk free failing
 	conditions.LoadAvgBelow = new(100.0)
 	conditions.DiskFreeAbove = new(100)
 	ok, reason = checker.Check(conditions)
 	assert.False(t, ok)
-	assert.Contains(t, reason, "disk free: current=")
+	assert.Equal(t, "disk free: current=60%, threshold=100%, path=/", reason)
 
-	// test with custom script failing
 	conditions.DiskFreeAbove = new(1)
 	conditions.Custom = "false"
 	ok, reason = checker.Check(conditions)
@@ -439,24 +464,36 @@ func TestCheckMultipleConditions(t *testing.T) {
 }
 
 func TestCheckDiskFreeDefaultPath(t *testing.T) {
-	checker := NewChecker(0)
-
-	// test that empty path defaults to "/"
-	conditions := Config{
-		DiskFreeAbove: new(1),
-		DiskFreePath:  "", // empty path should default to "/"
+	tests := []struct {
+		name     string
+		path     string
+		wantPath string
+	}{
+		{name: "empty path uses root", path: "", wantPath: "/"},
+		{name: "explicit path", path: "/data", wantPath: "/data"},
 	}
 
-	ok, _ := checker.Check(conditions)
-	assert.True(t, ok)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath string
+			checker := fixedChecker()
+			checker.diskUsedPercent = func(path string) (float64, error) {
+				gotPath = path
+				return 40, nil
+			}
+			ok, reason := checker.Check(Config{DiskFreeAbove: new(1), DiskFreePath: tt.path})
+			assert.True(t, ok)
+			assert.Empty(t, reason)
+			assert.Equal(t, tt.wantPath, gotPath)
+		})
+	}
 }
 
 func TestRealSystemMetrics(t *testing.T) {
-	// this test verifies that we can actually get real system metrics
-	// without errors - important for integration testing
+	checker := NewChecker(0)
 
 	t.Run("cpu metrics", func(t *testing.T) {
-		cpuPercent, err := cpu.Percent(time.Second, false)
+		cpuPercent, err := checker.cpuPercent()
 		require.NoError(t, err)
 		assert.NotEmpty(t, cpuPercent)
 		assert.GreaterOrEqual(t, cpuPercent[0], 0.0)
@@ -464,30 +501,30 @@ func TestRealSystemMetrics(t *testing.T) {
 	})
 
 	t.Run("memory metrics", func(t *testing.T) {
-		v, err := mem.VirtualMemory()
+		used, err := checker.memPercent()
 		require.NoError(t, err)
-		assert.NotNil(t, v)
-		assert.GreaterOrEqual(t, v.UsedPercent, 0.0)
-		assert.LessOrEqual(t, v.UsedPercent, 100.0)
+		assert.GreaterOrEqual(t, used, 0.0)
+		assert.LessOrEqual(t, used, 100.0)
 	})
 
 	t.Run("load average", func(t *testing.T) {
-		loads, err := load.Avg()
+		load1, err := checker.loadAvg()
 		require.NoError(t, err)
-		assert.NotNil(t, loads)
-		assert.GreaterOrEqual(t, loads.Load1, 0.0)
+		assert.GreaterOrEqual(t, load1, 0.0)
 	})
 
 	t.Run("disk usage", func(t *testing.T) {
-		usage, err := disk.Usage("/")
+		used, err := checker.diskUsedPercent("/")
 		require.NoError(t, err)
-		assert.NotNil(t, usage)
-		assert.GreaterOrEqual(t, usage.UsedPercent, 0.0)
-		assert.LessOrEqual(t, usage.UsedPercent, 100.0)
+		assert.GreaterOrEqual(t, used, 0.0)
+		assert.LessOrEqual(t, used, 100.0)
+	})
 
-		freePercent := 100 - int(usage.UsedPercent)
-		assert.GreaterOrEqual(t, freePercent, 0)
-		assert.LessOrEqual(t, freePercent, 100)
+	t.Run("disk usage for missing path", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "missing")
+		ok, reason := checker.checkDiskFree(10, missing)
+		assert.False(t, ok)
+		assert.Contains(t, reason, "failed to get disk usage for "+missing+": ")
 	})
 }
 

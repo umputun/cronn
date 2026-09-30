@@ -251,7 +251,7 @@ dialog::backdrop { background: rgba(5, 7, 10, .6); }
     .btn { padding: 0 14px; }
     .btn.icon { min-width: 44px; }
     .tab { padding: 0 12px; }
-    .host { min-height: 44px; padding: 0 10px; }
+    .host-clickable { min-height: 44px; padding: 0 10px; }
     .search { flex-basis: 160px; }
 }
 

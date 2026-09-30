@@ -57,6 +57,15 @@ func TestTable_TouchTargetsBelowWideLayout(t *testing.T) {
 	}
 }
 
+func TestResponsive_PlainHostLabelIsNotSizedAsControl(t *testing.T) {
+	page := newPageSized(t, 390, 844)
+	navigateToDashboard(t, page)
+
+	box, err := page.Locator("span.host").BoundingBox()
+	require.NoError(t, err)
+	assert.Less(t, box.Height, 30.0, "a hostname without a server selector is a label, not a touch target")
+}
+
 func TestResponsive_NoHorizontalScroll(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{320, 640}, {390, 844}, {600, 900}, {820, 1180}, {1024, 768}, {1440, 900}} {
 		t.Run(fmt.Sprintf("%dx%d", size.w, size.h), func(t *testing.T) {

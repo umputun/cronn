@@ -10,7 +10,7 @@ Cron job scheduler with YAML/JSON and traditional crontab support, using `github
 - **app/crontab**: Parser supporting traditional crontab and YAML/JSON with embedded JSON schema validation
 - **app/conditions**: Conditional execution with semaphore-based concurrency control (default: 10 concurrent checks)
 - **app/web**: Web UI server implementing `JobEventHandler` interface, uses Go templates with `html/template` and `embed`
-- **app/web/enums**: Type-safe enums generated via `go-pkgz/enum` for `JobStatus`, `EventType`, `ViewMode`, `Theme`, `SortMode`, `FilterMode`
+- **app/web/enums**: Type-safe enums generated via `go-pkgz/enum` for `JobStatus`, `EventType`, `Theme`, `SortMode`, `FilterMode`
 - **app/notify**: Notification service for job completion/failures
 - **app/persistence**: SQLite persistence with `sqlx` and `modernc.org/sqlite` driver
 
@@ -60,11 +60,12 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 ### Template System
 - Uses `html/template` with `embed` for static files
 - **CRITICAL**: Templates and static files embedded at compile time - **must rebuild after any changes**
-- Template helper functions are pure (no dependencies): `humanTime`, `humanDuration`, `timeUntil`, `truncate`
+- Template helper functions are pure (no dependencies): `humanTime`, `humanDuration`, `timeUntil`, `truncate`, `ago`, `runDuration`, `clock`, `deref`; `describeSchedule` renders cron specs in plain words via `lnquy/cron` (`app/web/schedule.go`)
+- Partials: `jobs.html` (table, tabs, search, alert), `inspector.html` (job inspector and run output), `runform.html` (run dialog and acceptance toast), `settings.html`, `neighbors.html`; all parse from one glob into one template set
 
 ### HTMX Integration Patterns
 - **Out-of-band updates**: `hx-swap-oob="innerHTML"` for updating multiple elements in single response
-- **Auto-refresh polling**: `hx-trigger="load, every 5s"` for JavaScript-free real-time updates
+- **Auto-refresh polling**: the table polls with `hx-trigger="load, every 5s, refresh-jobs from:body"` and `hx-include="#search, #selected-job"`; the inspector's live part polls itself, its run output does not
 - **Response coordination**: `HX-Refresh: true` header triggers full page refresh when needed
 - **Event coordination**: Custom events like `refresh-jobs` coordinate updates between components (used by toggle, sort, filter)
 - **Lazy-load dropdowns**: Native `<details>/<summary>` with `hx-trigger="toggle once"` for dropdowns that fetch content on first open (used in neighbors selector)
@@ -75,12 +76,20 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 - Job state updated in memory immediately, persisted separately during sync cycles
 
 ### Cookie-Based Preferences
-Theme, view-mode, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
+Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
 
 ### CSS Architecture
-- **CSS Custom Properties**: Comprehensive light/dark/auto theme system using CSS variables
-- **Mobile-first responsive**: `grid-template-columns: repeat(auto-fill, minmax(380px, 1fr))` for adaptive layouts
-- **Component-based design**: Reusable patterns for cards, lists, buttons, status indicators
+- **CSS Custom Properties**: light tokens in `:root`, dark under `[data-theme="dark"]`; the login page keeps its own `--color-*` tokens
+- **Container queries on `.app`**: at 1180px and up the inspector docks beside the table; below that it is a fixed overlay drawer, full screen under 600px; 44px touch targets below 1180px; phone rows become two-line blocks under 720px
+- The run dialog becomes a bottom sheet under 600px (media query, since a modal dialog sits outside the container)
+
+### Dashboard: Table, Inspector, Run Dialog
+- One job table (`jobs-table`) with no alternative views. Rows carry `data-job-id`; the `.job-open` name button opens the inspector
+- **Selection state** lives in hidden inputs `#selected-job` and `#selected-run` outside every polled target, set by OOB fragments and sent with each table poll, so selection survives polling
+- **Minimal JS** in `static/ui.js`, only where htmx has no attribute: focus restore on the re-rendered row, opening/removing dialogs, focus into the inspector and marking the covered page `inert` when it overlays, closing the inspector without a request, and the poll-failure notice (`uiPollDone`, scoped to the table's own poll)
+- `#dialog-slot` opens a swapped `<dialog>` on `hx-on::after-settle`, not after-swap: htmx binds the dialog's `hx-on:close` only at settle, and a dialog closed before that stays in the slot
+- **Run endpoint contract**: `POST /api/jobs/{id}/run` with `HX-Request` answers a rejection with 200 and the re-rendered form (message, edits kept) and an acceptance with 202, an OOB toast and `HX-Trigger-After-Swap: refresh-jobs`; callers without `HX-Request` (curl, scripts) keep 202 "Job triggered" and 4xx/5xx text
+- **Expired session**: `authMiddleware` answers htmx requests with 401 and `HX-Redirect` to the login page, so a poll never swaps the login form into the table
 
 ## Authentication Architecture
 
@@ -97,7 +106,7 @@ Theme, view-mode, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year 
 ## Manual Job Execution Architecture
 
 ### Trigger Mechanism
-- Web UI "Run Now" button sends request to `ManualJobRequest` channel
+- The run dialog (row Run button or inspector "Run now") sends a request to the `ManualJobRequest` channel
 - Channel wired to scheduler's `ManualTrigger` channel
 - Background listener in scheduler processes triggers immediately
 - No persistence of manual executions (runs on-demand only)
@@ -115,7 +124,7 @@ manualJobChan <- jobID
 ```
 
 ### Custom Date and EOD Interaction
-- Run confirm modal (rendered client-side by `customConfirm` in `app/web/static/app.js`) lets the user edit the command and enter an optional date (YYYYMMDD); the date field is shown only when the command contains `{{...}}` or `[[...]]` templates
+- The run dialog (`run-form` in `partials/runform.html`, served by `GET /api/jobs/{id}/run-form`) lets the user edit the command and enter an optional date (YYYYMMDD); the date field is shown only when the command contains `{{...}}` or `[[...]]` templates
 - Empty date → `time.Now()` used for template resolution; custom date → that date is parsed at midnight via `ParseInLocation("20060102", ..., time.Local)` (hour 0)
 - With a positive `--eod-hour` (default: 17), midnight is before the cutoff, so a custom date of D resolves both EOD templates to the business day before D. With `--eod-hour=0`, they use D if it is a business day, otherwise the most recent business day before D
 
@@ -125,8 +134,8 @@ manualJobChan <- jobID
 - Web UI toggle button (`POST /api/jobs/{id}/toggle`) flips `job.Enabled` in memory
 - State persisted immediately via `persistJobs()` after toggle
 - HTMX `HX-Trigger: refresh-jobs` header triggers UI refresh after toggle
-- Disabled jobs shown with `job-disabled` CSS class (visual dimming in both card and list views)
-- Toggle button uses `btn-toggle` / `btn-disabled-state` CSS classes for visual state feedback
+- Disabled rows get `data-state="off"`, a `disabled` tag, no next run, and an Enable button in place of Run
+- All lists every job, Disabled only disabled ones; Failed, Running, Succeeded and Never ran list enabled jobs only
 
 ## Type-Safe Enum Pattern
 

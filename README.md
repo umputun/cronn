@@ -296,25 +296,22 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 
 ### Features
 
-- **Real-time job monitoring** with live updates every 30 seconds
-- **Persistent job history** stored in SQLite database that survives restarts
-- **Manual job execution** with advanced capabilities:
-  - Edit commands before execution for one-off modifications
-  - Override template variables with custom dates (YYYYMMDD format)
-  - Execution history showing last 50 runs with both base and executed commands
-  - Visual indicators for customized manual runs
-- **Multiple view modes**: Card view and compact list view with toggle button
-- **Sorting options**: Sort jobs by original order, last run time, or next run time
-- **Job enable/disable toggle**: Disable individual jobs from the dashboard without editing config files
-- **Status filtering**: Filter jobs by status (all, running, success, failed, idle)
-- **Light, dark, and auto themes** with automatic system preference detection
-- **Job statistics bar** showing total jobs with a success/failed/idle breakdown, currently running jobs, and next execution time. The total and each breakdown count are clickable to filter jobs by that status, kept in sync with the filter button
-- **Detailed job information** including schedules, commands, and execution history
-- **Status indicators** with color-coded job states (idle, running, success, failed)
-- **Cookie-based preferences** for persistent theme, view mode, sort order, and filter settings
-- **Responsive design** that works seamlessly on desktop and mobile devices
-- **Modern UI** with Inter font, consistent spacing, and smooth HTMX-powered animations
-- **No JavaScript required** - all interactivity powered by HTMX v2
+- **One job table** with live updates every 5 seconds: job name (the YAML `name`, or the command when unnamed), command, schedule in plain words next to the raw cron spec, last run with its exit code and duration, and next run
+- **Failing jobs alert** at the top, naming the most recent failure with a direct link to its details
+- **Filter tabs with counts**: All, Failed, Running, Succeeded, Never ran and Disabled; search matches job names and commands
+- **Sorting**: crontab order, next run or last run
+- **Job inspector**: click a job to see its full command, state, last and next run, and its latest 50 runs; pick a run to see its output, exit code, duration and, for manual runs, the command actually executed. Failures without output still show their exit code
+- **Manual runs** from a run dialog:
+  - Edit the command for a one-off run
+  - Set a date (YYYYMMDD) for template variables; the field appears only when the command has templates
+  - A rejected run (job disabled, already running, invalid date) is reported in the dialog with your edits kept
+- **Enable/disable jobs** from the table or the inspector without editing config files
+- **Persistent job history** stored in a SQLite database that survives restarts
+- **Light and dark themes** (dark by default), switched from the top bar
+- **Cookie-based preferences** for theme, sort order and filter
+- **Responsive layout**: the inspector sits beside the table on wide screens, slides over it on tablets and takes the full screen on phones; touch-sized controls below 1180px and no sideways scrolling on phones
+- **Update failure notice** when the dashboard cannot reach the server, clearing on the next successful update
+- **HTMX-driven**: server-rendered fragments and HTMX v2 attributes, with a small script only for focus handling and dialogs
 
 ### Usage
 To enable the web dashboard:
@@ -367,7 +364,7 @@ To protect the web dashboard with a password:
 
 3. Access the dashboard with username `cronn` and your password
 
-The dashboard is accessible via web browser at the configured address. Job data updates automatically using HTMX for smooth, JavaScript-free interactions.
+The dashboard is accessible via web browser at the configured address. Job data updates automatically through HTMX polling.
 
 ### Reverse Proxy Configuration
 
@@ -576,7 +573,7 @@ curl -s localhost:8080/api/v1/jobs/JOB_ID/executions/EXEC_ID/logs | jq '.output'
 <details markdown>
   <summary>Screenshots</summary>
 
-### Desktop - Dark Theme
+### Desktop - Dark Theme, Job Inspector Open
 
 ![Dashboard Dark Desktop](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-dark-desktop.png)
 
@@ -584,17 +581,9 @@ curl -s localhost:8080/api/v1/jobs/JOB_ID/executions/EXEC_ID/logs | jq '.output'
 
 ![Dashboard Light Desktop](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-light-desktop.png)
 
-### List View
+### Run Dialog
 
-![Dashboard List View](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-list-view.png)
-
-### Sort by Next Run
-
-![Dashboard Sort Next Run](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-sort-nextrun.png)
-
-### Sort by Last Run
-
-![Dashboard Sort Last Run](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-sort-lastrun.png)
+![Dashboard Run Dialog](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-run-dialog.png)
 
 ### Mobile - Dark Theme
 

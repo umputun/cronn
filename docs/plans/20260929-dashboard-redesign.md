@@ -382,8 +382,8 @@ Tests:
 - [x] ➕ fix found in verification: theme toggle was hidden on phones with no other way to switch; keep it visible
 
 ### Task 5: [Final] Update documentation
-- [ ] update README.md (web UI section: inspector, filters, run form, readable schedules, job names)
-- [ ] update CLAUDE.md (web UI architecture: single table, container queries, inspector state, no app.js;
+- [x] update README.md (web UI section: inspector, filters, run form, readable schedules, job names)
+- [x] update CLAUDE.md (web UI architecture: single table, container queries, inspector state, no app.js;
       drop `ViewMode` from the enums list and view-mode from Cookie-Based Preferences)
 - [ ] move this plan to `docs/plans/completed/` together with `docs/plans/dashboard-redesign/`
 

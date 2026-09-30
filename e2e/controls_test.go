@@ -195,6 +195,27 @@ func TestFilter_TabsFilterAndPersist(t *testing.T) {
 	assert.Equal(t, totalJobs, count)
 }
 
+func TestFilter_TabModesSurviveCookiesChangedElsewhere(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+
+	require.NoError(t, page.Context().AddCookies([]playwright.OptionalCookie{
+		{Name: "filter-mode", Value: "failed", URL: &baseURL},
+		{Name: "sort-mode", Value: "lastrun", URL: &baseURL},
+	}))
+	waitForPoll(t, page)
+	assert.Len(t, rowNames(t, page), totalJobs, "a poll keeps this tab's All filter")
+	active, err := page.Locator(".tabs .tab.on").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, active, "All")
+
+	clickTab(t, page, "Succeeded")
+	value, err := page.Locator("select[name=sort]").InputValue()
+	require.NoError(t, err)
+	assert.Equal(t, "default", value, "a filter change keeps this tab's sort")
+	clickTab(t, page, "All")
+}
+
 func TestFilter_MatchCountFollowsFilter(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

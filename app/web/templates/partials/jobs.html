@@ -22,7 +22,7 @@
        hx-trigger="input changed delay:300ms, search"
        hx-target="#jobs-container"
        hx-swap="innerHTML"
-       hx-include="#selected-job">
+       hx-include="#selected-job, #filter-mode, #sort-mode">
 {{end}}
 
 {{define "search-input"}}<label id="search-box" class="search">{{template "search-field" .}}</label>{{end}}
@@ -55,20 +55,21 @@
             hx-vals='{"filter": "{{.Mode}}"}'
             hx-target="#jobs-container"
             hx-swap="innerHTML"
-            hx-include="#search, #selected-job">
+            hx-include="#search, #selected-job, #sort-mode">
         {{if .Dot}}<span class="d d-{{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}} <em id="count-{{.Mode}}">{{.Count}}</em>
     </button>
     {{end}}
 </div>
+<input type="hidden" id="filter-mode" name="filter" value="{{.FilterMode}}">
 <span class="count" id="match-count">{{template "match-count" .}}</span>
 <label class="select">
     Sort
-    <select name="sort"
+    <select name="sort" id="sort-mode"
             hx-post="{{url "/api/sort-mode"}}"
             hx-trigger="change"
             hx-target="#jobs-container"
             hx-swap="innerHTML"
-            hx-include="#search, #selected-job">
+            hx-include="#search, #selected-job, #filter-mode">
         <option value="default"{{if eq .SortMode.String "default"}} selected{{end}}>Crontab order</option>
         <option value="nextrun"{{if eq .SortMode.String "nextrun"}} selected{{end}}>Next run</option>
         <option value="lastrun"{{if eq .SortMode.String "lastrun"}} selected{{end}}>Last run</option>
@@ -186,12 +187,12 @@
                 hx-get="{{url "/api/jobs"}}"
                 hx-vals='{"search": "", "reset-search": "1"}'
                 hx-target="#jobs-container" hx-swap="innerHTML"
-                hx-include="#selected-job">Clear search</button>
+                hx-include="#selected-job, #filter-mode, #sort-mode">Clear search</button>
         <button class="btn ghost"
                 hx-post="{{url "/api/filter-mode"}}"
                 hx-vals='{"filter": "all", "search": "", "reset-search": "1"}'
                 hx-target="#jobs-container" hx-swap="innerHTML"
-                hx-include="#selected-job">Show all jobs</button>
+                hx-include="#selected-job, #sort-mode">Show all jobs</button>
     </div>
     {{else}}
     <b>No {{template "filter-label" .FilterMode.String}}jobs</b>
@@ -200,7 +201,7 @@
                 hx-post="{{url "/api/filter-mode"}}"
                 hx-vals='{"filter": "all"}'
                 hx-target="#jobs-container" hx-swap="innerHTML"
-                hx-include="#search, #selected-job">Show all jobs</button>
+                hx-include="#search, #selected-job, #sort-mode">Show all jobs</button>
     </div>
     {{end}}
 </div>

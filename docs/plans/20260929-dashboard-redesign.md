@@ -165,7 +165,9 @@ If a previous task shipped a violation (spotted later by user, reviewer, or your
     and restores focus
   - `uiInspectorSwapped(panel, evt)`: `#inspector` `hx-on::after-swap`, ignoring the inspector's own polling
     swaps; moves focus to the heading (autofocus does not fire for swapped content) and, when the inspector
-    overlays the page (tablet drawer, phone full screen), marks the covered page `inert` via `uiSetCovered`
+    overlays the page (tablet drawer, phone full screen), marks the covered page `inert` via `uiSyncCovered`
+  - `uiSyncCovered()`: recomputes the `inert` marking from the inspector's position on open and on every
+    (rAF-throttled) resize, moving focus off a control that just became covered
   - `uiCloseInspector()`: Back/Close `hx-on:click`; empty `#inspector`, clear the two hidden inputs and the
     `inert` marks, restore focus to the row; the next poll picks up the cleared inputs
   - `uiPollDone(container, evt)`: `#jobs-container` `hx-on::after-request`; toggles `.poll-failed` on `.app`

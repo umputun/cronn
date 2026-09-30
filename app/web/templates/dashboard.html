@@ -7,7 +7,7 @@
     <div id="jobs-container"
          hx-get="{{url "/api/jobs"}}"
          hx-trigger="load, every 5s, refresh-jobs from:body"
-         hx-include="#search, #selected-job"
+         hx-include="#search, #selected-job, #filter-mode, #sort-mode"
          hx-swap="innerHTML"
          hx-on::after-request="uiPollDone(this, event)">
         {{template "jobs-table" .}}

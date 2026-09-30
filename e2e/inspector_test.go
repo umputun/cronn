@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -214,4 +215,118 @@ func TestInspector_OverlayAndFullScreenLayouts(t *testing.T) {
 			assert.False(t, evalBool(t, page, `() => document.querySelector('#jobs-container').inert`), "closing restores the page")
 		})
 	}
+}
+
+var liveRe = regexp.MustCompile(`/inspector\?.*part=live`)
+
+func focusOnHeading(t *testing.T, page playwright.Page) bool {
+	t.Helper()
+	return evalBool(t, page, `() => document.activeElement === document.querySelector('#inspector [data-focus]')`)
+}
+
+func tableInert(t *testing.T, page playwright.Page) bool {
+	t.Helper()
+	return evalBool(t, page, `() => document.querySelector('#jobs-container').inert`)
+}
+
+func TestInspector_ResizeReconcilesCoveredPage(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	openInspector(t, page, jobHourly)
+	require.False(t, tableInert(t, page), "a docked inspector covers nothing")
+
+	require.NoError(t, page.SetViewportSize(820, 1180))
+	require.Eventually(t, func() bool { return tableInert(t, page) }, 3*time.Second, 50*time.Millisecond,
+		"narrowing turns the inspector into an overlay over the table")
+	for i := range 10 {
+		require.NoError(t, page.Keyboard().Press("Tab"))
+		assert.False(t, activeElementIn(t, page, "#jobs-container"), "tab %d reached a covered table control", i)
+	}
+
+	require.NoError(t, page.SetViewportSize(1440, 900))
+	require.Eventually(t, func() bool { return !tableInert(t, page) }, 3*time.Second, 50*time.Millisecond,
+		"widening docks the inspector and frees the table")
+	btn := row(page, jobWeekday).Locator(".job-open")
+	require.NoError(t, btn.Focus())
+	assert.True(t, activeElementIn(t, page, "#jobs-container"), "the table takes focus again")
+}
+
+func TestInspector_RunFromOverlayReturnsFocusToHeading(t *testing.T) {
+	page := newPageSized(t, 820, 460)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobHourly)
+	setEnabled(t, id, true)
+	openInspector(t, page, jobHourly)
+
+	clickAndAwait(t, page, page.Locator("#insp-run"), runFormRe)
+	waitVisible(t, page.Locator("dialog.run-dialog[open]"))
+	_, err := page.ExpectResponse(liveRe, func() error { return nil }, playwright.PageExpectResponseOptions{Timeout: new(8000.0)})
+	require.NoError(t, err)
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("dialog.run-dialog"))
+	require.Eventually(t, func() bool { return focusOnHeading(t, page) }, 3*time.Second, 50*time.Millisecond,
+		"Esc returns focus to the inspector, not to the covered row or the page body")
+
+	clickAndAwait(t, page, page.Locator("#insp-run"), runFormRe)
+	dlg := page.Locator("dialog.run-dialog[open]")
+	waitVisible(t, dlg)
+	_, err = page.ExpectResponse(`**/run`, func() error { return dlg.Locator("button[form=run-form]").Click() })
+	require.NoError(t, err)
+	waitHidden(t, page.Locator("dialog.run-dialog"))
+	require.Eventually(t, func() bool { return focusOnHeading(t, page) }, 3*time.Second, 50*time.Millisecond,
+		"an accepted run returns focus to the inspector")
+	require.Eventually(t, func() bool { return !jobStatus(t, id).IsRunning }, 10*time.Second, 100*time.Millisecond)
+}
+
+func TestInspector_RunFromAlertWithJobFilteredOut(t *testing.T) {
+	page := newPageSized(t, 820, 1180)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobFailing)
+	setEnabled(t, id, true)
+	runJob(t, id)
+	clickTab(t, page, "Succeeded")
+
+	alert := page.Locator("#failing-alert .alert")
+	waitVisible(t, alert)
+	clickAndAwait(t, page, alert.Locator("button.go"), inspectorRe)
+	waitVisible(t, page.Locator("#inspector .insp"))
+	opened, err := page.Locator("#inspector .insp").GetAttribute("data-job-id")
+	require.NoError(t, err)
+	count, err := page.Locator(`tr.row[data-job-id="` + opened + `"]`).Count()
+	require.NoError(t, err)
+	require.Zero(t, count, "the failing job is outside the Succeeded tab")
+
+	clickAndAwait(t, page, page.Locator("#insp-run"), runFormRe)
+	waitVisible(t, page.Locator("dialog.run-dialog[open]"))
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("dialog.run-dialog"))
+	require.Eventually(t, func() bool { return focusOnHeading(t, page) }, 3*time.Second, 50*time.Millisecond,
+		"with no row to return to, focus goes to the inspector")
+}
+
+func TestInspector_RemovedJobClosesPanel(t *testing.T) {
+	page := newPageSized(t, 820, 1180)
+	navigateToDashboard(t, page)
+	openInspector(t, page, jobHourly)
+	require.True(t, tableInert(t, page))
+
+	gone := baseURL + "/api/jobs/gone/inspector?part=live"
+	require.NoError(t, page.Route(liveRe, func(r playwright.Route) {
+		_ = r.Continue(playwright.RouteContinueOptions{URL: &gone})
+	}))
+	require.NoError(t, page.Locator("#inspector .insp").WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateDetached, Timeout: new(8000.0)}))
+	require.NoError(t, page.Unroute(liveRe))
+
+	count, err := page.Locator("#inspector").Count()
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "the inspector slot survives")
+	assert.False(t, tableInert(t, page), "the page is usable again")
+	selected, err := page.Locator("#selected-job").InputValue()
+	require.NoError(t, err)
+	assert.Empty(t, selected)
+	require.Eventually(t, func() bool { return activeElementIn(t, page, "#search-box") }, 3*time.Second, 50*time.Millisecond,
+		"focus lands on search, since the job's row is gone")
+
+	openInspector(t, page, jobWeekday)
 }

@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -284,7 +285,7 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	}
 	job, ok := s.jobByID(r.PathValue("id"))
 	if !ok {
-		http.Error(w, "Job not found", http.StatusNotFound)
+		s.writeRunError(w, r, runError{status: http.StatusNotFound, msg: "Job not found"})
 		return
 	}
 
@@ -369,10 +370,12 @@ func (s *Server) writeRunError(w http.ResponseWriter, r *http.Request, e runErro
 	}
 	job, ok := s.jobByID(r.PathValue("id"))
 	if !ok {
-		http.Error(w, e.msg, e.status)
-		return
+		// the definition is gone, so the form keeps the request's own id and values
+		job = persistence.JobInfo{ID: r.PathValue("id"), Command: r.FormValue("command")}
+		e.msg = "Job no longer exists in the crontab"
 	}
 	form := s.newRunForm(job, r.FormValue("command"), r.FormValue("date"))
+	form.HasTemplates = form.HasTemplates || form.Date != ""
 	if form.Command == "" {
 		form.Command = job.Command
 	}
@@ -409,6 +412,13 @@ func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 // the inspector's own polling; otherwise the whole panel plus the selection inputs and the latest run's output
 func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.jobByID(r.PathValue("id"))
+	if !ok && r.Header.Get("HX-Request") == "true" {
+		// a crontab sync removed the job: close the panel, since htmx would keep showing it on a 404
+		w.Header().Set("HX-Retarget", "#inspector")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		s.render(w, "partials/jobs.html", "inspector-closed", nil)
+		return
+	}
 	if !ok {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
@@ -465,6 +475,11 @@ func (s *Server) handleRunOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.store.GetExecutionByID(execID)
+	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
+		log.Printf("[ERROR] failed to get execution %d: %v", execID, err)
+		http.Error(w, "Failed to load execution", http.StatusInternalServerError)
+		return
+	}
 	if err != nil || run.JobID != jobID {
 		http.Error(w, "Execution not found", http.StatusNotFound)
 		return

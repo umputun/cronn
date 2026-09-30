@@ -1,10 +1,12 @@
 // browser behaviour htmx has no attribute for: focus around the run dialog and the inspector, closing the
 // inspector without a request (it must work while polls fail), and marking a failed poll
 
-// uiRestoreFocus focuses the job's row button, re-found by id because polling replaces the opener
+// uiRestoreFocus focuses the job's row button, re-found by id because polling replaces the opener. A row that
+// is gone (filtered out, removed) or covered by the inspector falls back to the inspector heading, then search
 function uiRestoreFocus(jobID) {
     const row = jobID && document.querySelector('[data-job-id="' + CSS.escape(jobID) + '"] .job-open');
-    const target = row || document.getElementById('search');
+    const usable = row && !row.closest('[inert]') ? row : null;
+    const target = usable || document.querySelector('#inspector [data-focus]') || document.getElementById('search');
     if (target) target.focus();
 }
 
@@ -41,14 +43,39 @@ function uiSetCovered(covered) {
     });
 }
 
-// uiInspectorSwapped moves focus into a newly opened inspector and, when it overlays the page, keeps keyboard
-// focus off the covered controls; its own polling swaps are ignored
+// uiSyncCovered marks the page inert while the inspector overlays it (the CSS decides by width, so this runs on
+// open and on every resize). Focus left on a control that just became covered moves to the inspector heading
+function uiSyncCovered() {
+    const insp = document.querySelector('#inspector .insp');
+    const covered = !!insp && getComputedStyle(insp).position === 'fixed';
+    const active = document.activeElement;
+    uiSetCovered(covered);
+    if (!covered || !active || active === document.body || insp.contains(active) || active.closest('dialog')) return;
+    const heading = insp.querySelector('[data-focus]');
+    if (heading) heading.focus();
+}
+
+let uiResizePending = false;
+window.addEventListener('resize', function () {
+    if (uiResizePending) return;
+    uiResizePending = true;
+    requestAnimationFrame(function () {
+        uiResizePending = false;
+        uiSyncCovered();
+    });
+});
+
+// uiInspectorSwapped moves focus into a newly opened inspector, or back to search when a removed job closed it;
+// its own polling swaps are ignored
 function uiInspectorSwapped(panel, evt) {
     if (evt.detail.target !== panel) return;
-    const insp = panel.querySelector('.insp');
-    uiSetCovered(!!insp && getComputedStyle(insp).position === 'fixed');
+    uiSyncCovered();
     const heading = panel.querySelector('[data-focus]');
-    if (heading) heading.focus();
+    if (heading) {
+        heading.focus();
+        return;
+    }
+    if (!document.activeElement || document.activeElement === document.body) uiRestoreFocus('');
 }
 
 // uiCloseInspector empties the inspector and clears the selection locally; the next poll sends the cleared ids

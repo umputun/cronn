@@ -20,7 +20,7 @@ Cron job scheduler with YAML/JSON and traditional crontab support, using `github
 - **HTTP**: `github.com/go-pkgz/routegroup` and `github.com/go-pkgz/rest`
 - **Rate limiting**: `github.com/didip/tollbooth/v8` for brute-force protection
 - **YAML validation**: `github.com/invopop/jsonschema` for config validation
-- **Frontend**: HTMX v2 for JavaScript-free dynamic updates
+- **Frontend**: HTMX v2 for dynamic updates; the only other script is the small `static/ui.js` for focus and dialogs
 
 ## Interface Design Patterns
 
@@ -60,7 +60,7 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 ### Template System
 - Uses `html/template` with `embed` for static files
 - **CRITICAL**: Templates and static files embedded at compile time - **must rebuild after any changes**
-- Template helper functions are pure (no dependencies): `humanTime`, `humanDuration`, `timeUntil`, `truncate`, `ago`, `runDuration`, `clock`, `deref`; `describeSchedule` renders cron specs in plain words via `lnquy/cron` (`app/web/schedule.go`)
+- Template helper functions are pure (no dependencies): `humanDuration`, `timeUntil`, `since`, `ago`, `runDuration`, `clock`, `deref`; `describeSchedule` renders cron specs in plain words via `lnquy/cron` (`app/web/schedule.go`)
 - Partials: `jobs.html` (table, tabs, search, alert), `inspector.html` (job inspector and run output), `runform.html` (run dialog and acceptance toast), `settings.html`, `neighbors.html`; all parse from one glob into one template set
 
 ### HTMX Integration Patterns
@@ -76,7 +76,7 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 - Job state updated in memory immediately, persisted separately during sync cycles
 
 ### Cookie-Based Preferences
-Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
+Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration. The cookies only set a fresh page's modes: each tab sends its own `filter` (hidden `#filter-mode`) and `sort` (`#sort-mode`) with every list request, and `getSortMode`/`getFilterMode` prefer those, so a change in one tab never leaks into another.
 
 ### CSS Architecture
 - **CSS Custom Properties**: light tokens in `:root`, dark under `[data-theme="dark"]`; the login page keeps its own `--color-*` tokens
@@ -86,10 +86,11 @@ Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
 ### Dashboard: Table, Inspector, Run Dialog
 - One job table (`jobs-table`) with no alternative views. Rows carry `data-job-id`; the `.job-open` name button opens the inspector
 - **Selection state** lives in hidden inputs `#selected-job` and `#selected-run` outside every polled target, set by OOB fragments and sent with each table poll, so selection survives polling
-- **Minimal JS** in `static/ui.js`, only where htmx has no attribute: focus restore on the re-rendered row, opening/removing dialogs, focus into the inspector and marking the covered page `inert` when it overlays, closing the inspector without a request, and the poll-failure notice (`uiPollDone`, scoped to the table's own poll)
+- **Minimal JS** in `static/ui.js`, only where htmx has no attribute: focus restore on the re-rendered row, opening/removing dialogs, focus into the inspector and marking the covered page `inert` while it overlays (re-checked on resize, since the CSS decides by width), closing the inspector without a request, and the poll-failure notice (`uiPollDone`, scoped to the table's own poll)
 - `#dialog-slot` opens a swapped `<dialog>` on `hx-on::after-settle`, not after-swap: htmx binds the dialog's `hx-on:close` only at settle, and a dialog closed before that stays in the slot
 - **Run endpoint contract**: `POST /api/jobs/{id}/run` with `HX-Request` answers a rejection with 200 and the re-rendered form (message, edits kept) and an acceptance with 202, an OOB toast and `HX-Trigger-After-Swap: refresh-jobs`; callers without `HX-Request` (curl, scripts) keep 202 "Job triggered" and 4xx/5xx text
 - **Expired session**: `authMiddleware` answers htmx requests with 401 and `HX-Redirect` to the login page, so a poll never swaps the login form into the table
+- **Removed job**: when a crontab sync drops the job open in the inspector, its htmx request gets 200 with `HX-Retarget: #inspector` and `HX-Reswap: innerHTML` (the live part swaps `outerHTML` and would delete the slot) plus OOB-cleared selection inputs, so the panel closes; a run posted for a removed job re-renders the dialog with the submitted values. Non-htmx callers keep the 404
 
 ## Authentication Architecture
 
@@ -142,7 +143,7 @@ manualJobChan <- jobID
 ### go-pkgz/enum Integration
 Enums in `app/web/enums/` provide compile-time type safety:
 ```go
-//go:generate moq -fmt goimports -out enums_string.go . JobStatus EventType ViewMode Theme SortMode FilterMode
+//go:generate moq -fmt goimports -out enums_string.go . JobStatus EventType Theme SortMode FilterMode
 
 type JobStatus int
 //go:generate enumer -type=JobStatus -json -text -sql -values
@@ -192,7 +193,9 @@ Weekday templates (W-prefix): `WYYYYMMDD`, `WYYYY`, `WYYYYMM`, `WYYMMDD`, `WISOD
 **Jobs table:**
 - id (SHA256 hash of command), command, schedule
 - next_run, last_run (DATETIME format)
+- name (the YAML `name`, empty when unset)
 - last_status (idle/running/success/failed)
+- last_exit_code (nullable: NULL until a finished run is known; -1 is a real signal exit), last_duration
 - enabled, created_at, updated_at
 - sort_index (for preserving job order)
 
@@ -224,6 +227,7 @@ Server **must** call `loadJobsFromDB()` BEFORE `loadJobsFromCrontab()` to preser
 Job events update memory immediately via `JobEventHandler`, but persist only when `persistJobs()` called during crontab sync (not real-time).
 
 ### Database Loading Patterns
+- `migrate()` adds missing columns, then `backfillLastResult` fills `last_exit_code`/`last_duration` of jobs whose code is NULL from their latest retained execution. It runs on every start and never touches a known value, so an interrupted upgrade still recovers
 - `loadJobsFromDB()` handles empty timestamps gracefully
 - Recalculates NextRun for jobs missing schedule calculations
 - Uses `schedule.Next(time.Now())` to compute next execution

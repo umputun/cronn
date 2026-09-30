@@ -303,24 +303,6 @@ func TestTemplateHelpers(t *testing.T) {
 		assert.Equal(t, 0, s.deref(nil))
 	})
 
-	t.Run("humanTime", func(t *testing.T) {
-		tests := []struct {
-			name     string
-			input    time.Time
-			expected string
-		}{
-			{name: "zero time", input: time.Time{}, expected: "Never"},
-			{name: "valid time", input: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC), expected: "Jan 15, 14:30:45"},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				result := s.humanTime(tt.input)
-				assert.Equal(t, tt.expected, result)
-			})
-		}
-	})
-
 	t.Run("humanDuration", func(t *testing.T) {
 		tests := []struct {
 			name     string
@@ -366,27 +348,6 @@ func TestTemplateHelpers(t *testing.T) {
 			// should be approximately 5m, but allow for slight timing differences
 			assert.Contains(t, []string{"5m", "4m"}, result)
 		})
-	})
-
-	t.Run("truncate", func(t *testing.T) {
-		tests := []struct {
-			name     string
-			input    string
-			length   int
-			expected string
-		}{
-			{name: "short string", input: "hello", length: 10, expected: "hello"},
-			{name: "exact length", input: "hello", length: 5, expected: "hello"},
-			{name: "long string", input: "hello world", length: 5, expected: "hello..."},
-			{name: "empty string", input: "", length: 5, expected: ""},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				result := s.truncate(tt.input, tt.length)
-				assert.Equal(t, tt.expected, result)
-			})
-		}
 	})
 }
 

@@ -221,6 +221,17 @@ func TestServer_handleJobsPartial(t *testing.T) {
 		assert.Contains(t, body, "Show all jobs")
 	})
 
+	t.Run("tab modes win over cookies changed by another tab", func(t *testing.T) {
+		body := get(t, "filter=all&sort=default",
+			&http.Cookie{Name: "filter-mode", Value: "failed"}, &http.Cookie{Name: "sort-mode", Value: "lastrun"})
+		assert.Equal(t, []string{"ok", "fail", "run", "never", "off"}, rowIDs(body))
+	})
+
+	t.Run("cookie applies when the page sends no mode", func(t *testing.T) {
+		body := get(t, "", &http.Cookie{Name: "filter-mode", Value: "failed"})
+		assert.Equal(t, []string{"fail"}, rowIDs(body))
+	})
+
 	t.Run("reset-search clears the search box", func(t *testing.T) {
 		body := get(t, "search=&reset-search=1")
 		assert.Contains(t, body, `id="search-box" class="search" hx-swap-oob="true"`)
@@ -289,6 +300,16 @@ func TestServer_handleSortModeChange(t *testing.T) {
 		assert.Contains(t, w.Body.String(), `<option value="lastrun" selected>`)
 	})
 
+	t.Run("keeps the tab's filter over the cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort=nextrun&filter=success"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "filter-mode", Value: "failed"})
+		w := httptest.NewRecorder()
+		server.handleSortModeChange(w, req)
+		assert.Equal(t, []string{"ok"}, rowIDs(w.Body.String()))
+		assert.Contains(t, w.Body.String(), `id="filter-mode" name="filter" value="success"`)
+	})
+
 	t.Run("keeps filter and search", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort=nextrun&search=sync"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -326,6 +347,16 @@ func TestServer_handleFilterModeChange(t *testing.T) {
 			assert.Contains(t, w.Body.String(), `class="tab on"`)
 		})
 	}
+
+	t.Run("keeps the tab's sort over the cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/filter-mode", strings.NewReader("filter=all&sort=lastrun"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "sort-mode", Value: "default"})
+		w := httptest.NewRecorder()
+		server.handleFilterModeChange(w, req)
+		assert.Equal(t, []string{"run", "ok", "fail", "off", "never"}, rowIDs(w.Body.String()))
+		assert.Contains(t, w.Body.String(), `<option value="lastrun" selected>`)
+	})
 
 	t.Run("show all resets the search box", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/filter-mode",
@@ -503,9 +534,23 @@ func TestServer_handleRunJob(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
-	t.Run("unknown job", func(t *testing.T) {
-		s, _ := newServer(t, Config{}, 1)
-		assert.Equal(t, http.StatusNotFound, post(s, "nope", url.Values{}, true).Code)
+	t.Run("job removed after the dialog opened", func(t *testing.T) {
+		s, ch := newServer(t, Config{}, 1)
+		form := url.Values{"command": {"echo edited"}, "date": {"20260915"}}
+
+		w := post(s, "gone", form, false)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, "Job not found\n", w.Body.String())
+
+		w = post(s, "gone", form, true)
+		assert.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "Not started: Job no longer exists in the crontab.")
+		assert.Contains(t, body, `hx-post="/api/jobs/gone/run"`)
+		assert.Contains(t, body, ">echo edited</textarea>")
+		assert.Contains(t, body, `value="20260915"`, "a submitted date keeps its field")
+		assert.NotContains(t, body, "toasts")
+		assert.Empty(t, ch, "nothing is queued for a missing job")
 	})
 }
 
@@ -616,6 +661,23 @@ func TestServer_handleInspector(t *testing.T) {
 	t.Run("unknown job", func(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, get("nope", "").Code)
 	})
+
+	t.Run("removed job closes the panel for htmx", func(t *testing.T) {
+		for _, query := range []string{"", "part=live"} {
+			req := httptest.NewRequest(http.MethodGet, "/api/jobs/gone/inspector?"+query, http.NoBody)
+			req.SetPathValue("id", "gone")
+			req.Header.Set("HX-Request", "true")
+			w := httptest.NewRecorder()
+			server.handleInspector(w, req)
+			require.Equal(t, http.StatusOK, w.Code, "htmx swaps only 2xx, so a 404 would leave the removed job on screen")
+			assert.Equal(t, "#inspector", w.Header().Get("HX-Retarget"))
+			assert.Equal(t, "innerHTML", w.Header().Get("HX-Reswap"), "the live part swaps outerHTML and would delete the slot")
+			body := w.Body.String()
+			assert.Contains(t, body, `id="selected-job" name="selected-job" value="" hx-swap-oob="true"`)
+			assert.Contains(t, body, `id="selected-run" name="selected-run" value="" hx-swap-oob="true"`)
+			assert.NotContains(t, body, `class="insp"`)
+		}
+	})
 }
 
 func TestServer_handleRunOutput(t *testing.T) {
@@ -653,6 +715,10 @@ func TestServer_handleRunOutput(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, get("fail", "99999").Code)
 	assert.Equal(t, http.StatusNotFound, get("nope", strconv.Itoa(runs[0].ID)).Code)
 	assert.Equal(t, http.StatusBadRequest, get("fail", "abc").Code)
+
+	require.NoError(t, server.store.Close())
+	assert.Equal(t, http.StatusInternalServerError, get("fail", strconv.Itoa(runs[0].ID)).Code,
+		"a database failure is not reported as a missing run")
 }
 
 func TestServer_handleSettingsModal(t *testing.T) {

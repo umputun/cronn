@@ -151,7 +151,6 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		{"jobs", "last_duration", "last_duration INTEGER DEFAULT 0"},
 	}
 
-	backfill := false
 	for _, c := range columns {
 		var exists bool
 		err := s.db.QueryRowContext(ctx,
@@ -165,19 +164,13 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", c.table, c.ddl)); err != nil {
 			return fmt.Errorf("failed to add %s.%s column: %w", c.table, c.column, err)
 		}
-		if c.column == "last_exit_code" {
-			backfill = true
-		}
 	}
-
-	if backfill {
-		return s.backfillLastResult(ctx)
-	}
-	return nil
+	return s.backfillLastResult(ctx)
 }
 
-// backfillLastResult fills last_exit_code and last_duration of existing jobs from their latest retained
-// execution, so an upgraded database keeps showing the result it already recorded
+// backfillLastResult fills last_exit_code and last_duration of jobs that have none from their latest retained
+// execution, so an upgraded database keeps showing the result it already recorded. It runs on every start,
+// so an upgrade interrupted after adding the columns still recovers, and never touches a known result
 func (s *SQLiteStore) backfillLastResult(ctx context.Context) error {
 	type lastRun struct {
 		JobID      string       `db:"job_id"`
@@ -189,7 +182,8 @@ func (s *SQLiteStore) backfillLastResult(ctx context.Context) error {
 	err := s.db.SelectContext(ctx, &runs, `
 		SELECT e.job_id, e.exit_code, e.started_at, e.finished_at
 		FROM executions e
-		WHERE e.id = (SELECT id FROM executions WHERE job_id = e.job_id ORDER BY started_at DESC, id DESC LIMIT 1)`)
+		WHERE e.job_id IN (SELECT id FROM jobs WHERE last_exit_code IS NULL)
+		  AND e.id = (SELECT id FROM executions WHERE job_id = e.job_id ORDER BY started_at DESC, id DESC LIMIT 1)`)
 	if err != nil {
 		return fmt.Errorf("failed to read latest executions: %w", err)
 	}
@@ -199,7 +193,8 @@ func (s *SQLiteStore) backfillLastResult(ctx context.Context) error {
 		if r.StartedAt.Valid && r.FinishedAt.Valid {
 			duration = r.FinishedAt.Time.Sub(r.StartedAt.Time)
 		}
-		if _, err := s.db.ExecContext(ctx, "UPDATE jobs SET last_exit_code = ?, last_duration = ? WHERE id = ?",
+		if _, err := s.db.ExecContext(ctx,
+			"UPDATE jobs SET last_exit_code = ?, last_duration = ? WHERE id = ? AND last_exit_code IS NULL",
 			r.ExitCode, int64(duration), r.JobID); err != nil {
 			return fmt.Errorf("failed to backfill last result of job %s: %w", r.JobID, err)
 		}

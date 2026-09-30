@@ -451,9 +451,7 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	templates := make(map[string]*template.Template)
 
 	funcMap := template.FuncMap{
-		"humanTime":        s.humanTime,
 		"humanDuration":    s.humanDuration,
-		"truncate":         s.truncate,
 		"timeUntil":        s.timeUntil,
 		"since":            s.since,
 		"url":              s.url,
@@ -503,8 +501,12 @@ func (s *Server) getTheme(r *http.Request) enums.Theme {
 	return theme
 }
 
-// getSortMode gets the sort mode from cookie or defaults to "default"
+// getSortMode returns the sort mode the page sent, else the cookie, else "default". The page sends its own
+// mode so a change made in another tab (which rewrites the shared cookie) does not leak into this one
 func (s *Server) getSortMode(r *http.Request) enums.SortMode {
+	if mode, err := enums.ParseSortMode(r.FormValue("sort")); err == nil {
+		return mode
+	}
 	cookie, err := r.Cookie("sort-mode")
 	if err != nil || cookie.Value == "" {
 		return enums.SortModeDefault
@@ -517,8 +519,11 @@ func (s *Server) getSortMode(r *http.Request) enums.SortMode {
 	return mode
 }
 
-// getFilterMode gets the filter mode from cookie or defaults to "all"
+// getFilterMode returns the filter mode the page sent, else the cookie, else "all"; see getSortMode
 func (s *Server) getFilterMode(r *http.Request) enums.FilterMode {
+	if mode, err := enums.ParseFilterMode(r.FormValue("filter")); err == nil {
+		return mode
+	}
 	cookie, err := r.Cookie("filter-mode")
 	if err != nil {
 		return enums.FilterModeAll // default to all
@@ -556,13 +561,6 @@ func (s *Server) setFilterCookie(w http.ResponseWriter, mode enums.FilterMode) {
 }
 
 // template helper functions
-
-func (s *Server) humanTime(t time.Time) string {
-	if t.IsZero() {
-		return "Never"
-	}
-	return t.Format("Jan 2, 15:04:05")
-}
 
 func (s *Server) humanDuration(d time.Duration) string {
 	if d < time.Minute {
@@ -637,13 +635,6 @@ func (s *Server) runDuration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 	}
-}
-
-func (s *Server) truncate(str string, n int) string {
-	if len(str) <= n {
-		return str
-	}
-	return str[:n] + "..."
 }
 
 // url prepends the base URL to a path for reverse proxy support

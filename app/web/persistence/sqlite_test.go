@@ -885,3 +885,39 @@ func TestSQLiteStore_Migration_BackfillsLastResult(t *testing.T) {
 		"SELECT COUNT(*) > 0 FROM pragma_table_info('executions') WHERE name = 'output'").Scan(&hasOutput))
 	assert.True(t, hasOutput)
 }
+
+func TestSQLiteStore_Migration_BackfillRecoversOnMigratedSchema(t *testing.T) {
+	// regression: the backfill ran only in the start that added last_exit_code, so an interrupted upgrade never recovered
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	ctx := context.Background()
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+
+	start := time.Date(2026, 9, 29, 16, 0, 0, 0, time.UTC)
+	signal := -1
+	require.NoError(t, store.SaveJobs([]JobInfo{
+		{ID: "lost", Command: "cmd lost", Schedule: "* * * * *", LastRun: start, LastStatus: enums.JobStatusFailed,
+			Enabled: true, CreatedAt: start, UpdatedAt: start},
+		{ID: "known", Command: "cmd known", Schedule: "* * * * *", LastRun: start, LastStatus: enums.JobStatusFailed,
+			LastExitCode: &signal, LastDuration: 3 * time.Second, Enabled: true, CreatedAt: start, UpdatedAt: start, SortIndex: 1},
+	}))
+	insertExec := `INSERT INTO executions (job_id, started_at, finished_at, status, exit_code) VALUES (?, ?, ?, ?, ?)`
+	_, err = store.db.ExecContext(ctx, insertExec, "lost", start, start.Add(2*time.Second), "failed", 4)
+	require.NoError(t, err)
+	_, err = store.db.ExecContext(ctx, insertExec, "known", start, start.Add(time.Second), "success", 0)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	store, err = NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+	loaded, err := store.LoadJobs()
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
+	require.NotNil(t, loaded[0].LastExitCode)
+	assert.Equal(t, 4, *loaded[0].LastExitCode)
+	assert.Equal(t, 2*time.Second, loaded[0].LastDuration)
+	require.NotNil(t, loaded[1].LastExitCode)
+	assert.Equal(t, -1, *loaded[1].LastExitCode, "a known result is never overwritten")
+	assert.Equal(t, 3*time.Second, loaded[1].LastDuration)
+}

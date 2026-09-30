@@ -92,3 +92,8 @@
 {{template "run-output" .}}
 <input type="hidden" id="selected-run" name="selected-run" value="{{.Run.ID}}" hx-swap-oob="true">
 {{end}}
+
+{{define "inspector-closed"}}
+<input type="hidden" id="selected-job" name="selected-job" value="" hx-swap-oob="true">
+<input type="hidden" id="selected-run" name="selected-run" value="" hx-swap-oob="true">
+{{end}}

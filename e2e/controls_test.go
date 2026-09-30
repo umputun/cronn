@@ -58,6 +58,17 @@ func TestTheme_ToggleDarkLight(t *testing.T) {
 	clickThemeToggle(t, page, newTheme)
 }
 
+func TestTheme_ToggleReachableOnPhone(t *testing.T) {
+	page := newPageSized(t, 390, 844)
+	navigateToDashboard(t, page)
+
+	initial, err := page.Locator("html").GetAttribute("data-theme")
+	require.NoError(t, err)
+	next := clickThemeToggle(t, page, initial)
+	assert.NotEqual(t, initial, next)
+	clickThemeToggle(t, page, next)
+}
+
 func TestTheme_BothThemesRenderDashboardAndInspector(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

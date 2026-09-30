@@ -15,7 +15,7 @@
     </div>
     {{template "inspector-live" .}}
     <div id="insp-output">
-        {{with .Output}}{{template "run-output" .}}{{else}}<div class="out-none">No runs recorded yet.</div>{{end}}
+        {{with .Output}}{{template "run-output" .}}{{end}}
     </div>
 </div>
 <input type="hidden" id="selected-job" name="selected-job" value="{{.Job.ID}}" hx-swap-oob="true">
@@ -66,7 +66,7 @@
             <span class="ex{{if ne .ExitCode 0}} bad{{end}}">exit {{.ExitCode}}</span>
         </button>
         {{else}}
-        <div class="runs-none">No runs yet</div>
+        <div class="runs-none">No runs recorded yet.</div>
         {{end}}
     </div>
 </div>

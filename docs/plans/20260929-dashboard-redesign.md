@@ -371,13 +371,15 @@ Tests:
 - [x] run tests - must pass before next task
 
 ### Task 4: Verify acceptance criteria
-- [ ] verify all requirements from Overview are implemented; compare against `docs/plans/dashboard-redesign/proposal.html`
-- [ ] verify the only `*.js` files in `app/web/static/` are `htmx.min.js` and `ui.js`, and every inline `hx-on` and `ui.js`
+- [x] verify all requirements from Overview are implemented; compare against `docs/plans/dashboard-redesign/proposal.html`
+- [x] verify the only `*.js` files in `app/web/static/` are `htmx.min.js` and `ui.js`, and every inline `hx-on` and `ui.js`
       function is one listed in Technical Details
-- [ ] run full test suite: `cd app && go test -race -count=1 ./...`
-- [ ] run e2e tests: `make e2e`
-- [ ] run linter: `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
-- [ ] verify test coverage for `app/web` stays at or above its current level
+- [x] run full test suite: `cd app && go test -race -count=1 ./...`
+- [x] run e2e tests: `make e2e`
+- [x] run linter: `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
+- [x] verify test coverage for `app/web` stays at or above its current level
+- [x] ➕ fix found in verification: inspector showed two empty-run messages; keep one in the runs list
+- [x] ➕ fix found in verification: theme toggle was hidden on phones with no other way to switch; keep it visible
 
 ### Task 5: [Final] Update documentation
 - [ ] update README.md (web UI section: inspector, filters, run form, readable schedules, job names)

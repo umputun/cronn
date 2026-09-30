@@ -603,6 +603,12 @@ func TestServer_handleInspector(t *testing.T) {
 		})
 	}
 
+	t.Run("job without runs shows one empty message", func(t *testing.T) {
+		body := get("never", "").Body.String()
+		assert.Equal(t, 1, strings.Count(body, "No runs"), "the runs list and the output pane must not both say it")
+		assert.Contains(t, body, "No runs recorded yet.")
+	})
+
 	t.Run("disabled job has no run button", func(t *testing.T) {
 		assert.NotContains(t, get("off", "").Body.String(), "Run now…")
 	})

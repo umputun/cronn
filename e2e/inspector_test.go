@@ -51,6 +51,15 @@ func TestInspector_SilentFailureShowsExitCode(t *testing.T) {
 	assert.Contains(t, out, "exit 7")
 }
 
+func TestInspector_JobWithoutRunsShowsOneEmptyMessage(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+
+	openInspector(t, page, jobTemplated)
+	assert.Equal(t, "No runs recorded yet.", inspectorText(t, page, ".runs-none"))
+	assert.Empty(t, inspectorText(t, page, "#insp-output"))
+}
+
 func TestInspector_OpensByKeyboardWithFocusInside(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

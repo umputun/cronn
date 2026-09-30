@@ -161,6 +161,33 @@ func TestInspector_DockedOnWideScreens(t *testing.T) {
 	assert.False(t, visible)
 }
 
+func TestInspector_RunningChipStaysOnOneLine(t *testing.T) {
+	// the chip's run modifier matched the runs-list .run rule, which put its text in a 14px grid column
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobSlow)
+	setEnabled(t, id, true)
+	require.Eventually(t, func() bool { return !jobStatus(t, id).IsRunning }, 10*time.Second, 100*time.Millisecond)
+	startJob(t, id)
+
+	openInspector(t, page, jobSlow)
+	res, err := page.Evaluate(`() => {
+		const chips = [...document.querySelectorAll('#insp-live .chips .chip')];
+		const run = chips.find(c => c.textContent.includes('Running for'));
+		const on = document.querySelector('#insp-live .chips .chip.on');
+		if (!run || !on) return null;
+		const runW = run.getBoundingClientRect().width, rowW = run.parentElement.getBoundingClientRect().width;
+		return {runH: run.getBoundingClientRect().height, onH: on.getBoundingClientRect().height,
+			wide: runW >= rowW / 2, runW: runW, rowW: rowW};
+	}`)
+	require.NoError(t, err)
+	box, ok := res.(map[string]any)
+	require.True(t, ok, "the inspector shows a running chip next to the enabled chip, got %v", res)
+	assert.InDelta(t, box["onH"], box["runH"], 1, "the running chip is one line tall")
+	assert.Equal(t, false, box["wide"], "the running chip is as wide as its text, got %v of %v", box["runW"], box["rowW"])
+	require.Eventually(t, func() bool { return !jobStatus(t, id).IsRunning }, 10*time.Second, 100*time.Millisecond)
+}
+
 func TestInspector_WideLayoutAndEscape(t *testing.T) {
 	page := newPageSized(t, 1440, 460)
 	navigateToDashboard(t, page)

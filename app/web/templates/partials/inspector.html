@@ -39,7 +39,7 @@
      hx-swap="outerHTML">
     <div class="insp-state">
         <div class="chips">
-            {{if .Job.IsRunning}}<span class="chip run">Running for {{humanDuration (since .Job.LastRun)}}</span>
+            {{if .Job.IsRunning}}<span class="chip running">Running for {{humanDuration (since .Job.LastRun)}}</span>
             {{else if eq .Job.LastStatus.String "failed"}}<span class="chip fail">Last run failed{{with .Job.LastExitCode}} · exit {{deref .}}{{end}}</span>
             {{else if eq .Job.LastStatus.String "success"}}<span class="chip ok">Last run succeeded</span>
             {{else}}<span class="chip">Never ran</span>{{end}}

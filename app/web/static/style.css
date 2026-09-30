@@ -174,7 +174,7 @@ table.jobs { width: 100%; border-collapse: collapse; }
 .chip { font-size: 12px; padding: 2px 8px; border-radius: 5px; border: 1px solid var(--line-2); color: var(--muted); }
 .chip.fail { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 45%, transparent); background: color-mix(in srgb, var(--fail) 9%, transparent); }
 .chip.ok, .chip.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-.chip.run { color: var(--run); border-color: color-mix(in srgb, var(--run) 40%, transparent); }
+.chip.running { color: var(--run); border-color: color-mix(in srgb, var(--run) 40%, transparent); }
 .chip.off { color: var(--off); border-color: color-mix(in srgb, var(--off) 45%, transparent); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 13px; }

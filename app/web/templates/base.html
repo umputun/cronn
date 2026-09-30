@@ -4,6 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- swapped content gets its htmx handlers in the settle step; a delay leaves polled buttons dead for it -->
+    <meta name="htmx-config" content='{"defaultSettleDelay":0}'>
     <title>Cronn Dashboard</title>
     <meta name="description" content="Monitor and manage cron jobs with Cronn">
     <link rel="stylesheet" href="{{url "/static/style.css"}}">

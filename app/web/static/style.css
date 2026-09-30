@@ -158,7 +158,14 @@ table.jobs { width: 100%; border-collapse: collapse; }
 .row2 { display: flex; align-items: center; gap: 10px; }
 .insp-h h3 { margin: 0; font-size: 17px; letter-spacing: -.01em; min-width: 0; overflow-wrap: anywhere; }
 .insp-h h3:focus { outline: none; }
+.view-toggle { width: 32px; height: 32px; display: grid; place-items: center; flex: none; border-radius: 6px; color: var(--dim); }
+.view-toggle:hover, .view-toggle[aria-pressed="true"] { color: var(--text); background: var(--panel-2); }
+.wide-toggle { margin-left: auto; }
+.wide-toggle[aria-pressed="true"]:not(:hover) { color: var(--dim); background: none; }
+.wide-toggle .i-collapse, #inspector.wide .wide-toggle .i-expand { display: none; }
+#inspector.wide .wide-toggle .i-collapse { display: block; }
 .x { margin-left: auto; color: var(--dim); font-size: 20px; width: 32px; height: 32px; display: grid; place-items: center; flex: none; border-radius: 6px; }
+.wide-toggle + .x { margin-left: 0; }
 .x:hover { background: var(--panel-2); color: var(--text); }
 .cmdlbl { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 12px 0 5px; }
 .cmdbox { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; font: 12.5px/1.55 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -181,12 +188,27 @@ table.jobs { width: 100%; border-collapse: collapse; }
 .run .ex { text-align: right; }
 .runs-none { padding: 8px 8px 12px; color: var(--dim); font-size: 12.5px; }
 .out { margin: 10px 18px 18px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
-.out-h { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 7px 11px; background: var(--panel-2); font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.out-h { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 7px 11px; background: var(--panel-2); font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
 .out-h b { color: var(--text); font-weight: 550; }
 .out-h .r { margin-left: auto; }
+.out-h .view-toggle { width: 24px; height: 24px; margin: -4px -6px -4px 0; border-radius: 5px; }
+.out-h .view-toggle svg { width: 15px; height: 15px; }
+.out-h .view-toggle:hover, .out-h .view-toggle[aria-pressed="true"] { background: var(--line); }
 .out-cmd { padding: 7px 11px; font: 11.5px var(--mono); color: var(--dim); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .out-cmd b { color: var(--muted); font-weight: 500; }
 .out pre { margin: 0; padding: 11px; font: 12px/1.6 var(--mono); background: var(--out-bg); color: var(--out-text); overflow-x: auto; white-space: pre; max-height: 420px; }
+#inspector.wrap .out pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.app:has(#inspector.wide .insp) .scrim { display: block; position: fixed; inset: 0; background: rgba(5, 7, 10, .6); z-index: 10; }
+#inspector.wide .insp { position: fixed; top: 0; right: 0; bottom: 0; width: min(1400px, 96vw); height: auto; z-index: 11; box-shadow: -24px 0 60px rgba(0, 0, 0, .45); display: grid; grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+#inspector.wide .insp-h { grid-column: 1 / -1; padding-top: 8px; padding-bottom: 6px; }
+#inspector.wide .cmdlbl { margin: 4px 0 2px; }
+#inspector.wide .cmdbox { padding: 5px 9px; }
+#inspector.wide #insp-live { min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); }
+#inspector.wide .runs { max-height: none; overflow: visible; }
+#inspector.wide #insp-output { min-height: 0; display: flex; }
+#inspector.wide .out { flex: 1; min-height: 0; }
+#inspector.wide .out pre { flex: 1; min-height: 0; max-height: none; overflow: auto; }
 .empty-out { padding: 18px 11px; color: var(--dim); font-size: 12.5px; }
 
 /* toasts */
@@ -238,6 +260,8 @@ dialog::backdrop { background: rgba(5, 7, 10, .6); }
 /* narrow laptop, tablet: inspector overlays the table, schedule folds into the job cell, touch-sized controls */
 @container app (max-width: 1179px) {
     .work:has(#inspector .insp) { display: block; min-height: 0; }
+    #inspector.wide .insp { grid-template-rows: auto auto minmax(0, 1fr); }
+    #inspector.wide .insp-back { grid-column: 1 / -1; }
     .c-sched, .c-last, .c-next { display: none; }
     .c-time { display: table-cell; }
     .fold-sched { display: block; }
@@ -256,6 +280,10 @@ dialog::backdrop { background: rgba(5, 7, 10, .6); }
 }
 
 @container app (max-width: 720px) {
+    #inspector.wide .insp { display: flex; overflow-y: auto; }
+    #inspector.wide #insp-live { overflow: visible; border-right: 0; }
+    #inspector.wide #insp-output { display: block; }
+    #inspector.wide .out pre { max-height: none; }
     .search { order: 9; flex-basis: 100%; max-width: none; }
 }
 
@@ -277,7 +305,7 @@ dialog::backdrop { background: rgba(5, 7, 10, .6); }
     .c-time { grid-area: time; display: flex !important; flex-wrap: wrap; gap: 2px 16px; }
     .btn .lbl { display: none; }
     .c-act .btn { width: 44px; padding: 0; }
-    .insp { inset: 0; width: 100%; border-left: 0; box-shadow: none; }
+    .insp, #inspector.wide .insp { inset: 0; width: 100%; border-left: 0; box-shadow: none; }
     .insp-state .actions .btn { flex: 1; }
     .out { margin: 10px 12px 14px; }
     .insp-h, .kv { padding-left: 14px; padding-right: 14px; }

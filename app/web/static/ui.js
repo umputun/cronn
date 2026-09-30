@@ -1,5 +1,27 @@
-// browser behaviour htmx has no attribute for: focus around the run dialog and the inspector, closing the
-// inspector without a request (it must work while polls fail), and marking a failed poll
+// browser behaviour htmx has no attribute for: focus and inert state around overlays, closing the inspector
+// without a request, browser-only inspector view preferences, and marking a failed poll
+
+const uiInspector = document.getElementById('inspector');
+try {
+    uiInspector.classList.toggle('wide', localStorage.getItem('cronn-inspector-wide') === 'true');
+    uiInspector.classList.toggle('wrap', localStorage.getItem('cronn-inspector-wrap') !== 'false');
+} catch {
+    uiInspector.classList.add('wrap');
+}
+
+function uiSyncInspectorButtons() {
+    for (const mode of ['wide', 'wrap']) {
+        const button = uiInspector.querySelector('.' + mode + '-toggle');
+        if (button) button.setAttribute('aria-pressed', String(uiInspector.classList.contains(mode)));
+    }
+}
+
+function uiToggleInspectorMode(mode) {
+    const enabled = uiInspector.classList.toggle(mode);
+    try { localStorage.setItem('cronn-inspector-' + mode, String(enabled)); } catch {}
+    uiSyncInspectorButtons();
+    if (mode === 'wide') uiSyncCovered();
+}
 
 // uiRestoreFocus focuses the job's row button, re-found by id because polling replaces the opener. A row that
 // is gone (filtered out, removed) or covered by the inspector falls back to the inspector heading, then search
@@ -43,8 +65,7 @@ function uiSetCovered(covered) {
     });
 }
 
-// uiSyncCovered marks the page inert while the inspector overlays it (the CSS decides by width, so this runs on
-// open and on every resize). Focus left on a control that just became covered moves to the inspector heading
+// uiSyncCovered marks the page inert while the inspector overlays it; focus left behind moves to its heading
 function uiSyncCovered() {
     const insp = document.querySelector('#inspector .insp');
     const covered = !!insp && getComputedStyle(insp).position === 'fixed';
@@ -65,10 +86,13 @@ window.addEventListener('resize', function () {
     });
 });
 
-// uiInspectorSwapped moves focus into a newly opened inspector, or back to search when a removed job closed it;
-// its own polling swaps are ignored
+// uiInspectorSwapped restores view buttons after swaps and moves focus only when the whole panel changes
 function uiInspectorSwapped(panel, evt) {
-    if (evt.detail.target !== panel) return;
+    if (evt.detail.target !== panel) {
+        if (evt.detail.target.id === 'insp-output') uiSyncInspectorButtons();
+        return;
+    }
+    uiSyncInspectorButtons();
     uiSyncCovered();
     const heading = panel.querySelector('[data-focus]');
     if (heading) {
@@ -90,6 +114,12 @@ function uiCloseInspector() {
     document.querySelectorAll('tr.row.sel').forEach(function (row) { row.classList.remove('sel'); });
     uiRestoreFocus(jobID);
 }
+
+document.addEventListener('keydown', function (evt) {
+    if (evt.key !== 'Escape' || document.querySelector('dialog[open]') || !uiInspector.querySelector('.insp')) return;
+    evt.preventDefault();
+    uiCloseInspector();
+});
 
 // uiPollDone marks the page when the table poll itself failed; requests from controls inside bubble here too
 function uiPollDone(container, evt) {

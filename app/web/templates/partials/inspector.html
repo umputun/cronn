@@ -8,6 +8,15 @@
         <div class="row2">
             <span class="dot {{template "job-dot" .Job}}" aria-hidden="true"></span>
             <h3 tabindex="-1" data-focus>{{template "job-name" .Job}}</h3>
+            <button class="view-toggle wide-toggle" type="button" aria-label="Wide inspector" aria-pressed="false"
+                    title="Wide inspector" hx-on:click="uiToggleInspectorMode('wide')">
+                <svg class="i-expand" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M9 4H4v5m0-5 6 6M15 20h5v-5m0 5-6-6"/>
+                </svg>
+                <svg class="i-collapse" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M4 10h6V4m0 6L3 3M20 14h-6v6m0-6 7 7"/>
+                </svg>
+            </button>
             <button class="x" aria-label="Close inspector" hx-on:click="uiCloseInspector()">×</button>
         </div>
         <div class="cmdlbl">Job command</div>
@@ -78,6 +87,12 @@
         <b>Run {{.Run.StartedAt.Format "15:04:05"}}</b>
         <span>{{if .Run.ExecutedCommand}}manual{{else}}scheduled{{end}}</span>
         <span class="r{{if ne .Run.ExitCode 0}} bad{{end}}">exit {{.Run.ExitCode}} · {{runDuration (.Run.FinishedAt.Sub .Run.StartedAt)}}</span>
+        <button class="view-toggle wrap-toggle" type="button" aria-label="Wrap log lines" aria-pressed="true"
+                title="Wrap log lines" hx-on:click="uiToggleInspectorMode('wrap')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M3 6h18M3 10h18M3 14h12a3 3 0 0 1 0 6h-3m3-3-3 3 3 3M3 20h5"/>
+            </svg>
+        </button>
     </div>
     <div class="out-cmd"><b>{{.CommandLabel}}:</b> {{.Command}}</div>
     {{if .Run.Output}}

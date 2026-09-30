@@ -2,7 +2,7 @@
 
 ## Overview
 - replace the card/list dashboard with one responsive job table and a job inspector panel, per the approved
-  mockup in `docs/plans/dashboard-redesign/proposal.html` (open it with `docs/plans/dashboard-redesign/` as the
+  mockup in `docs/plans/completed/dashboard-redesign/proposal.html` (open it with `docs/plans/completed/dashboard-redesign/` as the
   asset directory; `harness.html` shows the three layouts at full width)
 - problems solved: diagnosis split across three dialogs (details, history, logs) with exit code hidden for
   silent failures; jobs identified only by cron expression and a clipped command; Run now silently drops
@@ -104,7 +104,7 @@ If a previous task shipped a violation (spotted later by user, reviewer, or your
   (`container: app / inline-size`) give three layouts: inspector docked beside the table at 1180px and up;
   below that the schedule folds under the command, Last/Next share one labelled column, and the inspector
   overlays the table; under 600px rows become two-line blocks and the inspector is full screen with a Back
-  bar. Controls are 44px below 1180px. The mockup's `docs/plans/dashboard-redesign/gen/dash.css` rules are the reference
+  bar. Controls are 44px below 1180px. The mockup's `docs/plans/completed/dashboard-redesign/gen/dash.css` rules are the reference
 - **one render path**: `Server.renderJobs` builds the table, filter tabs, counts, match count, empty state and
   selected-row mark for every request that changes the list (poll, search, filter, sort, toggle, run)
 - **inspector** lives in a permanent `#inspector` target outside the polled `#jobs-container`. The job name in
@@ -373,7 +373,7 @@ Tests:
 - [x] run tests - must pass before next task
 
 ### Task 4: Verify acceptance criteria
-- [x] verify all requirements from Overview are implemented; compare against `docs/plans/dashboard-redesign/proposal.html`
+- [x] verify all requirements from Overview are implemented; compare against `docs/plans/completed/dashboard-redesign/proposal.html`
 - [x] verify the only `*.js` files in `app/web/static/` are `htmx.min.js` and `ui.js`, and every inline `hx-on` and `ui.js`
       function is one listed in Technical Details
 - [x] run full test suite: `cd app && go test -race -count=1 ./...`
@@ -387,7 +387,7 @@ Tests:
 - [x] update README.md (web UI section: inspector, filters, run form, readable schedules, job names)
 - [x] update CLAUDE.md (web UI architecture: single table, container queries, inspector state, no app.js;
       drop `ViewMode` from the enums list and view-mode from Cookie-Based Preferences)
-- [ ] move this plan to `docs/plans/completed/` together with `docs/plans/dashboard-redesign/`
+- [x] move this plan to `docs/plans/completed/` together with `docs/plans/dashboard-redesign/`
 
 ## Post-Completion
 *Items requiring manual intervention or external systems - no checkboxes, informational only*

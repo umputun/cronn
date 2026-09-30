@@ -215,9 +215,12 @@ func envOr(name, def string) string {
 func checkPortFree(port string) error {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return err
+		return fmt.Errorf("listen on port %s: %w", port, err)
 	}
-	return ln.Close()
+	if err := ln.Close(); err != nil {
+		return fmt.Errorf("close listener on port %s: %w", port, err)
+	}
+	return nil
 }
 
 func waitForServer(url string, timeout time.Duration) error {
@@ -481,9 +484,9 @@ func TestDashboard_ShowsJobsByName(t *testing.T) {
 	assert.Equal(t, totalJobs, count)
 
 	for _, name := range []string{jobFiveMin, jobHourly, jobWeekday, jobFailing, jobSlow} {
-		visible, err := row(page, name).IsVisible()
-		require.NoError(t, err)
-		assert.True(t, visible, "row for %q should be visible", name)
+		rowVisible, rowErr := row(page, name).IsVisible()
+		require.NoError(t, rowErr)
+		assert.True(t, rowVisible, "row for %q should be visible", name)
 	}
 
 	cmd, err := row(page, jobHourly).Locator(".cmd").TextContent()

@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,8 +29,10 @@ func selectSort(t *testing.T, page playwright.Page, mode string) {
 	_, err := page.Evaluate(`() => { document.querySelector('select[name=sort]').dataset.stale = '1' }`)
 	require.NoError(t, err)
 	_, err = page.ExpectResponse(`**/api/sort-mode`, func() error {
-		_, e := page.Locator("select[name=sort]").SelectOption(playwright.SelectOptionValues{Values: &[]string{mode}})
-		return e
+		if _, e := page.Locator("select[name=sort]").SelectOption(playwright.SelectOptionValues{Values: &[]string{mode}}); e != nil {
+			return fmt.Errorf("select sort mode %s: %w", mode, e)
+		}
+		return nil
 	})
 	require.NoError(t, err)
 	_, err = page.WaitForFunction(`() => {

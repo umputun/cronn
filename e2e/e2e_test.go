@@ -417,9 +417,19 @@ func clickAndAwait(t *testing.T, page playwright.Page, loc playwright.Locator, u
 
 func openInspector(t *testing.T, page playwright.Page, name string) playwright.Locator {
 	t.Helper()
-	clickAndAwait(t, page, row(page, name).Locator(".job-open"), inspectorRe)
+	// one click, and only this job's open response: a retry or the live poll would hide a dropped click
+	id := jobID(t, page, name)
+	openRe := regexp.MustCompile(`/api/jobs/` + id + `/inspector\?.*selected-job=`)
+	_, err := page.ExpectResponse(openRe, func() error {
+		return row(page, name).Locator(".job-open").Click(playwright.LocatorClickOptions{Timeout: new(3000.0)})
+	}, playwright.PageExpectResponseOptions{Timeout: new(4000.0)})
+	require.NoError(t, err)
 	insp := page.Locator("#inspector .insp")
 	waitVisible(t, insp)
+	require.Eventually(t, func() bool {
+		got, e := insp.GetAttribute("data-job-id")
+		return e == nil && got == id
+	}, 3*time.Second, 50*time.Millisecond, "the inspector shows the job that was clicked")
 	return insp
 }
 

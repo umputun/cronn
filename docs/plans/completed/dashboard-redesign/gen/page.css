@@ -1,0 +1,81 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+.doc { max-width: 1480px; margin: 0 auto; padding: 36px 32px 80px; }
+h1 { font-size: 30px; letter-spacing: -.02em; margin: 0 0 6px; line-height: 1.2; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .14em; color: var(--accent); margin: 56px 0 16px; font-weight: 600; }
+.lede { color: var(--muted); max-width: 900px; font-size: 15px; margin: 0; }
+code { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.cap { color: var(--dim); font-size: 12.5px; margin: 8px 2px 0; max-width: 900px; }
+.note { color: var(--dim); font-size: 12.5px; margin-top: 10px; }
+
+.before { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; }
+.before figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.before img { width: 100%; display: block; }
+.before figcaption { padding: 10px 12px; color: var(--muted); font-size: 12.5px; }
+
+.problems { counter-reset: p; display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.problem { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; position: relative; }
+.problem::before { counter-increment: p; content: counter(p); position: absolute; top: 14px; right: 16px; font: 600 26px var(--mono); color: var(--line-2); }
+.problem b { display: block; font-size: 14.5px; margin-bottom: 8px; padding-right: 26px; }
+.problem p { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.problem .ref { font: 11px var(--mono); color: var(--dim); overflow-wrap: anywhere; }
+
+.frame { border: 1px solid var(--line-2); border-radius: 12px; overflow: hidden; background: var(--bg); box-shadow: 0 30px 80px -30px #000; width: 100%; }
+.chrome { height: 30px; background: #0d1117; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 7px; padding: 0 14px; overflow: hidden; }
+.chrome i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); flex: none; }
+.chrome span { margin-left: 12px; font: 11.5px var(--mono); color: var(--dim); white-space: nowrap; }
+.w { font-size: 11px; color: var(--accent); font-family: var(--mono); margin-left: auto !important; }
+
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 18px; align-items: start; }
+.pair .frame { max-width: 820px; }
+.phones { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px; justify-items: center; align-items: start; }
+.phone { width: 100%; max-width: 390px; height: 800px; border: 1px solid var(--line-2); border-radius: 36px; overflow: hidden; position: relative; background: var(--bg); padding-top: 14px; }
+.phone .app { height: 100%; }
+.frame .app, .phone .app, .card .app { transform: translateZ(0); }
+.phone.kb { background: #05070a; }
+.phone.kb .under { opacity: .35; height: 100%; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 250px; max-height: calc(100% - 250px - 24px); display: flex; flex-direction: column; }
+.keyboard { position: absolute; left: 0; right: 0; bottom: 0; height: 250px; background: #1c2029; border-top: 1px solid var(--line-2); padding: 10px 5px; display: grid; grid-template-rows: repeat(4, 1fr); gap: 8px; }
+.keyboard div { display: flex; gap: 5px; justify-content: center; }
+.keyboard i { flex: 1; max-width: 34px; background: #3a414d; border-radius: 5px; }
+.keyboard .wide i { max-width: none; }
+.phone-cap { max-width: 390px; }
+
+.edges { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px; align-items: start; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+
+table.cost { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.cost th { text-align: left; color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--line-2); }
+.cost td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.cost td:first-child { font-weight: 600; width: 28%; }
+.lvl { display: inline-block; white-space: nowrap; font: 600 11px var(--mono); padding: 1px 7px; border-radius: 4px; }
+.lvl.t { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.lvl.b { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.lvl.l { color: var(--dim); background: color-mix(in srgb, var(--dim) 15%, transparent); }
+.cost .muted { color: var(--muted); }
+
+@media (max-width: 1200px) {
+  .problems { grid-template-columns: repeat(2, 1fr); }
+  .before { grid-template-columns: 1fr 1fr; }
+  .before figure:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 700px) {
+  .doc { padding: 20px 16px 60px; }
+  h1 { font-size: 24px; }
+  h2 { margin-top: 40px; }
+  .problems, .before { grid-template-columns: 1fr; }
+  .cost thead { display: none; }
+  .cost, .cost tbody, .cost tr, .cost td { display: block; width: auto !important; }
+  .cost tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .cost td { border: 0; padding: 3px 0; }
+  .phone { height: 760px; }
+}
+
+/* the phone frame stands in for the viewport; the real page uses @media (max-height: 520px) */
+.phone.kb { container: ph / size; }
+@container ph (max-height: 520px) {
+  .sheet .grab, .sheet .rf-h p { display: none; }
+  .sheet .rf-h { padding: 10px 18px 2px; }
+  .sheet .rf-b { padding: 8px 18px; }
+  .sheet .rf-f { padding: 8px 18px 10px; }
+}

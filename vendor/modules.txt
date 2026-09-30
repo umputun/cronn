@@ -86,6 +86,10 @@ github.com/jmoiron/sqlx
 github.com/jmoiron/sqlx/reflectx
 # github.com/kr/text v0.2.0
 ## explicit
+# github.com/lnquy/cron v1.1.1
+## explicit; go 1.11
+github.com/lnquy/cron
+github.com/lnquy/cron/i18n
 # github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e
 ## explicit; go 1.21
 github.com/lufia/plan9stats

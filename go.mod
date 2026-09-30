@@ -12,6 +12,7 @@ require (
 	github.com/go-pkgz/syncs v1.3.2
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jmoiron/sqlx v1.4.0
+	github.com/lnquy/cron v1.1.1
 	github.com/playwright-community/playwright-go v0.5700.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v4 v4.26.5

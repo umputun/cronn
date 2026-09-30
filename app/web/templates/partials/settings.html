@@ -1,12 +1,14 @@
 {{define "settings-modal"}}
-<div class="settings-modal">
+<dialog class="settings-modal" aria-labelledby="settings-title" closedby="any" hx-on:close="uiDialogClosed(this)">
     <div class="modal-header">
-        <h2>Settings & About</h2>
-        <button class="modal-close" onclick="document.getElementById('settings-modal').style.display='none'">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </button>
+        <h2 id="settings-title">Settings & About</h2>
+        <form method="dialog">
+            <button class="modal-close" aria-label="Close">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
+        </form>
     </div>
 
     <div class="modal-body">
@@ -197,5 +199,5 @@
         </div>
         {{end}}
     </div>
-</div>
+</dialog>
 {{end}}

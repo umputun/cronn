@@ -221,24 +221,21 @@ func TestServer_Templates(t *testing.T) {
 		main := tmpl.Lookup("main")
 		assert.NotNil(t, main, "main template should be defined")
 
-		jobsCards := tmpl.Lookup("jobs-cards")
-		assert.NotNil(t, jobsCards, "jobs-cards template should be defined")
-
-		jobsList := tmpl.Lookup("jobs-list")
-		assert.NotNil(t, jobsList, "jobs-list template should be defined")
+		for _, name := range []string{"jobs-table", "jobs-controls", "failing-alert", "inspector", "inspector-live",
+			"run-output", "run-form", "settings-modal"} {
+			assert.NotNil(t, tmpl.Lookup(name), "%s template should be defined", name)
+		}
+		assert.Nil(t, tmpl.Lookup("jobs-cards"))
+		assert.Nil(t, tmpl.Lookup("jobs-list"))
 	})
 
-	// test template execution
-	t.Run("execute jobs-cards template", func(t *testing.T) {
+	t.Run("execute jobs-table template", func(t *testing.T) {
 		tmpl := server.templates["base.html"]
 		require.NotNil(t, tmpl)
-		jobsCards := tmpl.Lookup("jobs-cards")
-		require.NotNil(t, jobsCards)
+		jobsTable := tmpl.Lookup("jobs-table")
+		require.NotNil(t, jobsTable)
 
-		data := struct {
-			Jobs           []persistence.JobInfo
-			ManualDisabled bool
-		}{
+		data := TemplateData{
 			Jobs: []persistence.JobInfo{
 				{
 					ID:         "test123",
@@ -251,17 +248,17 @@ func TestServer_Templates(t *testing.T) {
 					Enabled:    true,
 				},
 			},
-			ManualDisabled: false,
 		}
 
 		var buf strings.Builder
-		err := jobsCards.Execute(&buf, data)
+		err := jobsTable.Execute(&buf, data)
 		require.NoError(t, err)
 
 		output := buf.String()
 		assert.Contains(t, output, "echo test")
 		assert.Contains(t, output, "* * * * *")
-		assert.Contains(t, output, "status-success")
+		assert.Contains(t, output, "Every minute")
+		assert.Contains(t, output, `<span class="dot ok"`)
 	})
 }
 
@@ -269,22 +266,41 @@ func TestTemplateHelpers(t *testing.T) {
 	// create a minimal server instance for testing
 	s := &Server{}
 
-	t.Run("humanTime", func(t *testing.T) {
-		tests := []struct {
-			name     string
-			input    time.Time
-			expected string
-		}{
-			{name: "zero time", input: time.Time{}, expected: "Never"},
-			{name: "valid time", input: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC), expected: "Jan 15, 14:30:45"},
-		}
+	t.Run("ago", func(t *testing.T) {
+		assert.Equal(t, "never", s.ago(time.Time{}))
+		assert.Equal(t, "just now", s.ago(time.Now().Add(-2*time.Second)))
+		assert.Equal(t, "45s ago", s.ago(time.Now().Add(-45*time.Second)))
+		assert.Equal(t, "3m ago", s.ago(time.Now().Add(-3*time.Minute-10*time.Second)))
+		assert.Equal(t, "2d ago", s.ago(time.Now().Add(-50*time.Hour)))
+	})
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				result := s.humanTime(tt.input)
-				assert.Equal(t, tt.expected, result)
-			})
+	t.Run("runDuration", func(t *testing.T) {
+		tbl := []struct {
+			in   time.Duration
+			want string
+		}{
+			{-time.Second, "0.0s"},
+			{100 * time.Millisecond, "0.1s"},
+			{2 * time.Second, "2.0s"},
+			{4*time.Minute + 12*time.Second, "4m 12s"},
+			{time.Hour + 5*time.Minute + 30*time.Second, "1h 5m"},
 		}
+		for _, tt := range tbl {
+			assert.Equal(t, tt.want, s.runDuration(tt.in), tt.in.String())
+		}
+	})
+
+	t.Run("clock", func(t *testing.T) {
+		assert.Empty(t, s.clock(time.Time{}))
+		today := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 16, 53, 0, 0, time.Local)
+		assert.Equal(t, "16:53", s.clock(today))
+		assert.Equal(t, "Sep 30 02:00", s.clock(time.Date(1999, 9, 30, 2, 0, 0, 0, time.Local)))
+	})
+
+	t.Run("deref", func(t *testing.T) {
+		code := -1
+		assert.Equal(t, -1, s.deref(&code))
+		assert.Equal(t, 0, s.deref(nil))
 	})
 
 	t.Run("humanDuration", func(t *testing.T) {
@@ -333,27 +349,6 @@ func TestTemplateHelpers(t *testing.T) {
 			assert.Contains(t, []string{"5m", "4m"}, result)
 		})
 	})
-
-	t.Run("truncate", func(t *testing.T) {
-		tests := []struct {
-			name     string
-			input    string
-			length   int
-			expected string
-		}{
-			{name: "short string", input: "hello", length: 10, expected: "hello"},
-			{name: "exact length", input: "hello", length: 5, expected: "hello"},
-			{name: "long string", input: "hello world", length: 5, expected: "hello..."},
-			{name: "empty string", input: "", length: 5, expected: ""},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				result := s.truncate(tt.input, tt.length)
-				assert.Equal(t, tt.expected, result)
-			})
-		}
-	})
 }
 
 func TestServer_render_ErrorHandling(t *testing.T) {
@@ -401,49 +396,6 @@ func TestServer_render_ErrorHandling(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Contains(t, rec.Body.String(), "<div>Test</div>")
-	})
-}
-
-func TestServer_getViewMode_CookieErrors(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	// create a dummy provider for testing
-	crontabFile := filepath.Join(tmpDir, "dummy")
-	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
-	parser := crontab.New(crontabFile, 0, nil)
-
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   parser,
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	t.Run("invalid view mode value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
-		req.AddCookie(&http.Cookie{
-			Name:  "view-mode",
-			Value: "invalid-mode",
-		})
-
-		mode := server.getViewMode(req)
-		assert.Equal(t, enums.ViewModeCards, mode) // should return default
-	})
-
-	t.Run("empty cookie value", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", http.NoBody)
-		req.AddCookie(&http.Cookie{
-			Name:  "view-mode",
-			Value: "",
-		})
-
-		mode := server.getViewMode(req)
-		assert.Equal(t, enums.ViewModeCards, mode) // should return default
 	})
 }
 
@@ -790,15 +742,14 @@ func TestServer_BaseURL(t *testing.T) {
 		require.NoError(t, err)
 		defer server.store.Close()
 
-		// test view mode toggle sets cookie with correct path
-		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
+		req := httptest.NewRequest("POST", "/api/sort-mode", strings.NewReader("sort=lastrun"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
-		server.handleViewModeToggle(rec, req)
+		server.handleSortModeChange(rec, req)
 
 		cookies := rec.Result().Cookies()
 		require.Len(t, cookies, 1)
-		assert.Equal(t, "view-mode", cookies[0].Name)
+		assert.Equal(t, "sort-mode", cookies[0].Name)
 		assert.Equal(t, "/cronn/", cookies[0].Path)
 	})
 

@@ -43,6 +43,25 @@ func TestServer_Authentication(t *testing.T) {
 		assert.Equal(t, "/login", rec.Header().Get("Location"))
 	})
 
+	t.Run("htmx request without auth gets HX-Redirect to login", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
+		req.Header.Set("HX-Request", "true")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Equal(t, "/login", rec.Header().Get("HX-Redirect"))
+		assert.Empty(t, rec.Header().Get("Location"))
+	})
+
+	t.Run("curl without auth keeps the 401", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/jobs/x/run", http.NoBody)
+		req.Header.Set("Accept", "*/*")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Empty(t, rec.Header().Get("HX-Redirect"))
+	})
+
 	t.Run("with wrong password returns 401 for API", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
 		req.Header.Set("Accept", "application/json")

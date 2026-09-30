@@ -3,9 +3,11 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -15,270 +17,191 @@ import (
 	"github.com/umputun/cronn/app/web/persistence"
 )
 
+// jobsQuery selects which jobs the dashboard shows and in what order
+type jobsQuery struct {
+	sort   enums.SortMode
+	filter enums.FilterMode
+	search string
+}
+
+// inspectorData is the template data of the job inspector panel
+type inspectorData struct {
+	Job            persistence.JobInfo
+	Runs           []persistence.ExecutionInfo
+	SelectedRun    int
+	ManualDisabled bool
+	Output         *runOutputData // output of the selected run, nil when the job has no runs
+}
+
+// runOutputData is the template data of one run's output in the inspector
+type runOutputData struct {
+	JobID        string
+	Run          persistence.ExecutionInfo
+	Command      string
+	CommandLabel string
+}
+
+// runForm is the template data of the manual run dialog
+type runForm struct {
+	JobID           string
+	Name            string
+	Command         string
+	Date            string
+	HasTemplates    bool
+	CommandEditable bool
+	Error           string
+}
+
+// filterTab is one filter tab of the dashboard
+type filterTab struct {
+	Mode   string
+	Label  string
+	Dot    string
+	Count  int
+	Active bool
+}
+
+// runError is a rejected manual run with the status code and text curl callers get
+type runError struct {
+	status int
+	msg    string
+}
+
+// inspectorRuns is how many recent runs the inspector lists
+const inspectorRuns = 50
+
 // handleDashboard renders the main dashboard
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	theme := s.getTheme(r)
-	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), "")
-
-	data := s.newTemplateData(r)
-	data.Jobs = stats.jobs
+	q := jobsQuery{sort: s.getSortMode(r), filter: s.getFilterMode(r)}
+	data := s.jobsTemplateData(r, q)
 	data.CurrentYear = time.Now().Year()
-	data.Theme = theme
-	data.RunningCount = stats.runningCount
-	data.NextRunTime = stats.nextRunTime
-	data.TotalCount = stats.totalCount
-	data.SuccessCount = stats.successCount
-	data.FailedCount = stats.failedCount
-	data.IdleCount = stats.idleCount
+	data.Theme = s.getTheme(r)
 	data.AuthEnabled = s.passwordHash != ""
 	data.Version = shortVersion(s.version)
 	data.FullVersion = s.version
-
 	s.render(w, "base.html", "base", data)
 }
 
-// getJobsWithStats retrieves jobs with calculated stats and applies filtering
-func (s *Server) getJobsWithStats(sortMode enums.SortMode, filterMode enums.FilterMode, searchTerm string) jobsStats {
+// getJobsWithStats retrieves jobs with counts and applies search, filter and sort
+func (s *Server) getJobsWithStats(q jobsQuery) jobsStats {
 	s.jobsMu.RLock()
 	allJobs := make([]persistence.JobInfo, 0, len(s.jobs))
-	runningCount := 0
-	successCount := 0
-	failedCount := 0
-	idleCount := 0
-	var nearestNextRun *time.Time
-
-	// first collect all jobs and calculate stats
 	for _, job := range s.jobs {
-		// work with a copy, recalculate next run times for enabled jobs only
 		jobCopy := job
 		if jobCopy.Enabled {
 			s.updateNextRun(&jobCopy)
 		}
 		allJobs = append(allJobs, jobCopy)
-
-		// count running jobs
-		if jobCopy.IsRunning {
-			runningCount++
-		}
-
-		// count jobs by last status; running jobs have LastStatus running, so they fall out of these
-		switch jobCopy.LastStatus {
-		case enums.JobStatusSuccess:
-			successCount++
-		case enums.JobStatusFailed:
-			failedCount++
-		case enums.JobStatusIdle:
-			idleCount++
-		}
-
-		// find nearest next run (skip disabled jobs)
-		if jobCopy.Enabled && !jobCopy.NextRun.IsZero() {
-			if nearestNextRun == nil || jobCopy.NextRun.Before(*nearestNextRun) {
-				nearestNextRun = &jobCopy.NextRun
-			}
-		}
 	}
 	s.jobsMu.RUnlock()
 
-	// store total count before filtering
-	totalCount := len(allJobs)
-
-	// apply search first, then status filtering
-	jobs := s.searchJobs(allJobs, searchTerm)
-	jobs = s.filterJobs(jobs, filterMode)
-
-	// sort jobs based on selected mode
-	s.sortJobs(jobs, sortMode)
-
-	// format next run time
-	nextRunTime := "-"
-	if nearestNextRun != nil {
-		nextRunTime = s.humanTime(*nearestNextRun)
+	stats := jobsStats{totalCount: len(allJobs)}
+	for _, job := range allJobs {
+		if !job.Enabled {
+			stats.disabledCount++
+			continue
+		}
+		if job.IsRunning {
+			stats.runningCount++
+		}
+		switch job.LastStatus {
+		case enums.JobStatusSuccess:
+			stats.successCount++
+		case enums.JobStatusFailed:
+			stats.failedCount++
+			stats.failing = append(stats.failing, job)
+		case enums.JobStatusIdle:
+			stats.idleCount++
+		}
 	}
+	s.sortJobs(stats.failing, enums.SortModeLastrun)
 
-	return jobsStats{
-		jobs:         jobs,
-		runningCount: runningCount,
-		nextRunTime:  nextRunTime,
-		totalCount:   totalCount,
-		successCount: successCount,
-		failedCount:  failedCount,
-		idleCount:    idleCount,
+	searched := s.searchJobs(allJobs, q.search)
+	stats.jobs = s.filterJobs(searched, q.filter)
+	if len(stats.jobs) == 0 && q.search != "" {
+		stats.hiddenBySearch = len(s.filterJobs(allJobs, q.filter))
 	}
+	s.sortJobs(stats.jobs, q.sort)
+	return stats
 }
 
-// handleJobsPartial returns the jobs list partial for HTMX polling
-func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
-	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
-
+// jobsTemplateData builds template data for the job list from the query and the request's selection state
+func (s *Server) jobsTemplateData(r *http.Request, q jobsQuery) TemplateData {
+	stats := s.getJobsWithStats(q)
 	data := s.newTemplateData(r)
+	data.SortMode = q.sort
+	data.FilterMode = q.filter
+	data.Search = q.search
 	data.Jobs = stats.jobs
-	data.RunningCount = stats.runningCount
-	data.NextRunTime = stats.nextRunTime
+	data.Failing = stats.failing
 	data.TotalCount = stats.totalCount
+	data.RunningCount = stats.runningCount
 	data.SuccessCount = stats.successCount
 	data.FailedCount = stats.failedCount
 	data.IdleCount = stats.idleCount
-	data.IsOOB = true // enable OOB for stats updates
+	data.DisabledCount = stats.disabledCount
+	data.MatchCount = len(stats.jobs)
+	data.HiddenBySearch = stats.hiddenBySearch
+	data.SelectedJob = r.FormValue("selected-job")
+	data.Tabs = []filterTab{
+		{Mode: "all", Label: "All", Count: stats.totalCount},
+		{Mode: "failed", Label: "Failed", Dot: "fail", Count: stats.failedCount},
+		{Mode: "running", Label: "Running", Dot: "running", Count: stats.runningCount},
+		{Mode: "success", Label: "Succeeded", Dot: "ok", Count: stats.successCount},
+		{Mode: "idle", Label: "Never ran", Dot: "never", Count: stats.idleCount},
+		{Mode: "disabled", Label: "Disabled", Dot: "off", Count: stats.disabledCount},
+	}
+	for i := range data.Tabs {
+		data.Tabs[i].Active = data.Tabs[i].Mode == q.filter.String()
+	}
+	return data
+}
 
-	// render jobs partial with stats updates
-	if err := s.renderJobsWithStats(w, data); err != nil {
+// renderJobs is the one render path for the job table. It writes the table and out-of-band updates for the
+// counts and the failing-jobs alert; a filter or sort change also re-renders the controls with the new mode
+func (s *Server) renderJobs(w http.ResponseWriter, r *http.Request, q jobsQuery) error {
+	tmpl, ok := s.templates["partials/jobs.html"]
+	if !ok {
+		return fmt.Errorf("partials template not found")
+	}
+	data := s.jobsTemplateData(r, q)
+
+	parts := []string{"jobs-table", "failing-alert-oob", "jobs-counts-oob"}
+	if r.Method == http.MethodPost {
+		parts[2] = "jobs-controls-oob" // the controls carry the counts and the newly active tab and sort
+	}
+	if r.FormValue("reset-search") != "" {
+		parts = append(parts, "search-input-oob")
+	}
+
+	var buf bytes.Buffer
+	for _, name := range parts {
+		if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+			return fmt.Errorf("failed to render %s: %w", name, err)
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if _, err := buf.WriteTo(w); err != nil {
+		log.Printf("[WARN] failed to write jobs response: %v", err)
+	}
+	return nil
+}
+
+// handleJobsPartial returns the job table for polling and search
+func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
+	q := jobsQuery{sort: s.getSortMode(r), filter: s.getFilterMode(r), search: r.FormValue("search")}
+	if err := s.renderJobs(w, r, q); err != nil {
 		log.Printf("[ERROR] failed to render jobs partial: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
 	}
 }
 
-// renderJobsWithStats renders the jobs template with OOB stats updates
-func (s *Server) renderJobsWithStats(w http.ResponseWriter, data TemplateData) error {
-	// determine template name based on view mode
-	tmplName := "jobs-cards"
-	if data.ViewMode == enums.ViewModeList {
-		tmplName = "jobs-list"
-	}
-
-	// get the template
-	tmpl, ok := s.templates["partials/jobs.html"]
-	if !ok {
-		return fmt.Errorf("partials template not found")
-	}
-
-	// render the jobs template
-	var jobsHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&jobsHTML, tmplName, data); err != nil {
-		return fmt.Errorf("failed to render jobs template: %w", err)
-	}
-
-	// render stats updates template
-	var statsHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&statsHTML, "stats-updates", data); err != nil {
-		return fmt.Errorf("failed to render stats updates: %w", err)
-	}
-
-	// render view mode button if OOB (for multi-tab sync during polling)
-	var buttonHTML bytes.Buffer
-	if data.IsOOB {
-		if err := tmpl.ExecuteTemplate(&buttonHTML, "view-mode-button", data); err != nil {
-			return fmt.Errorf("failed to render view mode button: %w", err)
-		}
-	}
-
-	// render total tile and breakdown if OOB to refresh status counts and active filter highlight during polling
-	var totalHTML bytes.Buffer
-	var breakdownHTML bytes.Buffer
-	if data.IsOOB {
-		if err := tmpl.ExecuteTemplate(&totalHTML, "stats-total", data); err != nil {
-			return fmt.Errorf("failed to render stats total: %w", err)
-		}
-		if err := tmpl.ExecuteTemplate(&breakdownHTML, "stats-breakdown", data); err != nil {
-			return fmt.Errorf("failed to render stats breakdown: %w", err)
-		}
-	}
-
-	// write response
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(jobsHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write jobs HTML: %v", err)
-	}
-	if _, err := w.Write(statsHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write stats HTML: %v", err)
-	}
-	if buttonHTML.Len() > 0 {
-		if _, err := w.Write(buttonHTML.Bytes()); err != nil {
-			log.Printf("[ERROR] failed to write button HTML: %v", err)
-		}
-	}
-	if totalHTML.Len() > 0 {
-		if _, err := w.Write(totalHTML.Bytes()); err != nil {
-			log.Printf("[ERROR] failed to write total HTML: %v", err)
-		}
-	}
-	if breakdownHTML.Len() > 0 {
-		if _, err := w.Write(breakdownHTML.Bytes()); err != nil {
-			log.Printf("[ERROR] failed to write breakdown HTML: %v", err)
-		}
-	}
-
-	return nil
-}
-
-// handleViewModeToggle toggles between card and list view
-func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := s.getViewMode(r)
-	newMode := enums.ViewModeList
-	if currentMode == enums.ViewModeList {
-		newMode = enums.ViewModeCards
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "view-mode",
-		Value:    newMode.String(),
-		Path:     s.cookiePath(),
-		MaxAge:   365 * 24 * 60 * 60, // 1 year
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	// get sorted jobs for the new view mode
-	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(s.getSortMode(r), s.getFilterMode(r), searchTerm)
-
-	// prepare template data
-	data := s.newTemplateData(r)
-	data.Jobs = stats.jobs
-	data.ViewMode = newMode
-	data.Theme = s.getTheme(r)
-	data.TotalCount = stats.totalCount
-	data.RunningCount = stats.runningCount
-	data.NextRunTime = stats.nextRunTime
-	data.SuccessCount = stats.successCount
-	data.FailedCount = stats.failedCount
-	data.IdleCount = stats.idleCount
-	data.CurrentYear = time.Now().Year()
-	data.IsOOB = true
-
-	// get the template
-	tmpl, ok := s.templates["partials/jobs.html"]
-	if !ok {
-		log.Printf("[WARN] partials template not found")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	// render the entire jobs container with correct class
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-
-	// render the container with the new view mode class
-	if err := tmpl.ExecuteTemplate(w, "jobs-container", data); err != nil {
-		log.Printf("[WARN] Failed to render view mode toggle response: %v", err)
-		return
-	}
-
-	// render stats updates as OOB
-	if err := tmpl.ExecuteTemplate(w, "stats-updates", data); err != nil {
-		log.Printf("[WARN] Failed to render stats updates: %v", err)
-		return
-	}
-
-	// render view mode button as OOB
-	if err := tmpl.ExecuteTemplate(w, "view-mode-button", data); err != nil {
-		log.Printf("[WARN] Failed to render view mode button: %v", err)
-		return
-	}
-}
-
 // handleThemeToggle toggles the theme
 func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
-	currentTheme := s.getTheme(r)
-
-	// toggle: light <-> dark
-	var nextTheme enums.Theme
-	if currentTheme == enums.ThemeLight {
+	nextTheme := enums.ThemeLight
+	if s.getTheme(r) == enums.ThemeLight {
 		nextTheme = enums.ThemeDark
-	} else {
-		nextTheme = enums.ThemeLight
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -295,105 +218,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleSortToggle toggles between sort modes
-func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := s.getSortMode(r)
-	nextMode := s.cycleSortMode(currentMode)
-	s.setSortCookie(w, nextMode)
-
-	// get sorted jobs for the new mode
-	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(nextMode, s.getFilterMode(r), searchTerm)
-
-	// prepare template data
-	data := s.newTemplateData(r)
-	data.Jobs = stats.jobs
-	data.SortMode = nextMode
-	data.RunningCount = stats.runningCount
-	data.NextRunTime = stats.nextRunTime
-	data.TotalCount = stats.totalCount
-	data.SuccessCount = stats.successCount
-	data.FailedCount = stats.failedCount
-	data.IdleCount = stats.idleCount
-
-	// render jobs and send response with OOB updates
-	if err := s.renderSortedJobs(w, data); err != nil {
-		log.Printf("[ERROR] failed to render sorted jobs: %v", err)
-		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
-	}
-}
-
-// renderSortedJobs renders the jobs template with OOB updates for sort button
-func (s *Server) renderSortedJobs(w http.ResponseWriter, data TemplateData) error {
-	// determine template name based on view mode
-	tmplName := "jobs-cards"
-	if data.ViewMode == enums.ViewModeList {
-		tmplName = "jobs-list"
-	}
-
-	// get the template
-	tmpl, ok := s.templates["partials/jobs.html"]
-	if !ok {
-		return fmt.Errorf("partials template not found")
-	}
-
-	// render the jobs template
-	var jobsHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&jobsHTML, tmplName, data); err != nil {
-		return fmt.Errorf("failed to render jobs template: %w", err)
-	}
-
-	// prepare data for sort button with OOB flag
-	buttonData := data
-	buttonData.IsOOB = true
-
-	// render sort button with OOB
-	var sortButtonHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&sortButtonHTML, "sort-button", buttonData); err != nil {
-		return fmt.Errorf("failed to render sort button template: %w", err)
-	}
-
-	// write response with all OOB updates
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := w.Write(jobsHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write jobs HTML: %v", err)
-	}
-	if _, err := w.Write(sortButtonHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write sort button HTML: %v", err)
-	}
-
-	return nil
-}
-
-// handleFilterToggle cycles through filter modes
-func (s *Server) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := s.getFilterMode(r)
-	nextMode := s.cycleFilterMode(currentMode)
-	s.setFilterCookie(w, nextMode)
-
-	// get filtered jobs for the new mode
-	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(s.getSortMode(r), nextMode, searchTerm)
-
-	// prepare template data
-	data := s.newTemplateData(r)
-	data.Jobs = stats.jobs
-	data.FilterMode = nextMode
-	data.RunningCount = stats.runningCount
-	data.NextRunTime = stats.nextRunTime
-	data.TotalCount = stats.totalCount
-	data.SuccessCount = stats.successCount
-	data.FailedCount = stats.failedCount
-	data.IdleCount = stats.idleCount
-
-	// render jobs and send response with OOB updates
-	if err := s.renderFilteredJobs(w, data); err != nil {
-		log.Printf("[ERROR] failed to render filtered jobs: %v", err)
-		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
-	}
-}
-
-// handleFilterModeChange sets a specific filter mode (used by the clickable status breakdown)
+// handleFilterModeChange sets the filter mode chosen from the filter tabs
 func (s *Server) handleFilterModeChange(w http.ResponseWriter, r *http.Request) {
 	filterMode, err := enums.ParseFilterMode(r.FormValue("filter"))
 	if err != nil {
@@ -402,249 +227,160 @@ func (s *Server) handleFilterModeChange(w http.ResponseWriter, r *http.Request) 
 	}
 	s.setFilterCookie(w, filterMode)
 
-	// get filtered jobs for the selected mode
-	searchTerm := r.FormValue("search")
-	stats := s.getJobsWithStats(s.getSortMode(r), filterMode, searchTerm)
-
-	// prepare template data
-	data := s.newTemplateData(r)
-	data.Jobs = stats.jobs
-	data.FilterMode = filterMode
-	data.RunningCount = stats.runningCount
-	data.NextRunTime = stats.nextRunTime
-	data.TotalCount = stats.totalCount
-	data.SuccessCount = stats.successCount
-	data.FailedCount = stats.failedCount
-	data.IdleCount = stats.idleCount
-
-	// render jobs and send response with OOB updates
-	if err := s.renderFilteredJobs(w, data); err != nil {
+	q := jobsQuery{sort: s.getSortMode(r), filter: filterMode, search: r.FormValue("search")}
+	if err := s.renderJobs(w, r, q); err != nil {
 		log.Printf("[ERROR] failed to render filtered jobs: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
 	}
 }
 
-// renderFilteredJobs renders the jobs template with OOB updates
-func (s *Server) renderFilteredJobs(w http.ResponseWriter, data TemplateData) error {
-	// determine template name based on view mode
-	tmplName := "jobs-cards"
-	if data.ViewMode == enums.ViewModeList {
-		tmplName = "jobs-list"
-	}
-
-	// get the template
-	tmpl, ok := s.templates["partials/jobs.html"]
-	if !ok {
-		return fmt.Errorf("partials template not found")
-	}
-
-	// render the jobs template
-	var jobsHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&jobsHTML, tmplName, data); err != nil {
-		return fmt.Errorf("failed to render jobs template: %w", err)
-	}
-
-	// prepare data for filter button with OOB flag
-	buttonData := data
-	buttonData.IsOOB = true
-
-	// render filter button with OOB
-	var filterButtonHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&filterButtonHTML, "filter-button", buttonData); err != nil {
-		return fmt.Errorf("failed to render filter button template: %w", err)
-	}
-
-	// render stats updates with OOB
-	statsData := TemplateData{
-		RunningCount: data.RunningCount,
-		NextRunTime:  data.NextRunTime,
-		TotalCount:   data.TotalCount,
-		SuccessCount: data.SuccessCount,
-		FailedCount:  data.FailedCount,
-		IdleCount:    data.IdleCount,
-		IsOOB:        true,
-	}
-	var statsHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&statsHTML, "stats-updates", statsData); err != nil {
-		return fmt.Errorf("failed to render stats updates template: %w", err)
-	}
-
-	// render total tile and breakdown with OOB to sync active filter highlight and status counts
-	var totalHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&totalHTML, "stats-total", buttonData); err != nil {
-		return fmt.Errorf("failed to render stats total template: %w", err)
-	}
-	var breakdownHTML bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&breakdownHTML, "stats-breakdown", buttonData); err != nil {
-		return fmt.Errorf("failed to render stats breakdown template: %w", err)
-	}
-
-	// write response with all OOB updates
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := w.Write(jobsHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write jobs HTML: %v", err)
-	}
-	if _, err := w.Write(filterButtonHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write filter button HTML: %v", err)
-	}
-	if _, err := w.Write(statsHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write stats HTML: %v", err)
-	}
-	if _, err := w.Write(totalHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write total HTML: %v", err)
-	}
-	if _, err := w.Write(breakdownHTML.Bytes()); err != nil {
-		log.Printf("[ERROR] failed to write breakdown HTML: %v", err)
-	}
-
-	return nil
-}
-
-// handleSortModeChange changes the sort mode
+// handleSortModeChange sets the sort mode chosen from the sort select
 func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
-	sortModeStr := r.FormValue("sort")
-
-	// parse and validate sort mode
-	sortMode, err := enums.ParseSortMode(sortModeStr)
+	sortMode, err := enums.ParseSortMode(r.FormValue("sort"))
 	if err != nil {
-		log.Printf("[WARN] invalid sort mode %q: %v", sortModeStr, err)
+		log.Printf("[WARN] invalid sort mode %q: %v", r.FormValue("sort"), err)
 		sortMode = enums.SortModeDefault
 	}
+	s.setSortCookie(w, sortMode)
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "sort-mode",
-		Value:    sortMode.String(),
-		Path:     s.cookiePath(),
-		MaxAge:   365 * 24 * 60 * 60, // 1 year
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	// return the jobs partial with sorted jobs
-	s.jobsMu.RLock()
-	jobs := make([]persistence.JobInfo, 0, len(s.jobs))
-	for _, job := range s.jobs {
-		// work with a copy, recalculate next run times
-		jobCopy := job
-		if jobCopy.Enabled {
-			s.updateNextRun(&jobCopy)
-		}
-		jobs = append(jobs, jobCopy)
+	q := jobsQuery{sort: sortMode, filter: s.getFilterMode(r), search: r.FormValue("search")}
+	if err := s.renderJobs(w, r, q); err != nil {
+		log.Printf("[ERROR] failed to render sorted jobs: %v", err)
+		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
 	}
-	s.jobsMu.RUnlock()
-
-	// sort jobs based on selected mode
-	s.sortJobs(jobs, sortMode)
-
-	data := s.newTemplateData(r)
-	data.Jobs = jobs
-	data.SortMode = sortMode
-
-	tmplName := "jobs-cards"
-	if data.ViewMode == enums.ViewModeList {
-		tmplName = "jobs-list"
-	}
-
-	// set header to tell HTMX to swap the jobs container
-	w.Header().Set("HX-Retarget", "#jobs-container")
-	w.Header().Set("HX-Reswap", "innerHTML")
-
-	s.render(w, "partials/jobs.html", tmplName, data)
 }
 
-// handleRunJob handles manual job trigger requests
-func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
-	jobID := r.PathValue("id")
-	if jobID == "" {
-		http.Error(w, "Job ID required", http.StatusBadRequest)
-		return
-	}
-
-	// check if manual job execution is disabled
+// handleRunForm renders the manual run dialog for a job
+func (s *Server) handleRunForm(w http.ResponseWriter, r *http.Request) {
 	if s.disableManual {
 		http.Error(w, "Manual job execution is disabled", http.StatusForbidden)
 		return
 	}
-
-	s.jobsMu.RLock()
-	job, exists := s.jobs[jobID]
-	s.jobsMu.RUnlock()
-
-	if !exists {
+	job, ok := s.jobByID(r.PathValue("id"))
+	if !ok {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
+	s.render(w, "partials/jobs.html", "run-form", s.newRunForm(job, job.Command, ""))
+}
 
-	if !job.Enabled {
-		http.Error(w, "Job is disabled", http.StatusBadRequest)
+// newRunForm builds the run dialog data for a job with the given command and date values
+func (s *Server) newRunForm(job persistence.JobInfo, command, date string) runForm {
+	return runForm{
+		JobID:           job.ID,
+		Name:            job.Name,
+		Command:         command,
+		Date:            date,
+		HasTemplates:    strings.Contains(job.Command, "{{") || strings.Contains(job.Command, "[["),
+		CommandEditable: !s.disableCommandEdit,
+	}
+}
+
+// handleRunJob handles manual job trigger requests. htmx requests get the run dialog back (with the error on
+// a rejection, empty with a toast on acceptance); other callers get the status code and plain text
+func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
+	if s.disableManual {
+		http.Error(w, "Manual job execution is disabled", http.StatusForbidden)
+		return
+	}
+	job, ok := s.jobByID(r.PathValue("id"))
+	if !ok {
+		s.writeRunError(w, r, runError{status: http.StatusNotFound, msg: "Job not found"})
 		return
 	}
 
-	if job.IsRunning {
-		http.Error(w, "Job already running", http.StatusConflict)
+	req, rerr := s.checkRun(r, job)
+	if rerr != nil {
+		s.writeRunError(w, r, *rerr)
 		return
 	}
 
-	// check if manual trigger channel is available
-	if s.manualTrigger == nil {
-		http.Error(w, "Manual trigger not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	// parse form data
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
-		return
-	}
-
-	// get command from form, fallback to job command if not provided
-	command := r.FormValue("command")
-	if command == "" {
-		command = job.Command
-	}
-
-	// check if command editing is disabled and command was modified
-	if s.disableCommandEdit && command != job.Command {
-		http.Error(w, "Command editing is disabled", http.StatusForbidden)
-		return
-	}
-
-	// parse custom date if provided
-	var customDate *time.Time
-	dateStr := r.FormValue("date")
-	if dateStr != "" {
-		parsedDate, err := time.ParseInLocation("20060102", dateStr, time.Local)
-		if err != nil {
-			http.Error(w, "Invalid date format, expected YYYYMMDD", http.StatusBadRequest)
-			return
-		}
-		customDate = &parsedDate
-	}
-
-	// use request context with timeout for sending
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-
 	select {
 	case <-ctx.Done():
-		http.Error(w, "Request canceled", http.StatusRequestTimeout)
+		s.writeRunError(w, r, runError{status: http.StatusRequestTimeout, msg: "Request canceled"})
 		return
-	case s.manualTrigger <- service.ManualJobRequest{
-		JobID:      jobID,
-		Command:    command,
-		Schedule:   job.Schedule,
-		CustomDate: customDate,
-	}:
-		log.Printf("[INFO] manual trigger sent for job %s: %s", jobID, command)
+	case s.manualTrigger <- req:
+	default:
+		s.writeRunError(w, r, runError{status: http.StatusServiceUnavailable, msg: "System busy, too many manual triggers"})
+		return
+	}
+
+	log.Printf("[INFO] manual trigger sent for job %s: %s", job.ID, req.Command)
+	if r.Header.Get("HX-Request") != "true" {
 		w.Header().Set("HX-Trigger", "refresh-jobs")
 		w.WriteHeader(http.StatusAccepted)
 		if _, err := w.Write([]byte("Job triggered")); err != nil {
 			log.Printf("[ERROR] failed to write response: %v", err)
 		}
-	default:
-		// non-blocking send failed, channel full
-		http.Error(w, "System busy, too many manual triggers", http.StatusServiceUnavailable)
+		return
 	}
+
+	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusAccepted)
+	tmpl := s.templates["partials/jobs.html"]
+	if err := tmpl.ExecuteTemplate(w, "run-accepted-oob", job); err != nil {
+		log.Printf("[ERROR] failed to render run toast: %v", err)
+	}
+}
+
+// checkRun validates a manual run request and builds the scheduler request.
+// The command and date are read first so every rejection can show them back in the form
+func (s *Server) checkRun(r *http.Request, job persistence.JobInfo) (service.ManualJobRequest, *runError) {
+	if err := r.ParseForm(); err != nil {
+		return service.ManualJobRequest{}, &runError{status: http.StatusBadRequest, msg: "Invalid form data"}
+	}
+	command := r.FormValue("command")
+	if command == "" {
+		command = job.Command
+	}
+	dateStr := r.FormValue("date")
+
+	switch {
+	case !job.Enabled:
+		return service.ManualJobRequest{}, &runError{status: http.StatusBadRequest, msg: "Job is disabled"}
+	case job.IsRunning:
+		return service.ManualJobRequest{}, &runError{status: http.StatusConflict, msg: "Job already running"}
+	case s.manualTrigger == nil:
+		return service.ManualJobRequest{}, &runError{status: http.StatusServiceUnavailable, msg: "Manual trigger not configured"}
+	case s.disableCommandEdit && command != job.Command:
+		return service.ManualJobRequest{}, &runError{status: http.StatusForbidden, msg: "Command editing is disabled"}
+	}
+
+	req := service.ManualJobRequest{JobID: job.ID, Command: command, Schedule: job.Schedule}
+	if dateStr != "" {
+		parsed, err := time.ParseInLocation("20060102", dateStr, time.Local)
+		if err != nil {
+			return service.ManualJobRequest{}, &runError{status: http.StatusBadRequest,
+				msg: "Invalid date format, expected YYYYMMDD"}
+		}
+		req.CustomDate = &parsed
+	}
+	return req, nil
+}
+
+// writeRunError answers a rejected run: htmx gets the dialog re-rendered with the error and the submitted
+// values (200, so htmx swaps it), other callers get the status code and text as before
+func (s *Server) writeRunError(w http.ResponseWriter, r *http.Request, e runError) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Error(w, e.msg, e.status)
+		return
+	}
+	job, ok := s.jobByID(r.PathValue("id"))
+	if !ok {
+		// the definition is gone, so the form keeps the request's own id and values
+		job = persistence.JobInfo{ID: r.PathValue("id"), Command: r.FormValue("command")}
+		e.msg = "Job no longer exists in the crontab"
+	}
+	form := s.newRunForm(job, r.FormValue("command"), r.FormValue("date"))
+	form.HasTemplates = form.HasTemplates || form.Date != ""
+	if form.Command == "" {
+		form.Command = job.Command
+	}
+	form.Error = e.msg
+	s.render(w, "partials/jobs.html", "run-form", form)
 }
 
 // handleToggleJob toggles the enabled state of a job
@@ -672,113 +408,106 @@ func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleJobModal handles job details modal requests
-func (s *Server) handleJobModal(w http.ResponseWriter, r *http.Request) {
-	jobID := r.PathValue("id")
-	if jobID == "" {
-		http.Error(w, "Job ID required", http.StatusBadRequest)
+// handleInspector renders the job inspector. part=live renders only the refreshable part (status, runs) for
+// the inspector's own polling; otherwise the whole panel plus the selection inputs and the latest run's output
+func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
+	job, ok := s.jobByID(r.PathValue("id"))
+	if !ok && r.Header.Get("HX-Request") == "true" {
+		// a crontab sync removed the job: close the panel, since htmx would keep showing it on a 404
+		w.Header().Set("HX-Retarget", "#inspector")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		s.render(w, "partials/jobs.html", "inspector-closed", nil)
 		return
 	}
-
-	s.jobsMu.RLock()
-	job, exists := s.jobs[jobID]
-	s.jobsMu.RUnlock()
-
-	if !exists {
+	if !ok {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
-
-	// create a copy and update next run time
-	jobCopy := job
-	if jobCopy.Enabled {
-		s.updateNextRun(&jobCopy)
+	if job.Enabled {
+		s.updateNextRun(&job)
 	}
 
-	s.render(w, "partials/jobs.html", "job-modal", jobCopy)
-}
-
-// handleJobHistory handles job execution history modal requests
-func (s *Server) handleJobHistory(w http.ResponseWriter, r *http.Request) {
-	jobID := r.PathValue("id")
-	if jobID == "" {
-		http.Error(w, "Job ID required", http.StatusBadRequest)
-		return
-	}
-
-	s.jobsMu.RLock()
-	job, exists := s.jobs[jobID]
-	s.jobsMu.RUnlock()
-
-	if !exists {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-
-	// get execution history from database
-	executions, err := s.store.GetExecutions(jobID, 50)
+	runs, err := s.store.GetExecutions(job.ID, inspectorRuns)
 	if err != nil {
-		log.Printf("[ERROR] failed to get executions for job %s: %v", jobID, err)
+		log.Printf("[ERROR] failed to get executions for job %s: %v", job.ID, err)
 		http.Error(w, "Failed to load execution history", http.StatusInternalServerError)
 		return
 	}
+	data := inspectorData{Job: job, Runs: runs, ManualDisabled: s.disableManual}
 
-	// prepare data for template
-	data := struct {
-		Job        persistence.JobInfo
-		Executions []persistence.ExecutionInfo
-	}{
-		Job:        job,
-		Executions: executions,
-	}
-
-	s.render(w, "partials/jobs.html", "history-modal", data)
-}
-
-// handleSettingsModal handles settings/about modal requests
-func (s *Server) handleSettingsModal(w http.ResponseWriter, _ *http.Request) {
-	s.render(w, "partials/jobs.html", "settings-modal", s.settingsInfo)
-}
-
-// handleExecutionLogs handles requests for execution log output
-func (s *Server) handleExecutionLogs(w http.ResponseWriter, r *http.Request) {
-	jobID := r.PathValue("id")
-	execIDStr := r.PathValue("exec_id")
-
-	if jobID == "" || execIDStr == "" {
-		http.Error(w, "Job ID and Execution ID required", http.StatusBadRequest)
+	if r.FormValue("part") == "live" {
+		data.SelectedRun, _ = strconv.Atoi(r.FormValue("selected-run"))
+		s.render(w, "partials/jobs.html", "inspector-live", data)
 		return
 	}
 
-	// parse execution ID
-	execID, err := strconv.Atoi(execIDStr)
+	if len(runs) > 0 {
+		data.SelectedRun = runs[0].ID
+		out := s.newRunOutput(job, runs[0])
+		data.Output = &out
+	}
+	tmpl := s.templates["partials/jobs.html"]
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "inspector", data); err != nil {
+		log.Printf("[ERROR] failed to render inspector: %v", err)
+		http.Error(w, "Template error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if _, err := buf.WriteTo(w); err != nil {
+		log.Printf("[WARN] failed to write inspector: %v", err)
+	}
+}
+
+// handleRunOutput renders one run's output in the inspector, with its command and exit code
+func (s *Server) handleRunOutput(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	execID, err := strconv.Atoi(r.PathValue("exec_id"))
 	if err != nil {
 		http.Error(w, "Invalid execution ID", http.StatusBadRequest)
 		return
 	}
-
-	// get execution from database
-	execution, err := s.store.GetExecutionByID(execID)
-	if err != nil {
+	job, ok := s.jobByID(jobID)
+	if !ok {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	run, err := s.store.GetExecutionByID(execID)
+	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
 		log.Printf("[ERROR] failed to get execution %d: %v", execID, err)
+		http.Error(w, "Failed to load execution", http.StatusInternalServerError)
+		return
+	}
+	if err != nil || run.JobID != jobID {
 		http.Error(w, "Execution not found", http.StatusNotFound)
 		return
 	}
 
-	// verify execution belongs to the requested job
-	if execution.JobID != jobID {
-		http.Error(w, "Execution does not belong to this job", http.StatusForbidden)
-		return
-	}
+	w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
+	s.render(w, "partials/jobs.html", "run-output-response", s.newRunOutput(job, run))
+}
 
-	// prepare data for template
-	data := struct {
-		Execution persistence.ExecutionInfo
-		JobID     string
-	}{
-		Execution: execution,
-		JobID:     jobID,
+// newRunOutput pairs a run with the command it ran: the executed command of a manual run, the job command
+// otherwise, since scheduled runs do not record their resolved command
+func (s *Server) newRunOutput(job persistence.JobInfo, run persistence.ExecutionInfo) runOutputData {
+	data := runOutputData{JobID: job.ID, Run: run, Command: job.Command, CommandLabel: "Job command"}
+	if run.ExecutedCommand != "" {
+		data.Command, data.CommandLabel = run.ExecutedCommand, "Executed"
 	}
+	return data
+}
 
-	s.render(w, "partials/jobs.html", "logs-modal", data)
+// handleSettingsModal renders the settings and about dialog
+func (s *Server) handleSettingsModal(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "partials/jobs.html", "settings-modal", s.settingsInfo)
+}
+
+// jobByID returns a copy of the job with the given id
+func (s *Server) jobByID(id string) (persistence.JobInfo, bool) {
+	s.jobsMu.RLock()
+	defer s.jobsMu.RUnlock()
+	job, ok := s.jobs[id]
+	return job, ok
 }

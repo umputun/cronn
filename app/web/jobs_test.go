@@ -204,6 +204,9 @@ func TestServer_OnJobComplete(t *testing.T) {
 	assert.True(t, exists)
 	assert.False(t, job.IsRunning)
 	assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
+	require.NotNil(t, job.LastExitCode)
+	assert.Equal(t, 0, *job.LastExitCode)
+	assert.Equal(t, time.Second, job.LastDuration)
 
 	// test with error
 	server.OnJobStart(request.OnJobStart{Command: "echo error", ExecutedCommand: "echo error", Schedule: "* * * * *", StartTime: startTime})
@@ -229,6 +232,74 @@ func TestServer_OnJobComplete(t *testing.T) {
 	assert.True(t, exists2)
 	assert.False(t, job2.IsRunning)
 	assert.Equal(t, enums.JobStatusFailed, job2.LastStatus)
+	require.NotNil(t, job2.LastExitCode)
+	assert.Equal(t, 1, *job2.LastExitCode)
+	assert.Equal(t, time.Second, job2.LastDuration)
+}
+
+func TestServer_OnJobStart_LeavesLastResultUnknown(t *testing.T) {
+	tmpDir := t.TempDir()
+	server, err := New(Config{DBPath: filepath.Join(tmpDir, "test.db"), UpdateInterval: time.Minute, Version: "test",
+		JobsProvider: createTestProvider(t, tmpDir)})
+	require.NoError(t, err)
+	defer server.store.Close()
+	go server.processEvents(t.Context())
+
+	server.OnJobStart(request.OnJobStart{Command: "echo new", Schedule: "* * * * *", StartTime: time.Now()})
+	require.Eventually(t, func() bool {
+		server.jobsMu.RLock()
+		defer server.jobsMu.RUnlock()
+		job, exists := server.jobs[HashCommand("echo new")]
+		return exists && job.LastStatus == enums.JobStatusRunning
+	}, time.Second, 10*time.Millisecond)
+
+	server.jobsMu.RLock()
+	job := server.jobs[HashCommand("echo new")]
+	server.jobsMu.RUnlock()
+	assert.Nil(t, job.LastExitCode)
+	assert.Zero(t, job.LastDuration)
+}
+
+func TestServer_loadJobsFromCrontab_Name(t *testing.T) {
+	tmpDir := t.TempDir()
+	crontabFile := filepath.Join(tmpDir, "crontab.yml")
+	writeJobs := func(yml string) { require.NoError(t, os.WriteFile(crontabFile, []byte(yml), 0o600)) }
+	writeJobs(`jobs:
+  - spec: "0 2 * * *"
+    command: "backup /data"
+    name: "Nightly backup"
+  - spec: "@hourly"
+    command: "echo unnamed"
+`)
+	server, err := New(Config{DBPath: filepath.Join(tmpDir, "test.db"), UpdateInterval: time.Minute, Version: "test",
+		JobsProvider: crontab.New(crontabFile, 0, nil)})
+	require.NoError(t, err)
+	defer server.store.Close()
+
+	require.NoError(t, server.loadJobsFromCrontab())
+	server.jobsMu.RLock()
+	assert.Equal(t, "Nightly backup", server.jobs[HashCommand("backup /data")].Name)
+	assert.Empty(t, server.jobs[HashCommand("echo unnamed")].Name)
+	server.jobsMu.RUnlock()
+
+	writeJobs(`jobs:
+  - spec: "0 2 * * *"
+    command: "backup /data"
+    name: "Backup to S3"
+  - spec: "@hourly"
+    command: "echo unnamed"
+    name: "Ping"
+`)
+	require.NoError(t, server.loadJobsFromCrontab())
+	server.persistJobs()
+
+	jobs, err := server.store.LoadJobs()
+	require.NoError(t, err)
+	names := map[string]string{}
+	for _, j := range jobs {
+		names[j.Command] = j.Name
+	}
+	assert.Equal(t, map[string]string{"backup /data": "Backup to S3", "echo unnamed": "Ping"}, names)
 }
 
 func TestServer_OnJobComplete_OutputStorage(t *testing.T) {
@@ -607,16 +678,23 @@ func TestServer_filterJobs(t *testing.T) {
 
 	// create test jobs
 	jobs := []persistence.JobInfo{
-		{ID: "1", Command: "cmd1", IsRunning: true, LastStatus: enums.JobStatusRunning},
-		{ID: "2", Command: "cmd2", IsRunning: false, LastStatus: enums.JobStatusSuccess},
-		{ID: "3", Command: "cmd3", IsRunning: false, LastStatus: enums.JobStatusFailed},
-		{ID: "4", Command: "cmd4", IsRunning: false, LastStatus: enums.JobStatusSuccess},
-		{ID: "5", Command: "cmd5", IsRunning: true, LastStatus: enums.JobStatusRunning},
+		{ID: "1", Command: "cmd1", Enabled: true, IsRunning: true, LastStatus: enums.JobStatusRunning},
+		{ID: "2", Command: "cmd2", Enabled: true, IsRunning: false, LastStatus: enums.JobStatusSuccess},
+		{ID: "3", Command: "cmd3", Enabled: true, IsRunning: false, LastStatus: enums.JobStatusFailed},
+		{ID: "4", Command: "cmd4", Enabled: true, IsRunning: false, LastStatus: enums.JobStatusSuccess},
+		{ID: "5", Command: "cmd5", Enabled: true, IsRunning: true, LastStatus: enums.JobStatusRunning},
+		{ID: "6", Command: "cmd6", Enabled: false, IsRunning: false, LastStatus: enums.JobStatusFailed},
 	}
+
+	t.Run("disabled jobs appear only under all and disabled", func(t *testing.T) {
+		filtered := server.filterJobs(jobs, enums.FilterModeDisabled)
+		require.Len(t, filtered, 1)
+		assert.Equal(t, "6", filtered[0].ID)
+	})
 
 	t.Run("filter all returns everything", func(t *testing.T) {
 		filtered := server.filterJobs(jobs, enums.FilterModeAll)
-		assert.Len(t, filtered, 5)
+		assert.Len(t, filtered, 6)
 	})
 
 	t.Run("filter running", func(t *testing.T) {

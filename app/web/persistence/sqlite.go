@@ -20,17 +20,20 @@ var ErrNotFound = errors.New("not found")
 
 // JobInfo represents a cron job with its execution state
 type JobInfo struct {
-	ID         string          `db:"id"`
-	Command    string          `db:"command"`
-	Schedule   string          `db:"schedule"`
-	NextRun    time.Time       `db:"next_run"`
-	LastRun    time.Time       `db:"last_run"`
-	LastStatus enums.JobStatus `db:"last_status"`
-	IsRunning  bool            `db:"-"` // not stored in DB
-	Enabled    bool            `db:"enabled"`
-	CreatedAt  time.Time       `db:"created_at"`
-	UpdatedAt  time.Time       `db:"updated_at"`
-	SortIndex  int             `db:"sort_index"`
+	ID           string          `db:"id"`
+	Name         string          `db:"name"`
+	Command      string          `db:"command"`
+	Schedule     string          `db:"schedule"`
+	NextRun      time.Time       `db:"next_run"`
+	LastRun      time.Time       `db:"last_run"`
+	LastStatus   enums.JobStatus `db:"last_status"`
+	LastExitCode *int            `db:"last_exit_code"` // nil when no finished run is known; -1 is a real signal exit
+	LastDuration time.Duration   `db:"last_duration"`
+	IsRunning    bool            `db:"-"` // not stored in DB
+	Enabled      bool            `db:"enabled"`
+	CreatedAt    time.Time       `db:"created_at"`
+	UpdatedAt    time.Time       `db:"updated_at"`
+	SortIndex    int             `db:"sort_index"`
 }
 
 // ExecutionInfo represents a single job execution record
@@ -97,11 +100,14 @@ func (s *SQLiteStore) initialize(ctx context.Context) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS jobs (
 			id TEXT PRIMARY KEY,
+			name TEXT DEFAULT '',
 			command TEXT NOT NULL,
 			schedule TEXT NOT NULL,
 			next_run DATETIME,
 			last_run DATETIME,
 			last_status TEXT,
+			last_exit_code INTEGER,
+			last_duration INTEGER DEFAULT 0,
 			enabled BOOLEAN DEFAULT 1,
 			created_at DATETIME,
 			updated_at DATETIME,
@@ -137,42 +143,62 @@ func (s *SQLiteStore) initialize(ctx context.Context) error {
 
 // migrate performs schema migrations for existing databases
 func (s *SQLiteStore) migrate(ctx context.Context) error {
-	// check if executed_command column exists
-	var executedCommandExists bool
-	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) > 0
-		FROM pragma_table_info('executions')
-		WHERE name = 'executed_command'
-	`).Scan(&executedCommandExists)
-	if err != nil {
-		return fmt.Errorf("failed to check for executed_command column: %w", err)
+	columns := []struct{ table, column, ddl string }{
+		{"executions", "executed_command", "executed_command TEXT DEFAULT ''"},
+		{"executions", "output", "output TEXT DEFAULT ''"},
+		{"jobs", "name", "name TEXT DEFAULT ''"},
+		{"jobs", "last_exit_code", "last_exit_code INTEGER"},
+		{"jobs", "last_duration", "last_duration INTEGER DEFAULT 0"},
 	}
 
-	// add executed_command column if it doesn't exist
-	if !executedCommandExists {
-		if _, execErr := s.db.ExecContext(ctx, "ALTER TABLE executions ADD COLUMN executed_command TEXT DEFAULT ''"); execErr != nil {
-			return fmt.Errorf("failed to add executed_command column: %w", execErr)
+	for _, c := range columns {
+		var exists bool
+		err := s.db.QueryRowContext(ctx,
+			"SELECT COUNT(*) > 0 FROM pragma_table_info(?) WHERE name = ?", c.table, c.column).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("failed to check for %s.%s column: %w", c.table, c.column, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", c.table, c.ddl)); err != nil {
+			return fmt.Errorf("failed to add %s.%s column: %w", c.table, c.column, err)
 		}
 	}
+	return s.backfillLastResult(ctx)
+}
 
-	// check if output column exists
-	var outputExists bool
-	err = s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) > 0
-		FROM pragma_table_info('executions')
-		WHERE name = 'output'
-	`).Scan(&outputExists)
+// backfillLastResult fills last_exit_code and last_duration of jobs that have none from their latest retained
+// execution, so an upgraded database keeps showing the result it already recorded. It runs on every start,
+// so an upgrade interrupted after adding the columns still recovers, and never touches a known result
+func (s *SQLiteStore) backfillLastResult(ctx context.Context) error {
+	type lastRun struct {
+		JobID      string       `db:"job_id"`
+		ExitCode   int          `db:"exit_code"`
+		StartedAt  sql.NullTime `db:"started_at"`
+		FinishedAt sql.NullTime `db:"finished_at"`
+	}
+	var runs []lastRun
+	err := s.db.SelectContext(ctx, &runs, `
+		SELECT e.job_id, e.exit_code, e.started_at, e.finished_at
+		FROM executions e
+		WHERE e.job_id IN (SELECT id FROM jobs WHERE last_exit_code IS NULL)
+		  AND e.id = (SELECT id FROM executions WHERE job_id = e.job_id ORDER BY started_at DESC, id DESC LIMIT 1)`)
 	if err != nil {
-		return fmt.Errorf("failed to check for output column: %w", err)
+		return fmt.Errorf("failed to read latest executions: %w", err)
 	}
 
-	// add output column if it doesn't exist
-	if !outputExists {
-		if _, outErr := s.db.ExecContext(ctx, "ALTER TABLE executions ADD COLUMN output TEXT DEFAULT ''"); outErr != nil {
-			return fmt.Errorf("failed to add output column: %w", outErr)
+	for _, r := range runs {
+		var duration time.Duration
+		if r.StartedAt.Valid && r.FinishedAt.Valid {
+			duration = r.FinishedAt.Time.Sub(r.StartedAt.Time)
+		}
+		if _, err := s.db.ExecContext(ctx,
+			"UPDATE jobs SET last_exit_code = ?, last_duration = ? WHERE id = ? AND last_exit_code IS NULL",
+			r.ExitCode, int64(duration), r.JobID); err != nil {
+			return fmt.Errorf("failed to backfill last result of job %s: %w", r.JobID, err)
 		}
 	}
-
 	return nil
 }
 
@@ -183,8 +209,8 @@ func (s *SQLiteStore) LoadJobs() ([]JobInfo, error) {
 
 	var jobs []JobInfo
 	err := s.db.Select(&jobs, `
-		SELECT id, command, schedule, next_run, last_run, last_status, enabled, 
-		       created_at, updated_at, sort_index
+		SELECT id, name, command, schedule, next_run, last_run, last_status, last_exit_code, last_duration,
+		       enabled, created_at, updated_at, sort_index
 		FROM jobs
 		ORDER BY sort_index`)
 	if err != nil {
@@ -216,8 +242,10 @@ func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
 
 		_, err := tx.NamedExec(`
 			INSERT OR REPLACE INTO jobs 
-			(id, command, schedule, next_run, last_run, last_status, enabled, created_at, updated_at, sort_index)
-			VALUES (:id, :command, :schedule, :next_run, :last_run, :last_status, :enabled, :created_at, :updated_at, :sort_index)`,
+			(id, name, command, schedule, next_run, last_run, last_status, last_exit_code, last_duration,
+			 enabled, created_at, updated_at, sort_index)
+			VALUES (:id, :name, :command, :schedule, :next_run, :last_run, :last_status, :last_exit_code, :last_duration,
+			 :enabled, :created_at, :updated_at, :sort_index)`,
 			job)
 		if err != nil {
 			return fmt.Errorf("failed to save job %s: %w", job.ID, err)

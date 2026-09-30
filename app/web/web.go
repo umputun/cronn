@@ -48,6 +48,7 @@ type Server struct {
 	jobsMu             sync.RWMutex
 	jobs               map[string]persistence.JobInfo // job id -> job info
 	parser             cron.Parser                    // for schedule parsing (NextRun calculations)
+	schedule           *scheduleDescriber             // readable schedule text for templates
 	jobsProvider       JobsProvider                   // for loading job specifications
 	eventChan          chan JobEvent
 	updateInterval     time.Duration
@@ -109,23 +110,27 @@ type TemplateData struct {
 	CurrentYear        int
 	BaseURL            string // base URL path for reverse proxy (e.g., /cronn)
 	Hostname           string // hostname to display in UI
-	ViewMode           enums.ViewMode
 	Theme              enums.Theme
 	SortMode           enums.SortMode
 	FilterMode         enums.FilterMode
-	RunningCount       int    // for stats display
-	NextRunTime        string // formatted next run time for stats
-	TotalCount         int    // total jobs before filtering
-	SuccessCount       int    // jobs whose last run succeeded
-	FailedCount        int    // jobs whose last run failed
-	IdleCount          int    // jobs that have not run yet
-	IsOOB              bool   // for OOB template rendering
-	AuthEnabled        bool   // whether authentication is enabled
-	Version            string // application version (short form)
-	FullVersion        string // full application version
-	ManualDisabled     bool   // whether manual job execution is disabled
-	CommandEditEnabled bool   // whether command editing is enabled in manual run dialog
-	NeighborsEnabled   bool   // whether neighbor instances selector is enabled
+	Search             string                // search term applied to the job list
+	SelectedJob        string                // id of the job open in the inspector, marks its row
+	Failing            []persistence.JobInfo // enabled jobs whose last run failed, most recent first
+	TotalCount         int                   // all jobs, disabled included
+	RunningCount       int                   // enabled jobs running now
+	SuccessCount       int                   // enabled jobs whose last run succeeded
+	FailedCount        int                   // enabled jobs whose last run failed
+	IdleCount          int                   // enabled jobs that have not run yet
+	DisabledCount      int                   // disabled jobs
+	MatchCount         int                   // jobs shown after search and filter
+	HiddenBySearch     int                   // jobs the filter would show that the search hides, set when none match
+	Tabs               []filterTab           // filter tabs with their counts, in display order
+	AuthEnabled        bool                  // whether authentication is enabled
+	Version            string                // application version (short form)
+	FullVersion        string                // full application version
+	ManualDisabled     bool                  // whether manual job execution is disabled
+	CommandEditEnabled bool                  // whether command editing is enabled in manual run dialog
+	NeighborsEnabled   bool                  // whether neighbor instances selector is enabled
 }
 
 // newTemplateData creates a TemplateData with common fields populated from request
@@ -133,7 +138,6 @@ func (s *Server) newTemplateData(r *http.Request) TemplateData {
 	return TemplateData{
 		BaseURL:            s.baseURL,
 		Hostname:           s.hostname,
-		ViewMode:           s.getViewMode(r),
 		SortMode:           s.getSortMode(r),
 		FilterMode:         s.getFilterMode(r),
 		ManualDisabled:     s.disableManual,
@@ -144,13 +148,15 @@ func (s *Server) newTemplateData(r *http.Request) TemplateData {
 
 // jobsStats holds statistics about jobs
 type jobsStats struct {
-	jobs         []persistence.JobInfo
-	runningCount int
-	nextRunTime  string
-	totalCount   int
-	successCount int
-	failedCount  int
-	idleCount    int
+	jobs           []persistence.JobInfo
+	failing        []persistence.JobInfo
+	totalCount     int
+	runningCount   int
+	successCount   int
+	failedCount    int
+	idleCount      int
+	disabledCount  int
+	hiddenBySearch int
 }
 
 // Config holds server configuration
@@ -231,6 +237,11 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("web server initialization failed: JobsProvider is required")
 	}
 
+	schedule, err := newScheduleDescriber()
+	if err != nil {
+		return nil, fmt.Errorf("web server initialization failed: %w", err)
+	}
+
 	// create persistence store (it initializes itself)
 	store, err := persistence.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
@@ -252,6 +263,7 @@ func New(cfg Config) (*Server, error) {
 		store:              store,
 		jobs:               make(map[string]persistence.JobInfo),
 		parser:             parser,
+		schedule:           schedule,
 		jobsProvider:       cfg.JobsProvider,
 		eventChan:          make(chan JobEvent, 1000),
 		updateInterval:     cfg.UpdateInterval,
@@ -367,8 +379,8 @@ func (s *Server) routes() http.Handler {
 		router.HandleFunc("GET /logout", s.handleLogout)
 	}
 
-	// dashboard route
-	router.HandleFunc("GET /", s.handleDashboard)
+	// dashboard route; exact match so unknown paths get 404 instead of the dashboard
+	router.HandleFunc("GET /{$}", s.handleDashboard)
 
 	// api routes with grouping (HTMX endpoints)
 	router.Mount("/api").Route(func(api *routegroup.Bundle) {
@@ -378,18 +390,15 @@ func (s *Server) routes() http.Handler {
 
 		// HTMX endpoints
 		api.HandleFunc("GET /jobs", s.handleJobsPartial)
-		api.HandleFunc("POST /view-mode", s.handleViewModeToggle)
 		api.HandleFunc("POST /theme", s.handleThemeToggle)
 		api.HandleFunc("POST /sort-mode", s.handleSortModeChange)
-		api.HandleFunc("POST /sort-toggle", s.handleSortToggle)
-		api.HandleFunc("POST /filter-toggle", s.handleFilterToggle)
 		api.HandleFunc("POST /filter-mode", s.handleFilterModeChange)
+		api.HandleFunc("GET /jobs/{id}/run-form", s.handleRunForm)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 		api.HandleFunc("POST /jobs/{id}/toggle", s.handleToggleJob)
-		api.HandleFunc("GET /jobs/{id}/modal", s.handleJobModal)
-		api.HandleFunc("GET /jobs/{id}/history", s.handleJobHistory)
+		api.HandleFunc("GET /jobs/{id}/inspector", s.handleInspector)
+		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/output", s.handleRunOutput)
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
-		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/logs", s.handleExecutionLogs)
 		api.HandleFunc("GET /neighbors", s.handleNeighbors)
 	})
 
@@ -442,12 +451,15 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	templates := make(map[string]*template.Template)
 
 	funcMap := template.FuncMap{
-		"humanTime":     s.humanTime,
-		"humanDuration": s.humanDuration,
-		"truncate":      s.truncate,
-		"timeUntil":     s.timeUntil,
-		"since":         s.since,
-		"url":           s.url,
+		"humanDuration":    s.humanDuration,
+		"timeUntil":        s.timeUntil,
+		"since":            s.since,
+		"url":              s.url,
+		"describeSchedule": s.schedule.describe,
+		"ago":              s.ago,
+		"runDuration":      s.runDuration,
+		"clock":            s.clock,
+		"deref":            s.deref,
 	}
 
 	// parse base template with all partials
@@ -476,19 +488,6 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 	return templates, nil
 }
 
-func (s *Server) getViewMode(r *http.Request) enums.ViewMode {
-	cookie, err := r.Cookie("view-mode")
-	if err != nil {
-		return enums.ViewModeCards // default
-	}
-	mode, err := enums.ParseViewMode(cookie.Value)
-	if err != nil {
-		log.Printf("[WARN] invalid view mode %q: %v", cookie.Value, err)
-		return enums.ViewModeCards // default on parse error
-	}
-	return mode
-}
-
 func (s *Server) getTheme(r *http.Request) enums.Theme {
 	cookie, err := r.Cookie("theme")
 	if err != nil {
@@ -502,8 +501,12 @@ func (s *Server) getTheme(r *http.Request) enums.Theme {
 	return theme
 }
 
-// getSortMode gets the sort mode from cookie or defaults to "default"
+// getSortMode returns the sort mode the page sent, else the cookie, else "default". The page sends its own
+// mode so a change made in another tab (which rewrites the shared cookie) does not leak into this one
 func (s *Server) getSortMode(r *http.Request) enums.SortMode {
+	if mode, err := enums.ParseSortMode(r.FormValue("sort")); err == nil {
+		return mode
+	}
 	cookie, err := r.Cookie("sort-mode")
 	if err != nil || cookie.Value == "" {
 		return enums.SortModeDefault
@@ -516,8 +519,11 @@ func (s *Server) getSortMode(r *http.Request) enums.SortMode {
 	return mode
 }
 
-// getFilterMode gets the filter mode from cookie or defaults to "all"
+// getFilterMode returns the filter mode the page sent, else the cookie, else "all"; see getSortMode
 func (s *Server) getFilterMode(r *http.Request) enums.FilterMode {
+	if mode, err := enums.ParseFilterMode(r.FormValue("filter")); err == nil {
+		return mode
+	}
 	cookie, err := r.Cookie("filter-mode")
 	if err != nil {
 		return enums.FilterModeAll // default to all
@@ -530,20 +536,6 @@ func (s *Server) getFilterMode(r *http.Request) enums.FilterMode {
 	return mode
 }
 
-// cycleSortMode cycles through sort modes: default -> lastrun -> nextrun -> default
-func (s *Server) cycleSortMode(current enums.SortMode) enums.SortMode {
-	switch current {
-	case enums.SortModeDefault:
-		return enums.SortModeLastrun
-	case enums.SortModeLastrun:
-		return enums.SortModeNextrun
-	case enums.SortModeNextrun:
-		return enums.SortModeDefault
-	default:
-		return enums.SortModeDefault
-	}
-}
-
 // setSortCookie sets the sort mode cookie
 func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode) {
 	http.SetCookie(w, &http.Cookie{
@@ -554,24 +546,6 @@ func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-}
-
-// cycleFilterMode cycles through filter modes: all -> running -> success -> failed -> idle -> all
-func (s *Server) cycleFilterMode(current enums.FilterMode) enums.FilterMode {
-	switch current {
-	case enums.FilterModeAll:
-		return enums.FilterModeRunning
-	case enums.FilterModeRunning:
-		return enums.FilterModeSuccess
-	case enums.FilterModeSuccess:
-		return enums.FilterModeFailed
-	case enums.FilterModeFailed:
-		return enums.FilterModeIdle
-	case enums.FilterModeIdle:
-		return enums.FilterModeAll
-	default:
-		return enums.FilterModeAll
-	}
 }
 
 // setFilterCookie sets the filter mode cookie
@@ -587,13 +561,6 @@ func (s *Server) setFilterCookie(w http.ResponseWriter, mode enums.FilterMode) {
 }
 
 // template helper functions
-
-func (s *Server) humanTime(t time.Time) string {
-	if t.IsZero() {
-		return "Never"
-	}
-	return t.Format("Jan 2, 15:04:05")
-}
 
 func (s *Server) humanDuration(d time.Duration) string {
 	if d < time.Minute {
@@ -623,11 +590,51 @@ func (s *Server) since(t time.Time) time.Duration {
 	return time.Since(t)
 }
 
-func (s *Server) truncate(str string, n int) string {
-	if len(str) <= n {
-		return str
+// ago renders a past time relative to now, e.g. "3m ago"
+func (s *Server) ago(t time.Time) string {
+	if t.IsZero() {
+		return "never"
 	}
-	return str[:n] + "..."
+	d := time.Since(t)
+	if d < 5*time.Second {
+		return "just now"
+	}
+	return s.humanDuration(d) + " ago"
+}
+
+// clock renders a time as HH:MM when it falls today and with the date otherwise
+func (s *Server) clock(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return t.Format("15:04")
+	}
+	return t.Format("Jan 2 15:04")
+}
+
+// deref returns the value of a nullable exit code; templates call it only after a nil check
+func (s *Server) deref(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// runDuration renders how long a run took: tenths of a second under a minute, minutes and seconds under an
+// hour, hours and minutes above
+func (s *Server) runDuration(d time.Duration) string {
+	switch {
+	case d < 0:
+		return "0.0s"
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	case d < time.Hour:
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	default:
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
 }
 
 // url prepends the base URL to a path for reverse proxy support

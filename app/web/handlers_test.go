@@ -1,13 +1,12 @@
 package web
 
 import (
-	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,1623 +14,758 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/umputun/cronn/app/crontab"
 	"github.com/umputun/cronn/app/service"
 	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
 	"github.com/umputun/cronn/app/web/persistence"
 )
 
-func TestServer_handleSortModeChange(t *testing.T) {
+func newHandlersTestServer(t *testing.T, cfg Config) *Server {
+	t.Helper()
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-	}
-
+	cfg.DBPath = filepath.Join(tmpDir, "test.db")
+	cfg.UpdateInterval = time.Minute
+	cfg.Version = "test"
+	cfg.JobsProvider = createTestProvider(t, tmpDir)
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer server.store.Close()
+	t.Cleanup(func() { _ = server.store.Close() })
+	return server
+}
 
-	tests := []struct {
-		name       string
-		formValue  string
-		wantCookie string
-	}{
-		{"default sort", "default", "default"},
-		{"last run sort", "lastrun", "lastrun"},
-		{"next run sort", "nextrun", "nextrun"},
-		{"invalid sort", "invalid", "default"},
-		{"empty sort", "", "default"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/sort-mode", strings.NewReader("sort="+tt.formValue))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			w := httptest.NewRecorder()
-
-			server.handleSortModeChange(w, req)
-
-			assert.Equal(t, http.StatusOK, w.Code)
-			assert.Equal(t, "#jobs-container", w.Header().Get("HX-Retarget"))
-			assert.Equal(t, "innerHTML", w.Header().Get("HX-Reswap"))
-
-			// check cookie
-			cookies := w.Result().Cookies()
-			require.Len(t, cookies, 1)
-			assert.Equal(t, "sort-mode", cookies[0].Name)
-			assert.Equal(t, tt.wantCookie, cookies[0].Value)
-		})
+func addJobs(s *Server, jobs ...persistence.JobInfo) {
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
+	for i, j := range jobs {
+		j.SortIndex = i
+		s.jobs[j.ID] = j
 	}
 }
 
-func TestServer_handleViewModeToggle(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
+func sampleJobs() []persistence.JobInfo {
+	now := time.Now()
+	return []persistence.JobInfo{
+		{ID: "ok", Name: "Quote sync", Command: "echo sync", Schedule: "*/1 * * * *", Enabled: true,
+			LastStatus: enums.JobStatusSuccess, LastRun: now.Add(-time.Minute), LastExitCode: new(0), LastDuration: 100 * time.Millisecond},
+		{ID: "fail", Name: "Vendor feed import", Command: "sh -c 'exit 3'", Schedule: "*/1 * * * *", Enabled: true,
+			LastStatus: enums.JobStatusFailed, LastRun: now.Add(-2 * time.Minute), LastExitCode: new(3), LastDuration: 2 * time.Second},
+		{ID: "run", Name: "Report rebuild", Command: "sleep 100", Schedule: "*/2 * * * *", Enabled: true, IsRunning: true,
+			LastStatus: enums.JobStatusRunning, LastRun: now.Add(-47 * time.Second)},
+		{ID: "never", Command: "reindex --full", Schedule: "@every 1h15m", Enabled: true, LastStatus: enums.JobStatusIdle},
+		{ID: "off", Name: "Cache cleanup", Command: "find /tmp/cache -delete", Schedule: "@midnight", Enabled: false,
+			LastStatus: enums.JobStatusFailed, LastRun: now.Add(-72 * time.Hour), LastExitCode: new(1), LastDuration: time.Second},
 	}
+}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
+func rowIDs(body string) []string {
+	parts := strings.Split(body, `<tr class="row`)[1:]
+	ids := make([]string, 0, len(parts))
+	for _, part := range parts {
+		start := strings.Index(part, `data-job-id="`) + len(`data-job-id="`)
+		ids = append(ids, part[start:start+strings.Index(part[start:], `"`)])
+	}
+	return ids
+}
 
-	// add test jobs
-	startTime := time.Now()
-	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
-	server.OnJobStart(request.OnJobStart{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour)})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour), EndTime: startTime.Add(-59 * time.Minute), ExitCode: 1, Output: "", Err: fmt.Errorf("failed")})
+func TestServer_getJobsWithStats(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
 
-	// start event processor
-	ctx := t.Context()
-	go server.processEvents(ctx)
+	t.Run("counts leave disabled jobs out of the result buckets", func(t *testing.T) {
+		stats := server.getJobsWithStats(jobsQuery{filter: enums.FilterModeAll})
+		assert.Equal(t, 5, stats.totalCount)
+		assert.Equal(t, 1, stats.successCount)
+		assert.Equal(t, 1, stats.failedCount)
+		assert.Equal(t, 1, stats.runningCount)
+		assert.Equal(t, 1, stats.idleCount)
+		assert.Equal(t, 1, stats.disabledCount)
+		require.Len(t, stats.failing, 1)
+		assert.Equal(t, "fail", stats.failing[0].ID)
+		assert.Len(t, stats.jobs, 5)
+	})
 
-	// wait for events to be processed
-	require.Eventually(t, func() bool {
-		server.jobsMu.RLock()
-		defer server.jobsMu.RUnlock()
-		return len(server.jobs) == 2
-	}, time.Second, 10*time.Millisecond)
-
-	tests := []struct {
-		name             string
-		currentCookie    string
-		expectedNextMode string
-		expectedInBody   []string
+	tbl := []struct {
+		filter enums.FilterMode
+		want   []string
 	}{
-		{
-			name:             "cards to list view",
-			currentCookie:    "cards",
-			expectedNextMode: "list",
-			expectedInBody:   []string{"jobs-container list", "jobs-table", "th-schedule", "th-command"},
-		},
-		{
-			name:             "list to cards view",
-			currentCookie:    "list",
-			expectedNextMode: "cards",
-			expectedInBody:   []string{"jobs-container cards", "job-card", "job-schedule", "job-command"},
-		},
-		{
-			name:             "no cookie defaults to list",
-			currentCookie:    "",
-			expectedNextMode: "list",
-			expectedInBody:   []string{"jobs-container list", "jobs-table"},
-		},
+		{enums.FilterModeAll, []string{"ok", "fail", "run", "never", "off"}},
+		{enums.FilterModeFailed, []string{"fail"}},
+		{enums.FilterModeSuccess, []string{"ok"}},
+		{enums.FilterModeRunning, []string{"run"}},
+		{enums.FilterModeIdle, []string{"never"}},
+		{enums.FilterModeDisabled, []string{"off"}},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
-			if tt.currentCookie != "" {
-				req.AddCookie(&http.Cookie{Name: "view-mode", Value: tt.currentCookie})
+	for _, tt := range tbl {
+		t.Run("filter "+tt.filter.String(), func(t *testing.T) {
+			stats := server.getJobsWithStats(jobsQuery{filter: tt.filter})
+			var ids []string
+			for _, j := range stats.jobs {
+				ids = append(ids, j.ID)
 			}
-			rec := httptest.NewRecorder()
-
-			server.handleViewModeToggle(rec, req)
-
-			assert.Equal(t, http.StatusOK, rec.Code)
-
-			// check cookie was set
-			cookies := rec.Result().Cookies()
-			require.Len(t, cookies, 1)
-			assert.Equal(t, "view-mode", cookies[0].Name)
-			assert.Equal(t, tt.expectedNextMode, cookies[0].Value)
-
-			// check response contains expected content
-			body := rec.Body.String()
-			for _, expected := range tt.expectedInBody {
-				assert.Contains(t, body, expected)
-			}
-
-			// verify that stats updates and view mode button are rendered as OOB
-			assert.Contains(t, body, "hx-swap-oob")
-			assert.Contains(t, body, "view-toggle")
-			assert.Contains(t, body, "id=\"running-count\"")
-			assert.Contains(t, body, "id=\"next-run\"")
+			assert.Equal(t, tt.want, ids)
 		})
 	}
 
-	// test template not found error case
-	t.Run("template not found", func(t *testing.T) {
-		// temporarily rename template to simulate not found
-		originalTemplate := server.templates["partials/jobs.html"]
-		delete(server.templates, "partials/jobs.html")
-		defer func() {
-			server.templates["partials/jobs.html"] = originalTemplate
-		}()
+	t.Run("search matches name and command", func(t *testing.T) {
+		stats := server.getJobsWithStats(jobsQuery{filter: enums.FilterModeAll, search: "vendor"})
+		require.Len(t, stats.jobs, 1)
+		assert.Equal(t, "fail", stats.jobs[0].ID)
 
-		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
-		rec := httptest.NewRecorder()
-
-		server.handleViewModeToggle(rec, req)
-
-		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		stats = server.getJobsWithStats(jobsQuery{filter: enums.FilterModeAll, search: "REINDEX"})
+		require.Len(t, stats.jobs, 1)
+		assert.Equal(t, "never", stats.jobs[0].ID)
 	})
 
-	// test template execution error
-	t.Run("template execution error", func(t *testing.T) {
-		// create a template with an error
-		badTemplate := template.Must(template.New("partials/jobs.html").Parse(`{{define "jobs-container"}}{{.NonExistentField}}{{end}}`))
-		originalTemplate := server.templates["partials/jobs.html"]
-		server.templates["partials/jobs.html"] = badTemplate
-		defer func() {
-			server.templates["partials/jobs.html"] = originalTemplate
-		}()
+	t.Run("hidden by search counted only when nothing matches", func(t *testing.T) {
+		stats := server.getJobsWithStats(jobsQuery{filter: enums.FilterModeFailed, search: "rsync"})
+		assert.Empty(t, stats.jobs)
+		assert.Equal(t, 1, stats.hiddenBySearch)
 
-		req := httptest.NewRequest("POST", "/api/view-mode", http.NoBody)
-		rec := httptest.NewRecorder()
+		stats = server.getJobsWithStats(jobsQuery{filter: enums.FilterModeFailed, search: "vendor"})
+		assert.Zero(t, stats.hiddenBySearch)
+	})
 
-		server.handleViewModeToggle(rec, req)
-
-		// should still return 200 but log the error
-		assert.Equal(t, http.StatusOK, rec.Code)
+	t.Run("failing ordered by most recent run", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		now := time.Now()
+		addJobs(s,
+			persistence.JobInfo{ID: "old", Command: "a", Schedule: "@hourly", Enabled: true, LastStatus: enums.JobStatusFailed, LastRun: now.Add(-time.Hour)},
+			persistence.JobInfo{ID: "new", Command: "b", Schedule: "@hourly", Enabled: true, LastStatus: enums.JobStatusFailed, LastRun: now},
+		)
+		stats := s.getJobsWithStats(jobsQuery{})
+		require.Len(t, stats.failing, 2)
+		assert.Equal(t, "new", stats.failing[0].ID)
 	})
 }
 
 func TestServer_handleDashboard(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	server := newHandlersTestServer(t, Config{Hostname: "bigmac"})
+	addJobs(server, sampleJobs()...)
 
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// start event processor
-	ctx := t.Context()
-	go server.processEvents(ctx)
-
-	// add test job
-	server.OnJobStart(request.OnJobStart{Command: "echo test", ExecutedCommand: "echo test", Schedule: "* * * * *", StartTime: time.Now()})
-	require.Eventually(t, func() bool {
-		server.jobsMu.RLock()
-		defer server.jobsMu.RUnlock()
-		_, exists := server.jobs[HashCommand("echo test")]
-		return exists
-	}, time.Second, 10*time.Millisecond)
-
-	req := httptest.NewRequest("GET", "/", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	w := httptest.NewRecorder()
-
 	server.handleDashboard(w, req)
 
-	resp := w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
-
+	require.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
-	assert.Contains(t, body, "Cronn Dashboard")
-	// don't check for job content since it's rendered via separate partial
+	assert.Contains(t, body, "<title>Cronn Dashboard</title>")
+	assert.Contains(t, body, `id="jobs-container"`)
+	assert.Contains(t, body, `id="inspector"`)
+	assert.Contains(t, body, `id="dialog-slot"`)
+	assert.Contains(t, body, `id="selected-job"`)
+	assert.Contains(t, body, "1 job failing")
+	assert.Contains(t, body, "Vendor feed import")
+	assert.Contains(t, body, `<em id="count-disabled">1</em>`)
+	assert.Contains(t, body, "/static/ui.js")
+	assert.NotContains(t, body, "app.js")
+	assert.Equal(t, []string{"ok", "fail", "run", "never", "off"}, rowIDs(body))
 }
 
-func TestServer_handleAPIJobs(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+func TestServer_handleJobsPartial(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
 
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
+	get := func(t *testing.T, query string, cookies ...*http.Cookie) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?"+query, http.NoBody)
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		server.handleJobsPartial(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		return w.Body.String()
 	}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
+	t.Run("rows show name, readable schedule and last result", func(t *testing.T) {
+		body := get(t, "")
+		assert.Contains(t, body, "Quote sync")
+		assert.Contains(t, body, "Every minute")
+		assert.Contains(t, body, "exit 3 · 2.0s")
+		assert.Contains(t, body, "exit 0 · 0.1s")
+		assert.Contains(t, body, "Every 1h15m")
+		assert.Contains(t, body, "running 47s")
+		assert.Contains(t, body, `<span class="tag off">disabled</span>`)
+		assert.Contains(t, body, `hx-swap-oob="innerHTML">5</em>`)
+		assert.Contains(t, body, `id="failing-alert" hx-swap-oob="innerHTML"`)
+		assert.NotContains(t, body, `id="jobs-controls"`, "polling must not replace the open sort select or focused tab")
+	})
 
-	// start event processor
-	ctx := t.Context()
-	go server.processEvents(ctx)
+	t.Run("never-ran job shows no exit code or duration", func(t *testing.T) {
+		body := get(t, "filter=idle", &http.Cookie{Name: "filter-mode", Value: "idle"})
+		assert.Equal(t, []string{"never"}, rowIDs(body))
+		table, _, found := strings.Cut(body, "</table>")
+		require.True(t, found)
+		assert.Contains(t, table, "never ran")
+		assert.NotContains(t, table, "exit ")
+	})
 
-	// add test jobs
-	startTime := time.Now()
-	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
-	server.OnJobStart(request.OnJobStart{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "@daily", StartTime: startTime})
+	t.Run("selected job row is marked", func(t *testing.T) {
+		body := get(t, "selected-job=fail")
+		assert.Contains(t, body, `<tr class="row sel" data-job-id="fail"`)
+		assert.NotContains(t, body, `<tr class="row sel" data-job-id="ok"`)
+	})
 
-	// wait for all events to be processed
-	require.Eventually(t, func() bool {
-		server.jobsMu.RLock()
-		defer server.jobsMu.RUnlock()
-		return len(server.jobs) == 2
-	}, time.Second, 10*time.Millisecond)
+	t.Run("search by name", func(t *testing.T) {
+		body := get(t, "search=report")
+		assert.Equal(t, []string{"run"}, rowIDs(body))
+		assert.Contains(t, body, "1 of 5 jobs")
+	})
 
-	// test card view
-	req := httptest.NewRequest("GET", "/api/jobs", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
-	w := httptest.NewRecorder()
+	t.Run("empty search result says what hides the jobs", func(t *testing.T) {
+		body := get(t, "search=rsync", &http.Cookie{Name: "filter-mode", Value: "failed"})
+		assert.Empty(t, rowIDs(body))
+		assert.Contains(t, body, "No failed jobs match “rsync”")
+		assert.Contains(t, body, "1 failed job is hidden by the search.")
+		assert.Contains(t, body, "Clear search")
+		assert.Contains(t, body, "Show all jobs")
+	})
 
-	server.handleJobsPartial(w, req)
+	t.Run("tab modes win over cookies changed by another tab", func(t *testing.T) {
+		body := get(t, "filter=all&sort=default",
+			&http.Cookie{Name: "filter-mode", Value: "failed"}, &http.Cookie{Name: "sort-mode", Value: "lastrun"})
+		assert.Equal(t, []string{"ok", "fail", "run", "never", "off"}, rowIDs(body))
+	})
 
-	resp := w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	t.Run("cookie applies when the page sends no mode", func(t *testing.T) {
+		body := get(t, "", &http.Cookie{Name: "filter-mode", Value: "failed"})
+		assert.Equal(t, []string{"fail"}, rowIDs(body))
+	})
 
-	body := w.Body.String()
-	assert.Contains(t, body, "job-card")
-	assert.Contains(t, body, "echo test1")
-	assert.Contains(t, body, "echo test2")
-	// verify view-mode-button IS rendered during polling (for multi-tab sync)
-	assert.Contains(t, body, "view-toggle")
+	t.Run("reset-search clears the search box", func(t *testing.T) {
+		body := get(t, "search=&reset-search=1")
+		assert.Contains(t, body, `id="search-box" class="search" hx-swap-oob="true"`)
+		assert.Len(t, rowIDs(body), 5)
+	})
 
-	// test list view
-	req = httptest.NewRequest("GET", "/api/jobs", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "list"})
-	w = httptest.NewRecorder()
+	t.Run("no jobs configured", func(t *testing.T) {
+		empty := newHandlersTestServer(t, Config{})
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody)
+		w := httptest.NewRecorder()
+		empty.handleJobsPartial(w, req)
+		assert.Contains(t, w.Body.String(), "No jobs configured")
+	})
 
-	server.handleJobsPartial(w, req)
+	t.Run("template missing", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		delete(s.templates, "partials/jobs.html")
+		w := httptest.NewRecorder()
+		s.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
 
-	resp = w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	body = w.Body.String()
-	// list view renders a table
-	assert.Contains(t, body, "jobs-table")
-	assert.Contains(t, body, "echo test1")
-	assert.Contains(t, body, "echo test2")
-	// verify view-mode-button IS rendered during polling (for multi-tab sync)
-	assert.Contains(t, body, "view-toggle")
+	t.Run("template execution error", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		s.templates["partials/jobs.html"] = template.Must(template.New("x").Parse(`{{define "jobs-table"}}{{.Missing}}{{end}}`))
+		w := httptest.NewRecorder()
+		s.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
 }
 
-func TestServer_handleAPIJobs_Search(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+func TestServer_handleSortModeChange(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
 
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// start event processor
-	ctx := t.Context()
-	go server.processEvents(ctx)
-
-	// add test jobs with different commands
-	startTime := time.Now()
-	server.OnJobStart(request.OnJobStart{Command: "echo backup daily", ExecutedCommand: "echo backup daily", Schedule: "* * * * *", StartTime: startTime})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo backup daily", ExecutedCommand: "echo backup daily", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
-	server.OnJobStart(request.OnJobStart{Command: "echo cleanup logs", ExecutedCommand: "echo cleanup logs", Schedule: "@daily", StartTime: startTime})
-	server.OnJobStart(request.OnJobStart{Command: "python backup.py", ExecutedCommand: "python backup.py", Schedule: "@weekly", StartTime: startTime})
-
-	// wait for all events to be processed
-	require.Eventually(t, func() bool {
-		server.jobsMu.RLock()
-		defer server.jobsMu.RUnlock()
-		return len(server.jobs) == 3
-	}, time.Second, 10*time.Millisecond)
-
-	// test search for "backup"
-	req := httptest.NewRequest("GET", "/api/jobs?search=backup", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
-	w := httptest.NewRecorder()
-
-	server.handleJobsPartial(w, req)
-
-	resp := w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	body := w.Body.String()
-	assert.Contains(t, body, "backup daily")
-	assert.Contains(t, body, "backup.py")
-	assert.NotContains(t, body, "cleanup logs")
-
-	// test case-insensitive search
-	req = httptest.NewRequest("GET", "/api/jobs?search=BACKUP", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
-	w = httptest.NewRecorder()
-
-	server.handleJobsPartial(w, req)
-
-	resp = w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	body = w.Body.String()
-	assert.Contains(t, body, "backup daily")
-	assert.Contains(t, body, "backup.py")
-	assert.NotContains(t, body, "cleanup logs")
-
-	// test search for "python"
-	req = httptest.NewRequest("GET", "/api/jobs?search=python", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
-	w = httptest.NewRecorder()
-
-	server.handleJobsPartial(w, req)
-
-	resp = w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	body = w.Body.String()
-	assert.Contains(t, body, "backup.py")
-	assert.NotContains(t, body, "backup daily")
-	assert.NotContains(t, body, "cleanup logs")
-
-	// test empty search returns all jobs
-	req = httptest.NewRequest("GET", "/api/jobs?search=", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
-	w = httptest.NewRecorder()
-
-	server.handleJobsPartial(w, req)
-
-	resp = w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	body = w.Body.String()
-	assert.Contains(t, body, "backup daily")
-	assert.Contains(t, body, "cleanup logs")
-	assert.Contains(t, body, "backup.py")
-
-	// test search with no matches
-	req = httptest.NewRequest("GET", "/api/jobs?search=nonexistent", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "view-mode", Value: "cards"})
-	w = httptest.NewRecorder()
-
-	server.handleJobsPartial(w, req)
-
-	resp = w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	body = w.Body.String()
-	assert.NotContains(t, body, "backup daily")
-	assert.NotContains(t, body, "cleanup logs")
-	assert.NotContains(t, body, "backup.py")
-}
-
-func TestServer_handleToggleTheme(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	tests := []struct {
-		name     string
-		current  string
-		expected string
+	tbl := []struct {
+		form, wantCookie string
 	}{
-		{"light to dark", "light", "dark"},
-		{"dark to light", "dark", "light"},
-		{"no cookie - dark default toggles to light", "", "light"},
+		{"lastrun", "lastrun"},
+		{"nextrun", "nextrun"},
+		{"default", "default"},
+		{"bogus", "default"},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.form, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort="+tt.form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			server.handleSortModeChange(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+			cookies := w.Result().Cookies()
+			require.Len(t, cookies, 1)
+			assert.Equal(t, "sort-mode", cookies[0].Name)
+			assert.Equal(t, tt.wantCookie, cookies[0].Value)
+			assert.Contains(t, w.Body.String(), `id="jobs-controls" class="bar" hx-swap-oob="innerHTML"`)
+		})
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/toggle-theme", http.NoBody)
+	t.Run("new order wins over the old cookie on the request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort=lastrun"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "sort-mode", Value: "default"})
+		w := httptest.NewRecorder()
+		server.handleSortModeChange(w, req)
+		assert.Equal(t, []string{"run", "ok", "fail", "off", "never"}, rowIDs(w.Body.String()))
+		assert.Contains(t, w.Body.String(), `<option value="lastrun" selected>`)
+	})
+
+	t.Run("keeps the tab's filter over the cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort=nextrun&filter=success"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "filter-mode", Value: "failed"})
+		w := httptest.NewRecorder()
+		server.handleSortModeChange(w, req)
+		assert.Equal(t, []string{"ok"}, rowIDs(w.Body.String()))
+		assert.Contains(t, w.Body.String(), `id="filter-mode" name="filter" value="success"`)
+	})
+
+	t.Run("keeps filter and search", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort=nextrun&search=sync"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "filter-mode", Value: "success"})
+		w := httptest.NewRecorder()
+		server.handleSortModeChange(w, req)
+		assert.Equal(t, []string{"ok"}, rowIDs(w.Body.String()))
+	})
+}
+
+func TestServer_handleFilterModeChange(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
+
+	tbl := []struct {
+		filter, wantCookie string
+		wantRows           []string
+	}{
+		{"failed", "failed", []string{"fail"}},
+		{"disabled", "disabled", []string{"off"}},
+		{"running", "running", []string{"run"}},
+		{"all", "all", []string{"ok", "fail", "run", "never", "off"}},
+		{"bogus", "all", []string{"ok", "fail", "run", "never", "off"}},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.filter, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/filter-mode", strings.NewReader("filter="+tt.filter))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.AddCookie(&http.Cookie{Name: "filter-mode", Value: "success"})
+			w := httptest.NewRecorder()
+			server.handleFilterModeChange(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.wantCookie, w.Result().Cookies()[0].Value)
+			assert.Equal(t, tt.wantRows, rowIDs(w.Body.String()))
+			assert.Contains(t, w.Body.String(), `class="tab on"`)
+		})
+	}
+
+	t.Run("keeps the tab's sort over the cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/filter-mode", strings.NewReader("filter=all&sort=lastrun"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "sort-mode", Value: "default"})
+		w := httptest.NewRecorder()
+		server.handleFilterModeChange(w, req)
+		assert.Equal(t, []string{"run", "ok", "fail", "off", "never"}, rowIDs(w.Body.String()))
+		assert.Contains(t, w.Body.String(), `<option value="lastrun" selected>`)
+	})
+
+	t.Run("show all resets the search box", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/filter-mode",
+			strings.NewReader("filter=all&search=&reset-search=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		server.handleFilterModeChange(w, req)
+		assert.Contains(t, w.Body.String(), `id="search-box" class="search" hx-swap-oob="true"`)
+	})
+}
+
+func TestServer_handleThemeToggle(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	tbl := []struct{ current, want string }{{"dark", "light"}, {"light", "dark"}, {"", "light"}}
+	for _, tt := range tbl {
+		t.Run("from "+tt.current, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/theme", http.NoBody)
 			if tt.current != "" {
 				req.AddCookie(&http.Cookie{Name: "theme", Value: tt.current})
 			}
 			w := httptest.NewRecorder()
-
 			server.handleThemeToggle(w, req)
-
-			resp := w.Result()
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-			cookies := resp.Cookies()
-			require.Len(t, cookies, 1)
-			assert.Equal(t, "theme", cookies[0].Name)
-			assert.Equal(t, tt.expected, cookies[0].Value)
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, "true", w.Header().Get("HX-Refresh"))
+			assert.Equal(t, tt.want, w.Result().Cookies()[0].Value)
 		})
 	}
 }
 
-func TestServer_handleToggleView(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	tests := []struct {
-		name     string
-		current  string
-		expected string
-	}{
-		{"cards to list", "cards", "list"},
-		{"list to cards", "list", "cards"},
-		{"no cookie defaults to cards", "", "list"}, // no cookie defaults to list when toggled
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/toggle-view", http.NoBody)
-			if tt.current != "" {
-				req.AddCookie(&http.Cookie{Name: "view-mode", Value: tt.current})
-			}
-			w := httptest.NewRecorder()
-
-			server.handleViewModeToggle(w, req)
-
-			resp := w.Result()
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-			cookies := resp.Cookies()
-			require.Len(t, cookies, 1)
-			assert.Equal(t, "view-mode", cookies[0].Name)
-			assert.Equal(t, tt.expected, cookies[0].Value)
-		})
-	}
-}
-
-func TestServer_handleSortToggle(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// add test jobs with different schedules
-	startTime := time.Now()
-	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: startTime.Add(time.Second), ExitCode: 0, Output: "", Err: nil})
-	server.OnJobStart(request.OnJobStart{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour)})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo test2", ExecutedCommand: "echo test2", Schedule: "0 * * * *", StartTime: startTime.Add(-time.Hour), EndTime: startTime.Add(-time.Hour).Add(time.Second), ExitCode: 0, Output: "", Err: nil})
-
-	// start event processor to handle the job events
-	ctx := t.Context()
-	go server.processEvents(ctx)
-
-	// wait for events to be processed
-	require.Eventually(t, func() bool {
-		server.jobsMu.RLock()
-		defer server.jobsMu.RUnlock()
-		return len(server.jobs) == 2
-	}, time.Second, 10*time.Millisecond)
-
-	tests := []struct {
-		name             string
-		currentCookie    string
-		expectedNextMode string
-		expectedLabel    string
-	}{
-		{name: "default to lastrun", currentCookie: "default", expectedNextMode: "lastrun", expectedLabel: "Last Run"},
-		{name: "lastrun to nextrun", currentCookie: "lastrun", expectedNextMode: "nextrun", expectedLabel: "Next Run"},
-		{name: "nextrun to default", currentCookie: "nextrun", expectedNextMode: "default", expectedLabel: "Original Order"},
-		{name: "no cookie defaults to lastrun", currentCookie: "", expectedNextMode: "lastrun", expectedLabel: "Last Run"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/sort-toggle", http.NoBody)
-			if tt.currentCookie != "" {
-				req.AddCookie(&http.Cookie{Name: "sort-mode", Value: tt.currentCookie})
-			}
-			rec := httptest.NewRecorder()
-
-			server.handleSortToggle(rec, req)
-
-			assert.Equal(t, http.StatusOK, rec.Code)
-
-			// check cookie is set correctly
-			cookies := rec.Result().Cookies()
-			require.Len(t, cookies, 1)
-			assert.Equal(t, "sort-mode", cookies[0].Name)
-			assert.Equal(t, tt.expectedNextMode, cookies[0].Value)
-			assert.Equal(t, "/", cookies[0].Path)
-			assert.True(t, cookies[0].HttpOnly)
-
-			// check response contains job data and OOB update
-			// note: After refactoring to use templates, the sort button is now replaced entirely
-			// via outerHTML instead of just updating innerHTML, which is cleaner and more maintainable
-			body := rec.Body.String()
-			assert.Contains(t, body, "echo test1")
-			assert.Contains(t, body, "echo test2")
-			assert.Contains(t, body, `hx-swap-oob="outerHTML:.sort-button"`)
-			assert.Contains(t, body, tt.expectedLabel)
-		})
-	}
-}
-
-func TestServer_handleFilterModeChange(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	parser := crontab.New("test-crontab", 0, nil)
-	server, err := New(Config{DBPath: dbPath, UpdateInterval: time.Minute, JobsProvider: parser})
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	server.jobs = map[string]persistence.JobInfo{
-		"1": {ID: "1", Command: "cmd1", IsRunning: true, LastStatus: enums.JobStatusRunning},
-		"2": {ID: "2", Command: "cmd2", LastStatus: enums.JobStatusSuccess},
-		"3": {ID: "3", Command: "cmd3", LastStatus: enums.JobStatusFailed},
-		"4": {ID: "4", Command: "cmd4", LastStatus: enums.JobStatusIdle},
-	}
-
-	tmpl := template.New("partials")
-	tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}} {{end}}`))
-	tmpl = template.Must(tmpl.New("jobs-list").Parse(`{{range .Jobs}}{{.Command}} {{end}}`))
-	tmpl = template.Must(tmpl.New("filter-button").Parse(`<button><span id="filter-label">{{.FilterMode.String}}</span></button>`))
-	tmpl = template.Must(tmpl.New("stats-updates").Parse(`{{if .IsOOB}}<span id="running-count">{{.RunningCount}}</span>{{end}}`))
-	tmpl = template.Must(tmpl.New("stats-total").Parse(`<button id="stat-total" class="stat-total{{if eq .FilterMode.String "all"}} active{{end}}">{{.TotalCount}}</button>`))
-	tmpl = template.Must(tmpl.New("stats-breakdown").Parse(`<div id="stats-breakdown"><button class="breakdown-{{.FilterMode.String}} active">x</button></div>`))
-	server.templates = map[string]*template.Template{"partials/jobs.html": tmpl}
-
-	tests := []struct {
-		name       string
-		filter     string
-		wantCookie string
-		wantJobs   string // command expected in the filtered jobs body
-		wantActive string // active breakdown class expected
-	}{
-		{"success", "success", "success", "cmd2", "breakdown-success active"},
-		{"failed", "failed", "failed", "cmd3", "breakdown-failed active"},
-		{"idle", "idle", "idle", "cmd4", "breakdown-idle active"},
-		{"invalid falls back to all", "bogus", "all", "cmd1", ""},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/filter-mode", strings.NewReader("filter="+tc.filter))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			w := httptest.NewRecorder()
-			server.handleFilterModeChange(w, req)
-
-			resp := w.Result()
-			defer resp.Body.Close()
-
-			cookies := resp.Cookies()
-			require.Len(t, cookies, 1)
-			assert.Equal(t, "filter-mode", cookies[0].Name)
-			assert.Equal(t, tc.wantCookie, cookies[0].Value)
-
-			body := w.Body.String()
-			assert.Contains(t, body, tc.wantJobs)
-			if tc.wantActive != "" {
-				assert.Contains(t, body, tc.wantActive)
-			}
-		})
-	}
-}
-
-func TestServer_handleFilterToggle(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	// create crontab parser as jobs provider
-	parser := crontab.New("test-crontab", 0, nil)
-
-	server, err := New(Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		JobsProvider:   parser,
-	})
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// add test jobs
-	server.jobs["1"] = persistence.JobInfo{ID: "1", Command: "cmd1", IsRunning: true, LastStatus: enums.JobStatusRunning}
-	server.jobs["2"] = persistence.JobInfo{ID: "2", Command: "cmd2", IsRunning: false, LastStatus: enums.JobStatusSuccess}
-	server.jobs["3"] = persistence.JobInfo{ID: "3", Command: "cmd3", IsRunning: false, LastStatus: enums.JobStatusFailed}
-
-	// add minimal templates for testing
-	tmpl := template.New("partials")
-	tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
-	tmpl = template.Must(tmpl.New("jobs-list").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
-	tmpl = template.Must(tmpl.New("filter-button").Parse(`<button><span id="filter-label">{{if eq .FilterMode.String "all"}}All Jobs{{else if eq .FilterMode.String "running"}}Running{{else if eq .FilterMode.String "success"}}Success{{else if eq .FilterMode.String "failed"}}Failed{{else}}Idle{{end}}</span></button>`))
-	tmpl = template.Must(tmpl.New("stats-updates").Parse(`{{if .IsOOB}}<span id="running-count" hx-swap-oob="innerHTML">{{.RunningCount}}</span><span id="next-run" hx-swap-oob="innerHTML">{{.NextRunTime}}</span>{{end}}`))
-	tmpl = template.Must(tmpl.New("stats-total").Parse(`<button id="stat-total" class="stat-total{{if eq .FilterMode.String "all"}} active{{end}}">{{.TotalCount}}</button>`))
-	tmpl = template.Must(tmpl.New("stats-breakdown").Parse(`<div id="stats-breakdown"><button class="breakdown-ok{{if eq .FilterMode.String "success"}} active{{end}}">{{.SuccessCount}}</button><button class="breakdown-failed{{if eq .FilterMode.String "failed"}} active{{end}}">{{.FailedCount}}</button><button class="breakdown-idle{{if eq .FilterMode.String "idle"}} active{{end}}">{{.IdleCount}}</button></div>`))
-	server.templates = map[string]*template.Template{
-		"partials/jobs.html": tmpl,
-	}
-
-	tests := []struct {
-		currentMode   string
-		expectedNext  string
-		expectedLabel string
-	}{
-		{"all", "running", "Running"},
-		{"running", "success", "Success"},
-		{"success", "failed", "Failed"},
-		{"failed", "idle", "Idle"},
-		{"idle", "all", "All Jobs"},
-	}
-
-	for _, tc := range tests {
-		t.Run(fmt.Sprintf("%s_to_%s", tc.currentMode, tc.expectedNext), func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/filter-toggle", http.NoBody)
-			if tc.currentMode != "all" {
-				req.AddCookie(&http.Cookie{
-					Name:  "filter-mode",
-					Value: tc.currentMode,
-				})
-			}
-
-			w := httptest.NewRecorder()
-			server.handleFilterToggle(w, req)
-
-			resp := w.Result()
-			defer resp.Body.Close()
-
-			// check cookie was set
-			cookies := resp.Cookies()
-			require.Len(t, cookies, 1)
-			assert.Equal(t, "filter-mode", cookies[0].Name)
-			assert.Equal(t, tc.expectedNext, cookies[0].Value)
-
-			// check response contains the filter label
-			body := w.Body.String()
-			assert.Contains(t, body, tc.expectedLabel)
-			assert.Contains(t, body, `id="filter-label"`)
-		})
-	}
-
-	t.Run("stats template error", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/filter-toggle", http.NoBody)
+func TestServer_handleRunForm(t *testing.T) {
+	get := func(s *Server, id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/run-form", http.NoBody)
+		req.SetPathValue("id", id)
 		w := httptest.NewRecorder()
+		s.handleRunForm(w, req)
+		return w
+	}
 
-		// create a template without stats-updates to trigger error
-		tmpl := template.New("partials")
-		tmpl = template.Must(tmpl.New("jobs-cards").Parse(`{{range .Jobs}}{{.Command}}{{end}}`))
-		tmpl = template.Must(tmpl.New("filter-button").Parse(`<button>test</button>`))
-		// intentionally missing stats-updates template
-		server.templates = map[string]*template.Template{
-			"partials/jobs.html": tmpl,
-		}
-
-		server.handleFilterToggle(w, req)
-
-		resp := w.Result()
-		defer resp.Body.Close()
-
-		// should get error response
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	t.Run("plain command has no date field", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		addJobs(s, sampleJobs()...)
+		w := get(s, "ok")
+		require.Equal(t, http.StatusOK, w.Code)
 		body := w.Body.String()
-		assert.Equal(t, "Failed to render jobs\n", body)
-	})
-}
-
-func TestServer_getJobsWithStats_WithFilter(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	// create crontab parser as jobs provider
-	parser := crontab.New("test-crontab", 0, nil)
-
-	server, err := New(Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		JobsProvider:   parser,
-	})
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// add test jobs with different statuses
-	now := time.Now()
-	server.jobs = map[string]persistence.JobInfo{
-		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour), Enabled: true},
-		"2": {ID: "2", Command: "success1", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour), Enabled: true},
-		"3": {ID: "3", Command: "failed1", IsRunning: false, LastStatus: enums.JobStatusFailed, NextRun: now.Add(3 * time.Hour), Enabled: true},
-		"4": {ID: "4", Command: "success2", IsRunning: false, LastStatus: enums.JobStatusSuccess, NextRun: now.Add(4 * time.Hour), Enabled: true},
-		"5": {ID: "5", Command: "running2", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(30 * time.Minute), Enabled: true},
-	}
-
-	t.Run("filter all", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeAll, "")
-		assert.Len(t, stats.jobs, 5)
-		assert.Equal(t, 2, stats.runningCount)
-		assert.Equal(t, 5, stats.totalCount)
-		assert.Equal(t, 2, stats.successCount)
-		assert.Equal(t, 1, stats.failedCount)
-		assert.Equal(t, 0, stats.idleCount)
-		assert.NotEqual(t, "-", stats.nextRunTime)
+		assert.Contains(t, body, `<dialog class="run-dialog" data-job-id="ok"`)
+		assert.Contains(t, body, "Run “Quote sync” now")
+		assert.Contains(t, body, "Requests a one-time run.")
+		assert.Contains(t, body, ">echo sync</textarea>")
+		assert.NotContains(t, body, `name="date"`)
+		assert.NotContains(t, body, " readonly")
+		assert.Contains(t, body, `<form method="dialog">`)
 	})
 
-	t.Run("filter running", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeRunning, "")
-		assert.Len(t, stats.jobs, 2)
-		assert.Equal(t, 2, stats.runningCount)
-		assert.Equal(t, 5, stats.totalCount)
-		for _, job := range stats.jobs {
-			assert.True(t, job.IsRunning)
-		}
+	t.Run("templated command gets the date field", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		addJobs(s, persistence.JobInfo{ID: "tpl", Command: "echo {{.YYYYMMDD}}", Schedule: "@daily", Enabled: true})
+		body := get(s, "tpl").Body.String()
+		assert.Contains(t, body, `name="date"`)
+		assert.Contains(t, body, "a supplied date is used at 00:00")
 	})
 
-	t.Run("filter success", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeSuccess, "")
-		assert.Len(t, stats.jobs, 2)
-		assert.Equal(t, 2, stats.runningCount)
-		assert.Equal(t, 5, stats.totalCount)
-		for _, job := range stats.jobs {
-			assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
-		}
+	t.Run("command edit disabled makes the command read-only", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{DisableCommandEdit: true})
+		addJobs(s, sampleJobs()...)
+		body := get(s, "ok").Body.String()
+		assert.Contains(t, body, " readonly>")
+		assert.NotContains(t, body, "edits apply to this run only")
 	})
 
-	t.Run("filter failed", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeFailed, "")
-		assert.Len(t, stats.jobs, 1)
-		assert.Equal(t, 2, stats.runningCount)
-		assert.Equal(t, 5, stats.totalCount)
-		assert.Equal(t, enums.JobStatusFailed, stats.jobs[0].LastStatus)
+	t.Run("manual runs disabled", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{DisableManual: true})
+		addJobs(s, sampleJobs()...)
+		assert.Equal(t, http.StatusForbidden, get(s, "ok").Code)
 	})
 
-	t.Run("sorting works with filtering", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeNextrun, enums.FilterModeAll, "")
-		assert.Len(t, stats.jobs, 5)
-		// verify sorted by next run time
-		for i := 1; i < len(stats.jobs); i++ {
-			if !stats.jobs[i-1].NextRun.IsZero() && !stats.jobs[i].NextRun.IsZero() {
-				assert.True(t, stats.jobs[i-1].NextRun.Before(stats.jobs[i].NextRun) ||
-					stats.jobs[i-1].NextRun.Equal(stats.jobs[i].NextRun))
-			}
-		}
-	})
-}
-
-func TestServer_getJobsWithStats_StatusBreakdown(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	parser := crontab.New("test-crontab", 0, nil)
-	server, err := New(Config{DBPath: dbPath, UpdateInterval: time.Minute, JobsProvider: parser})
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	now := time.Now()
-	server.jobs = map[string]persistence.JobInfo{
-		"1": {ID: "1", Command: "running1", IsRunning: true, LastStatus: enums.JobStatusRunning, NextRun: now.Add(time.Hour), Enabled: true},
-		"2": {ID: "2", Command: "success1", LastStatus: enums.JobStatusSuccess, NextRun: now.Add(2 * time.Hour), Enabled: true},
-		"3": {ID: "3", Command: "success2", LastStatus: enums.JobStatusSuccess, NextRun: now.Add(3 * time.Hour), Enabled: true},
-		"4": {ID: "4", Command: "failed1", LastStatus: enums.JobStatusFailed, NextRun: now.Add(4 * time.Hour), Enabled: true},
-		"5": {ID: "5", Command: "idle1", LastStatus: enums.JobStatusIdle, NextRun: now.Add(5 * time.Hour), Enabled: true},
-		"6": {ID: "6", Command: "idle2", LastStatus: enums.JobStatusIdle, Enabled: false},
-	}
-
-	// breakdown counts are computed over all jobs before filtering, so they stay constant across filter modes
-	for _, fm := range []enums.FilterMode{enums.FilterModeAll, enums.FilterModeRunning, enums.FilterModeSuccess, enums.FilterModeFailed, enums.FilterModeIdle} {
-		t.Run(fm.String(), func(t *testing.T) {
-			stats := server.getJobsWithStats(enums.SortModeDefault, fm, "")
-			assert.Equal(t, 6, stats.totalCount)
-			assert.Equal(t, 1, stats.runningCount)
-			assert.Equal(t, 2, stats.successCount)
-			assert.Equal(t, 1, stats.failedCount)
-			assert.Equal(t, 2, stats.idleCount)
-		})
-	}
-
-	t.Run("filter idle returns only idle jobs", func(t *testing.T) {
-		stats := server.getJobsWithStats(enums.SortModeDefault, enums.FilterModeIdle, "")
-		assert.Len(t, stats.jobs, 2)
-		for _, job := range stats.jobs {
-			assert.Equal(t, enums.JobStatusIdle, job.LastStatus)
-		}
+	t.Run("unknown job", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		assert.Equal(t, http.StatusNotFound, get(s, "nope").Code)
 	})
 }
 
 func TestServer_handleRunJob(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	// create manual trigger channel for testing
-	manualTrigger := make(chan service.ManualJobRequest, 10)
-
-	// create a dummy provider for testing
-	crontabFile := filepath.Join(tmpDir, "dummy")
-	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
-	parser := crontab.New(crontabFile, 0, nil)
-
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		ManualTrigger:  manualTrigger,
-		JobsProvider:   parser,
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// add test job to server
-	testJob := persistence.JobInfo{
-		ID:         "test-job-id",
-		Command:    "echo test",
-		Schedule:   "* * * * *",
-		Enabled:    true,
-		IsRunning:  false,
-		LastStatus: enums.JobStatusIdle,
-	}
-	server.jobsMu.Lock()
-	server.jobs[testJob.ID] = testJob
-	server.jobsMu.Unlock()
-
-	t.Run("successful manual trigger", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
-		req.SetPathValue("id", "test-job-id")
+	post := func(s *Server, id string, form url.Values, htmx bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/jobs/"+id+"/run", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		req.SetPathValue("id", id)
 		w := httptest.NewRecorder()
+		s.handleRunJob(w, req)
+		return w
+	}
 
-		server.handleRunJob(w, req)
+	newServer := func(t *testing.T, cfg Config, buf int) (*Server, chan service.ManualJobRequest) {
+		var ch chan service.ManualJobRequest
+		if buf >= 0 {
+			ch = make(chan service.ManualJobRequest, buf)
+			cfg.ManualTrigger = ch
+		}
+		s := newHandlersTestServer(t, cfg)
+		addJobs(s, append(sampleJobs(),
+			persistence.JobInfo{ID: "tpl", Name: "Templated", Command: "echo {{.YYYYMMDD}}", Schedule: "@daily", Enabled: true})...)
+		return s, ch
+	}
 
+	t.Run("accepted: curl gets 202 text, htmx gets 202 with toast", func(t *testing.T) {
+		s, ch := newServer(t, Config{}, 2)
+
+		w := post(s, "ok", url.Values{}, false)
 		assert.Equal(t, http.StatusAccepted, w.Code)
 		assert.Equal(t, "Job triggered", w.Body.String())
 		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"))
+		req := <-ch
+		assert.Equal(t, "echo sync", req.Command)
+		assert.Nil(t, req.CustomDate)
 
-		// verify manual trigger was sent
-		select {
-		case trigger := <-manualTrigger:
-			assert.Equal(t, "test-job-id", trigger.JobID)
-			assert.Equal(t, "echo test", trigger.Command)
-			assert.Equal(t, "* * * * *", trigger.Schedule)
-			assert.Nil(t, trigger.CustomDate)
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("manual trigger not received")
-		}
-	})
-
-	t.Run("job not found", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/nonexistent/run", http.NoBody)
-		req.SetPathValue("id", "nonexistent")
-		w := httptest.NewRecorder()
-
-		server.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Contains(t, w.Body.String(), "Job not found")
-	})
-
-	t.Run("job disabled", func(t *testing.T) {
-		// add disabled job
-		disabledJob := persistence.JobInfo{
-			ID:        "disabled-job",
-			Command:   "echo disabled",
-			Schedule:  "* * * * *",
-			Enabled:   false,
-			IsRunning: false,
-		}
-		server.jobsMu.Lock()
-		server.jobs[disabledJob.ID] = disabledJob
-		server.jobsMu.Unlock()
-
-		req := httptest.NewRequest("POST", "/api/jobs/disabled-job/run", http.NoBody)
-		req.SetPathValue("id", "disabled-job")
-		w := httptest.NewRecorder()
-
-		server.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "Job is disabled")
-	})
-
-	t.Run("job already running", func(t *testing.T) {
-		// add running job
-		runningJob := persistence.JobInfo{
-			ID:        "running-job",
-			Command:   "echo running",
-			Schedule:  "* * * * *",
-			Enabled:   true,
-			IsRunning: true,
-		}
-		server.jobsMu.Lock()
-		server.jobs[runningJob.ID] = runningJob
-		server.jobsMu.Unlock()
-
-		req := httptest.NewRequest("POST", "/api/jobs/running-job/run", http.NoBody)
-		req.SetPathValue("id", "running-job")
-		w := httptest.NewRecorder()
-
-		server.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusConflict, w.Code)
-		assert.Contains(t, w.Body.String(), "Job already running")
-	})
-
-	t.Run("manual trigger channel full", func(t *testing.T) {
-		// create server with full channel
-		fullChannel := make(chan service.ManualJobRequest, 1)
-		fullChannel <- service.ManualJobRequest{} // fill the channel
-
-		cfg := Config{
-			DBPath:         filepath.Join(tmpDir, "test2.db"),
-			UpdateInterval: time.Minute,
-			Version:        "test",
-			ManualTrigger:  fullChannel,
-			JobsProvider:   createTestProvider(t, tmpDir),
-		}
-
-		server2, err := New(cfg)
-		require.NoError(t, err)
-		defer server2.store.Close()
-
-		// add test job
-		server2.jobsMu.Lock()
-		server2.jobs[testJob.ID] = testJob
-		server2.jobsMu.Unlock()
-
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
-		req.SetPathValue("id", "test-job-id")
-		w := httptest.NewRecorder()
-
-		server2.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-		assert.Contains(t, w.Body.String(), "System busy")
-	})
-
-	t.Run("no manual trigger configured", func(t *testing.T) {
-		// create server without manual trigger
-		cfg := Config{
-			DBPath:         filepath.Join(tmpDir, "test3.db"),
-			UpdateInterval: time.Minute,
-			Version:        "test",
-			ManualTrigger:  nil,
-			JobsProvider:   createTestProvider(t, tmpDir),
-		}
-
-		server3, err := New(cfg)
-		require.NoError(t, err)
-		defer server3.store.Close()
-
-		// add test job
-		server3.jobsMu.Lock()
-		server3.jobs[testJob.ID] = testJob
-		server3.jobsMu.Unlock()
-
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
-		req.SetPathValue("id", "test-job-id")
-		w := httptest.NewRecorder()
-
-		server3.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-		assert.Contains(t, w.Body.String(), "Manual trigger not configured")
-	})
-
-	t.Run("manual trigger with edited command", func(t *testing.T) {
-		// create form data with edited command
-		form := url.Values{}
-		form.Add("command", "echo edited")
-
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
-		req.SetPathValue("id", "test-job-id")
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		w := httptest.NewRecorder()
-
-		server.handleRunJob(w, req)
-
+		w = post(s, "tpl", url.Values{"command": {"echo edited {{.YYYYMMDD}}"}, "date": {"20260915"}}, true)
 		assert.Equal(t, http.StatusAccepted, w.Code)
-
-		// verify edited command was sent
-		select {
-		case trigger := <-manualTrigger:
-			assert.Equal(t, "test-job-id", trigger.JobID)
-			assert.Equal(t, "echo edited", trigger.Command)
-			assert.Equal(t, "* * * * *", trigger.Schedule)
-			assert.Nil(t, trigger.CustomDate)
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("manual trigger not received")
-		}
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
+		assert.Contains(t, w.Body.String(), `id="toasts" hx-swap-oob="innerHTML"`)
+		assert.Contains(t, w.Body.String(), "Run request accepted: <b>Templated</b>")
+		assert.NotContains(t, w.Body.String(), "<dialog")
+		req = <-ch
+		assert.Equal(t, "echo edited {{.YYYYMMDD}}", req.Command)
+		require.NotNil(t, req.CustomDate)
+		assert.Equal(t, "2026-09-15 00:00", req.CustomDate.Format("2006-01-02 15:04"))
 	})
 
-	t.Run("manual trigger with custom date", func(t *testing.T) {
-		// create form data with custom date
-		form := url.Values{}
-		form.Add("command", "echo test")
-		form.Add("date", "20241225")
+	tbl := []struct {
+		name       string
+		cfg        Config
+		buf        int
+		id         string
+		form       url.Values
+		wantStatus int
+		wantMsg    string
+	}{
+		{"disabled job", Config{}, 1, "off", url.Values{}, http.StatusBadRequest, "Job is disabled"},
+		{"already running", Config{}, 1, "run", url.Values{"command": {"sleep 5"}}, http.StatusConflict, "Job already running"},
+		{"trigger not configured", Config{}, -1, "ok", url.Values{}, http.StatusServiceUnavailable, "Manual trigger not configured"},
+		{"command edit disabled", Config{DisableCommandEdit: true}, 1, "ok", url.Values{"command": {"rm -rf /"}},
+			http.StatusForbidden, "Command editing is disabled"},
+		{"impossible date", Config{}, 1, "tpl", url.Values{"command": {"echo mine"}, "date": {"20260231"}},
+			http.StatusBadRequest, "Invalid date format, expected YYYYMMDD"},
+		{"busy", Config{}, 0, "ok", url.Values{}, http.StatusServiceUnavailable, "System busy, too many manual triggers"},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := newServer(t, tt.cfg, tt.buf)
 
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
-		req.SetPathValue("id", "test-job-id")
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		w := httptest.NewRecorder()
+			w := post(s, tt.id, tt.form, false)
+			assert.Equal(t, tt.wantStatus, w.Code)
+			assert.Equal(t, tt.wantMsg+"\n", w.Body.String())
 
-		server.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusAccepted, w.Code)
-
-		// verify custom date was sent in local timezone
-		select {
-		case trigger := <-manualTrigger:
-			assert.Equal(t, "test-job-id", trigger.JobID)
-			assert.Equal(t, "echo test", trigger.Command)
-			assert.Equal(t, "* * * * *", trigger.Schedule)
-			require.NotNil(t, trigger.CustomDate)
-			// verify date components
-			assert.Equal(t, 2024, trigger.CustomDate.Year())
-			assert.Equal(t, time.December, trigger.CustomDate.Month())
-			assert.Equal(t, 25, trigger.CustomDate.Day())
-			// verify it's midnight in local timezone, not UTC
-			assert.Equal(t, time.Local, trigger.CustomDate.Location())
-			assert.Equal(t, 0, trigger.CustomDate.Hour())
-			assert.Equal(t, 0, trigger.CustomDate.Minute())
-			assert.Equal(t, 0, trigger.CustomDate.Second())
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("manual trigger not received")
-		}
-	})
-
-	t.Run("manual trigger with invalid date format", func(t *testing.T) {
-		// create form data with invalid date
-		form := url.Values{}
-		form.Add("command", "echo test")
-		form.Add("date", "invalid")
-
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
-		req.SetPathValue("id", "test-job-id")
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		w := httptest.NewRecorder()
-
-		server.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "Invalid date format")
-	})
-
-	t.Run("manual execution disabled", func(t *testing.T) {
-		// create server with manual execution disabled
-		cfg := Config{
-			DBPath:         filepath.Join(tmpDir, "test4.db"),
-			UpdateInterval: time.Minute,
-			Version:        "test",
-			ManualTrigger:  manualTrigger,
-			JobsProvider:   createTestProvider(t, tmpDir),
-			DisableManual:  true,
-		}
-
-		server4, err := New(cfg)
-		require.NoError(t, err)
-		defer server4.store.Close()
-
-		// add test job
-		server4.jobsMu.Lock()
-		server4.jobs[testJob.ID] = testJob
-		server4.jobsMu.Unlock()
-
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", http.NoBody)
-		req.SetPathValue("id", "test-job-id")
-		w := httptest.NewRecorder()
-
-		server4.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusForbidden, w.Code)
-		assert.Contains(t, w.Body.String(), "Manual job execution is disabled")
-	})
-
-	t.Run("command editing disabled", func(t *testing.T) {
-		// create server with command editing disabled
-		cfg := Config{
-			DBPath:             filepath.Join(tmpDir, "test5.db"),
-			UpdateInterval:     time.Minute,
-			Version:            "test",
-			ManualTrigger:      manualTrigger,
-			JobsProvider:       createTestProvider(t, tmpDir),
-			DisableCommandEdit: true,
-		}
-
-		server5, err := New(cfg)
-		require.NoError(t, err)
-		defer server5.store.Close()
-
-		// add test job
-		server5.jobsMu.Lock()
-		server5.jobs[testJob.ID] = testJob
-		server5.jobsMu.Unlock()
-
-		// try to run with edited command
-		form := url.Values{}
-		form.Add("command", "echo modified")
-
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
-		req.SetPathValue("id", "test-job-id")
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		w := httptest.NewRecorder()
-
-		server5.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusForbidden, w.Code)
-		assert.Contains(t, w.Body.String(), "Command editing is disabled")
-	})
-
-	t.Run("command editing disabled but command unchanged", func(t *testing.T) {
-		// create server with command editing disabled
-		cfg := Config{
-			DBPath:             filepath.Join(tmpDir, "test6.db"),
-			UpdateInterval:     time.Minute,
-			Version:            "test",
-			ManualTrigger:      manualTrigger,
-			JobsProvider:       createTestProvider(t, tmpDir),
-			DisableCommandEdit: true,
-		}
-
-		server6, err := New(cfg)
-		require.NoError(t, err)
-		defer server6.store.Close()
-
-		// add test job
-		server6.jobsMu.Lock()
-		server6.jobs[testJob.ID] = testJob
-		server6.jobsMu.Unlock()
-
-		// try to run with same command (should succeed)
-		form := url.Values{}
-		form.Add("command", "echo test")
-
-		req := httptest.NewRequest("POST", "/api/jobs/test-job-id/run", strings.NewReader(form.Encode()))
-		req.SetPathValue("id", "test-job-id")
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		w := httptest.NewRecorder()
-
-		server6.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusAccepted, w.Code)
-
-		// verify manual trigger was sent with original command
-		select {
-		case trigger := <-manualTrigger:
-			assert.Equal(t, "test-job-id", trigger.JobID)
-			assert.Equal(t, "echo test", trigger.Command)
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("manual trigger not received")
-		}
-	})
-
-	t.Run("command editing disabled with templated command", func(t *testing.T) {
-		// create server with command editing disabled
-		cfg := Config{
-			DBPath:             filepath.Join(tmpDir, "test7.db"),
-			UpdateInterval:     time.Minute,
-			Version:            "test",
-			ManualTrigger:      manualTrigger,
-			JobsProvider:       createTestProvider(t, tmpDir),
-			DisableCommandEdit: true,
-		}
-
-		server7, err := New(cfg)
-		require.NoError(t, err)
-		defer server7.store.Close()
-
-		// add test job with template
-		templatedJob := persistence.JobInfo{
-			ID:         "templated-job",
-			Command:    "echo {{.YYYYMMDD}}",
-			Schedule:   "* * * * *",
-			Enabled:    true,
-			IsRunning:  false,
-			LastStatus: enums.JobStatusIdle,
-		}
-		server7.jobsMu.Lock()
-		server7.jobs[templatedJob.ID] = templatedJob
-		server7.jobsMu.Unlock()
-
-		// try to run with same templated command (should succeed)
-		form := url.Values{}
-		form.Add("command", "echo {{.YYYYMMDD}}")
-
-		req := httptest.NewRequest("POST", "/api/jobs/templated-job/run", strings.NewReader(form.Encode()))
-		req.SetPathValue("id", "templated-job")
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		w := httptest.NewRecorder()
-
-		server7.handleRunJob(w, req)
-
-		assert.Equal(t, http.StatusAccepted, w.Code)
-
-		// verify manual trigger was sent with templated command
-		select {
-		case trigger := <-manualTrigger:
-			assert.Equal(t, "templated-job", trigger.JobID)
-			assert.Equal(t, "echo {{.YYYYMMDD}}", trigger.Command)
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("manual trigger not received")
-		}
-	})
-}
-
-func TestServer_handleJobHistory(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	crontabFile := filepath.Join(tmpDir, "dummy")
-	require.NoError(t, os.WriteFile(crontabFile, []byte(""), 0o600))
-	parser := crontab.New(crontabFile, 0, nil)
-
-	cfg := Config{DBPath: dbPath, UpdateInterval: time.Minute, Version: "test", JobsProvider: parser}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	testJob := persistence.JobInfo{ID: "test-job-id", Command: "echo test", Schedule: "* * * * *", Enabled: true, LastStatus: enums.JobStatusIdle}
-	server.jobsMu.Lock()
-	server.jobs[testJob.ID] = testJob
-	server.jobsMu.Unlock()
-
-	t.Run("successful retrieval with executions", func(t *testing.T) {
-		baseTime := time.Now()
-		err = server.store.RecordExecution(request.RecordExecution{JobID: "test-job-id", StartedAt: baseTime.Add(-5 * time.Minute), FinishedAt: baseTime.Add(-4 * time.Minute), Status: enums.JobStatusSuccess, ExitCode: 0, ExecutedCommand: "echo test1", Output: ""})
-		require.NoError(t, err)
-		err = server.store.RecordExecution(request.RecordExecution{JobID: "test-job-id", StartedAt: baseTime.Add(-2 * time.Minute), FinishedAt: baseTime.Add(-1 * time.Minute), Status: enums.JobStatusFailed, ExitCode: 1, ExecutedCommand: "echo test2", Output: ""})
-		require.NoError(t, err)
-
-		req := httptest.NewRequest("GET", "/api/jobs/test-job-id/history", http.NoBody)
-		req.SetPathValue("id", "test-job-id")
-		w := httptest.NewRecorder()
-
-		server.handleJobHistory(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		body := w.Body.String()
-		assert.Contains(t, body, "Execution History")
-		assert.Contains(t, body, "echo test")
-		assert.Contains(t, body, "Success")
-		assert.Contains(t, body, "Failed")
-		assert.Contains(t, body, "history-table")
-	})
-
-	t.Run("job not found", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/nonexistent/history", http.NoBody)
-		req.SetPathValue("id", "nonexistent")
-		w := httptest.NewRecorder()
-
-		server.handleJobHistory(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Contains(t, w.Body.String(), "Job not found")
-	})
-
-	t.Run("empty job id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs//history", http.NoBody)
-		w := httptest.NewRecorder()
-
-		server.handleJobHistory(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "Job ID required")
-	})
-
-	t.Run("no executions", func(t *testing.T) {
-		emptyJob := persistence.JobInfo{ID: "empty-job-id", Command: "echo empty", Schedule: "* * * * *", Enabled: true}
-		server.jobsMu.Lock()
-		server.jobs[emptyJob.ID] = emptyJob
-		server.jobsMu.Unlock()
-
-		req := httptest.NewRequest("GET", "/api/jobs/empty-job-id/history", http.NoBody)
-		req.SetPathValue("id", "empty-job-id")
-		w := httptest.NewRecorder()
-
-		server.handleJobHistory(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		body := w.Body.String()
-		assert.Contains(t, body, "Execution History")
-		assert.Contains(t, body, "No execution history available")
-	})
-}
-
-func TestServer_handleSettingsModal(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	settingsInfo := SettingsInfo{
-		Version:             "v1.0.0",
-		StartTime:           time.Now().Add(-1 * time.Hour),
-		WebEnabled:          true,
-		WebAddress:          ":8080",
-		WebUpdateInterval:   30 * time.Second,
-		AuthEnabled:         true,
-		ManualEnabled:       true,
-		CommandEditEnabled:  true,
-		CrontabPath:         "test-crontab",
-		UpdateEnabled:       true,
-		UpdateInterval:      10 * time.Second,
-		JitterEnabled:       true,
-		DeDupEnabled:        true,
-		MaxConcurrentChecks: 10,
-		ResumeEnabled:       true,
-		ResumePath:          "/tmp/resume",
-		AltTemplateFormat:   false,
-		RepeaterAttempts:    3,
-		RepeaterDuration:    5 * time.Second,
-		RepeaterFactor:      2.0,
-		RepeaterJitter:      true,
-		EmailNotifications:  true,
-		SlackIntegration:    true,
-		SlackChannelCount:   2,
-		TelegramIntegration: true,
-		TelegramDestCount:   3,
-		WebhookCount:        1,
-		NotificationTimeout: 10 * time.Second,
-		LoggingEnabled:      true,
-		DebugMode:           false,
-		LogFilePath:         "/var/log/cronn.log",
-		LogMaxSize:          100,
-		LogMaxAge:           30,
-		LogMaxBackups:       7,
+			w = post(s, tt.id, tt.form, true)
+			assert.Equal(t, http.StatusOK, w.Code, "htmx rejections answer 200 so htmx swaps the form")
+			body := w.Body.String()
+			assert.Contains(t, body, "<dialog")
+			assert.Contains(t, body, template.HTMLEscapeString("Not started: "+tt.wantMsg+"."))
+			assert.Empty(t, w.Header().Get("HX-Trigger-After-Swap"))
+			assert.NotContains(t, body, "toasts")
+			if cmd := tt.form.Get("command"); cmd != "" {
+				assert.Contains(t, body, ">"+template.HTMLEscapeString(cmd)+"</textarea>", "edits are kept")
+			}
+			if d := tt.form.Get("date"); d != "" {
+				assert.Contains(t, body, `value="`+d+`"`)
+			}
+		})
 	}
 
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
-		Settings:       settingsInfo,
-	}
+	t.Run("manual runs disabled", func(t *testing.T) {
+		s, _ := newServer(t, Config{DisableManual: true}, 1)
+		w := post(s, "ok", url.Values{}, true)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
+	t.Run("job removed after the dialog opened", func(t *testing.T) {
+		s, ch := newServer(t, Config{}, 1)
+		form := url.Values{"command": {"echo edited"}, "date": {"20260915"}}
 
-	req := httptest.NewRequest("GET", "/api/settings/modal", http.NoBody)
-	w := httptest.NewRecorder()
+		w := post(s, "gone", form, false)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, "Job not found\n", w.Body.String())
 
-	server.handleSettingsModal(w, req)
-
-	resp := w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, w.Body.String(), "Settings & About")
-	assert.Contains(t, w.Body.String(), "v1.0.0")
-	assert.Contains(t, w.Body.String(), ":8080")
-	assert.Contains(t, w.Body.String(), "test-crontab")
-}
-
-func TestServer_handleExecutionLogs(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	cfg := Config{DBPath: dbPath, UpdateInterval: time.Minute, Version: "test", JobsProvider: createTestProvider(t, tmpDir), ExecMaxLogLines: 100, LogExecMaxHist: 50}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
-
-	// start event processor
-	ctx := t.Context()
-	go server.processEvents(ctx)
-
-	// create test execution records
-	jobID := HashCommand("echo test1")
-	startTime := time.Now().Add(-1 * time.Minute)
-	endTime := time.Now()
-
-	server.OnJobStart(request.OnJobStart{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime})
-	server.OnJobComplete(request.OnJobComplete{Command: "echo test1", ExecutedCommand: "echo test1", Schedule: "* * * * *", StartTime: startTime, EndTime: endTime, ExitCode: 0, Output: "test output line 1\ntest output line 2", Err: nil})
-
-	// wait for event processing
-	require.Eventually(t, func() bool {
-		execs, errGet := server.store.GetExecutions(jobID, 10)
-		return errGet == nil && len(execs) == 1
-	}, time.Second, 10*time.Millisecond)
-
-	// get execution ID from database
-	executions, err := server.store.GetExecutions(jobID, 10)
-	require.NoError(t, err)
-	require.Len(t, executions, 1)
-	execID := executions[0].ID
-
-	t.Run("valid request", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
-		req.SetPathValue("id", jobID)
-		req.SetPathValue("exec_id", fmt.Sprint(execID))
-		w := httptest.NewRecorder()
-
-		server.handleExecutionLogs(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		w = post(s, "gone", form, true)
+		assert.Equal(t, http.StatusOK, w.Code)
 		body := w.Body.String()
-		assert.Contains(t, body, "test output line 1")
-		assert.Contains(t, body, "test output line 2")
-	})
-
-	t.Run("missing job id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs//executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
-		req.SetPathValue("exec_id", fmt.Sprint(execID))
-		w := httptest.NewRecorder()
-
-		server.handleExecutionLogs(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	})
-
-	t.Run("invalid execution id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/invalid/logs", http.NoBody)
-		req.SetPathValue("id", jobID)
-		req.SetPathValue("exec_id", "invalid")
-		w := httptest.NewRecorder()
-
-		server.handleExecutionLogs(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	})
-
-	t.Run("non-existent execution", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/executions/99999/logs", http.NoBody)
-		req.SetPathValue("id", jobID)
-		req.SetPathValue("exec_id", "99999")
-		w := httptest.NewRecorder()
-
-		server.handleExecutionLogs(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	})
-
-	t.Run("execution belongs to different job", func(t *testing.T) {
-		wrongJobID := HashCommand("echo test2")
-		req := httptest.NewRequest("GET", "/api/jobs/"+wrongJobID+"/executions/"+fmt.Sprint(execID)+"/logs", http.NoBody)
-		req.SetPathValue("id", wrongJobID)
-		req.SetPathValue("exec_id", fmt.Sprint(execID))
-		w := httptest.NewRecorder()
-
-		server.handleExecutionLogs(w, req)
-
-		resp := w.Result()
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Contains(t, body, "Not started: Job no longer exists in the crontab.")
+		assert.Contains(t, body, `hx-post="/api/jobs/gone/run"`)
+		assert.Contains(t, body, ">echo edited</textarea>")
+		assert.Contains(t, body, `value="20260915"`, "a submitted date keeps its field")
+		assert.NotContains(t, body, "toasts")
+		assert.Empty(t, ch, "nothing is queued for a missing job")
 	})
 }
 
 func TestServer_handleToggleJob(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, persistence.JobInfo{ID: "t", Command: "echo toggle", Schedule: "* * * * *", Enabled: true})
 
-	cfg := Config{
-		DBPath:         dbPath,
-		UpdateInterval: time.Minute,
-		Version:        "test",
-		JobsProvider:   createTestProvider(t, tmpDir),
+	toggle := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/jobs/"+id+"/toggle", http.NoBody)
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		server.handleToggleJob(w, req)
+		return w
 	}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer server.store.Close()
+	w := toggle("t")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"))
+	assert.True(t, server.IsJobDisabled("t"))
 
-	// add test job
-	testJob := persistence.JobInfo{
-		ID:         "test-toggle-id",
-		Command:    "echo toggle",
-		Schedule:   "* * * * *",
-		Enabled:    true,
-		IsRunning:  false,
-		LastStatus: enums.JobStatusIdle,
+	toggle("t")
+	assert.False(t, server.IsJobDisabled("t"))
+
+	assert.Equal(t, http.StatusNotFound, toggle("nope").Code)
+	assert.Equal(t, http.StatusBadRequest, toggle("").Code)
+}
+
+func TestServer_handleInspector(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
+	start := time.Date(2026, 9, 29, 16, 50, 0, 0, time.Local)
+	record := func(jobID string, at time.Time, status enums.JobStatus, code int, executed, output string) {
+		require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: jobID, StartedAt: at,
+			FinishedAt: at.Add(2 * time.Second), Status: status, ExitCode: code, ExecutedCommand: executed, Output: output}))
 	}
-	server.jobsMu.Lock()
-	server.jobs[testJob.ID] = testJob
-	server.jobsMu.Unlock()
+	record("fail", start, enums.JobStatusFailed, 3, "", "fetching\nboom")
+	record("fail", start.Add(time.Minute), enums.JobStatusSuccess, 0, "sh -c 'exit 0'", "manual ok")
+	record("fail", start.Add(2*time.Minute), enums.JobStatusFailed, 137, "", "")
 
-	t.Run("toggle enabled to disabled", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/test-toggle-id/toggle", http.NoBody)
-		req.SetPathValue("id", "test-toggle-id")
+	get := func(id, query string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector?"+query, http.NoBody)
+		req.SetPathValue("id", id)
 		w := httptest.NewRecorder()
+		server.handleInspector(w, req)
+		return w
+	}
 
-		server.handleToggleJob(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"))
-
-		server.jobsMu.RLock()
-		assert.False(t, server.jobs["test-toggle-id"].Enabled)
-		server.jobsMu.RUnlock()
+	t.Run("full panel selects the latest run", func(t *testing.T) {
+		w := get("fail", "")
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
+		body := w.Body.String()
+		assert.Contains(t, body, `<div class="insp" data-job-id="fail">`)
+		assert.Contains(t, body, "Vendor feed import")
+		assert.Contains(t, body, "Last run failed · exit 3")
+		assert.Contains(t, body, `id="selected-job" name="selected-job" value="fail" hx-swap-oob="true"`)
+		assert.Contains(t, body, "newest first · latest 50 shown")
+		assert.Contains(t, body, `<span class="tag man">manual</span>`)
+		assert.Contains(t, body, "No output captured. The run failed with exit code 137.")
+		assert.Contains(t, body, "<b>Job command:</b> sh -c &#39;exit 3&#39;")
+		assert.Equal(t, 3, strings.Count(body, `id="exec-`))
+		assert.Equal(t, 1, strings.Count(body, `class="run sel"`))
 	})
 
-	t.Run("toggle disabled to enabled", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/test-toggle-id/toggle", http.NoBody)
-		req.SetPathValue("id", "test-toggle-id")
-		w := httptest.NewRecorder()
-
-		server.handleToggleJob(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"))
-
-		server.jobsMu.RLock()
-		assert.True(t, server.jobs["test-toggle-id"].Enabled)
-		server.jobsMu.RUnlock()
-	})
-
-	t.Run("job not found", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/nonexistent/toggle", http.NoBody)
-		req.SetPathValue("id", "nonexistent")
-		w := httptest.NewRecorder()
-
-		server.handleToggleJob(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Contains(t, w.Body.String(), "Job not found")
-	})
-
-	t.Run("empty job ID", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/jobs/toggle", http.NoBody)
-		req.SetPathValue("id", "")
-		w := httptest.NewRecorder()
-
-		server.handleToggleJob(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "Job ID required")
-	})
-
-	t.Run("persistence round-trip", func(t *testing.T) {
-		// ensure job is enabled first
-		server.jobsMu.Lock()
-		j := server.jobs["test-toggle-id"]
-		j.Enabled = true
-		server.jobs["test-toggle-id"] = j
-		server.jobsMu.Unlock()
-
-		// toggle to disabled
-		req := httptest.NewRequest("POST", "/api/jobs/test-toggle-id/toggle", http.NoBody)
-		req.SetPathValue("id", "test-toggle-id")
-		w := httptest.NewRecorder()
-		server.handleToggleJob(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		// verify persisted in DB
-		loaded, err := server.store.LoadJobs()
+	t.Run("live part keeps the selected run", func(t *testing.T) {
+		runs, err := server.store.GetExecutions("fail", 10)
 		require.NoError(t, err)
-
-		var found bool
-		for _, lj := range loaded {
-			if lj.ID == "test-toggle-id" {
-				assert.False(t, lj.Enabled)
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "job should be found in DB")
+		w := get("fail", "part=live&selected-run="+strconv.Itoa(runs[2].ID))
+		require.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, `id="insp-live"`)
+		assert.NotContains(t, body, "selected-job")
+		_, sel, found := strings.Cut(body, `class="run sel"`)
+		require.True(t, found)
+		assert.True(t, strings.HasPrefix(strings.Join(strings.Fields(sel), " "),
+			`id="exec-`+strconv.Itoa(runs[2].ID)+`" aria-pressed="true"`))
+		assert.Empty(t, w.Header().Get("HX-Trigger-After-Swap"))
 	})
+
+	tbl := []struct {
+		id   string
+		want []string
+	}{
+		{"ok", []string{"Last run succeeded", "Enabled", "Run now…", ">Disable<", "No runs recorded yet."}},
+		{"never", []string{"Never ran", "reindex --full"}},
+		{"off", []string{"Disabled</span>", ">Enable<"}},
+		{"run", []string{"Running for 47s", "disabled\n"}},
+	}
+	for _, tt := range tbl {
+		t.Run("state "+tt.id, func(t *testing.T) {
+			body := get(tt.id, "").Body.String()
+			for _, want := range tt.want {
+				assert.Contains(t, body, want)
+			}
+		})
+	}
+
+	t.Run("job without runs shows one empty message", func(t *testing.T) {
+		body := get("never", "").Body.String()
+		assert.Equal(t, 1, strings.Count(body, "No runs"), "the runs list and the output pane must not both say it")
+		assert.Contains(t, body, "No runs recorded yet.")
+	})
+
+	t.Run("disabled job has no run button", func(t *testing.T) {
+		assert.NotContains(t, get("off", "").Body.String(), "Run now…")
+	})
+
+	t.Run("unknown job", func(t *testing.T) {
+		assert.Equal(t, http.StatusNotFound, get("nope", "").Code)
+	})
+
+	t.Run("removed job closes the panel for htmx", func(t *testing.T) {
+		for _, query := range []string{"", "part=live"} {
+			req := httptest.NewRequest(http.MethodGet, "/api/jobs/gone/inspector?"+query, http.NoBody)
+			req.SetPathValue("id", "gone")
+			req.Header.Set("HX-Request", "true")
+			w := httptest.NewRecorder()
+			server.handleInspector(w, req)
+			require.Equal(t, http.StatusOK, w.Code, "htmx swaps only 2xx, so a 404 would leave the removed job on screen")
+			assert.Equal(t, "#inspector", w.Header().Get("HX-Retarget"))
+			assert.Equal(t, "innerHTML", w.Header().Get("HX-Reswap"), "the live part swaps outerHTML and would delete the slot")
+			body := w.Body.String()
+			assert.Contains(t, body, `id="selected-job" name="selected-job" value="" hx-swap-oob="true"`)
+			assert.Contains(t, body, `id="selected-run" name="selected-run" value="" hx-swap-oob="true"`)
+			assert.NotContains(t, body, `class="insp"`)
+		}
+	})
+}
+
+func TestServer_handleRunOutput(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
+	now := time.Now()
+	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: "fail", StartedAt: now, FinishedAt: now.Add(1900 * time.Millisecond),
+		Status: enums.JobStatusSuccess, ExitCode: 0, ExecutedCommand: "sh -c 'exit 0'", Output: "manual ok"}))
+	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: "ok", StartedAt: now, FinishedAt: now,
+		Status: enums.JobStatusSuccess}))
+	runs, err := server.store.GetExecutions("fail", 1)
+	require.NoError(t, err)
+	other, err := server.store.GetExecutions("ok", 1)
+	require.NoError(t, err)
+
+	get := func(jobID, execID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.SetPathValue("id", jobID)
+		req.SetPathValue("exec_id", execID)
+		w := httptest.NewRecorder()
+		server.handleRunOutput(w, req)
+		return w
+	}
+
+	w := get("fail", strconv.Itoa(runs[0].ID))
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "refresh-inspector", w.Header().Get("HX-Trigger-After-Swap"))
+	body := w.Body.String()
+	assert.Contains(t, body, "<b>Executed:</b> sh -c &#39;exit 0&#39;")
+	assert.Contains(t, body, "manual ok")
+	assert.Contains(t, body, "exit 0 · 1.9s")
+	assert.Contains(t, body, `id="selected-run" name="selected-run" value="`+strconv.Itoa(runs[0].ID)+`" hx-swap-oob="true"`)
+
+	assert.Equal(t, http.StatusNotFound, get("fail", strconv.Itoa(other[0].ID)).Code, "run of another job")
+	assert.Equal(t, http.StatusNotFound, get("fail", "99999").Code)
+	assert.Equal(t, http.StatusNotFound, get("nope", strconv.Itoa(runs[0].ID)).Code)
+	assert.Equal(t, http.StatusBadRequest, get("fail", "abc").Code)
+
+	require.NoError(t, server.store.Close())
+	assert.Equal(t, http.StatusInternalServerError, get("fail", strconv.Itoa(runs[0].ID)).Code,
+		"a database failure is not reported as a missing run")
+}
+
+func TestServer_handleSettingsModal(t *testing.T) {
+	server := newHandlersTestServer(t, Config{Settings: SettingsInfo{Version: "v1.0.0", StartTime: time.Now().Add(-time.Hour),
+		WebEnabled: true, WebAddress: ":8080", CrontabPath: "test-crontab"}})
+	w := httptest.NewRecorder()
+	server.handleSettingsModal(w, httptest.NewRequest(http.MethodGet, "/api/settings/modal", http.NoBody))
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, `<dialog class="settings-modal"`)
+	assert.Contains(t, body, "Settings & About")
+	assert.Contains(t, body, "v1.0.0")
+	assert.Contains(t, body, ":8080")
+	assert.Contains(t, body, "test-crontab")
+	assert.NotContains(t, body, "onclick")
+}
+
+func TestServer_Routes(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
+	handler := server.routes()
+
+	tbl := []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/", http.StatusOK},
+		{http.MethodGet, "/api/jobs", http.StatusOK},
+		{http.MethodGet, "/api/jobs/ok/inspector", http.StatusOK},
+		{http.MethodGet, "/api/jobs/ok/run-form", http.StatusOK},
+		{http.MethodGet, "/nonexistent", http.StatusNotFound},
+		{http.MethodGet, "/api/jobs/ok/modal", http.StatusNotFound},
+		{http.MethodGet, "/api/jobs/ok/history", http.StatusNotFound},
+		{http.MethodGet, "/api/jobs/ok/executions/1/logs", http.StatusNotFound},
+		{http.MethodPost, "/api/view-mode", http.StatusNotFound},
+		{http.MethodPost, "/api/sort-toggle", http.StatusNotFound},
+		{http.MethodPost, "/api/filter-toggle", http.StatusNotFound},
+		{http.MethodGet, "/api/v1/status", http.StatusOK},
+		{http.MethodGet, "/static/ui.js", http.StatusOK},
+		{http.MethodGet, "/static/app.js", http.StatusNotFound},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, http.NoBody)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			assert.Equal(t, tt.want, w.Code)
+		})
+	}
 }

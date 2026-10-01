@@ -99,7 +99,7 @@
             <th class="c-st"><span class="sr-only">State</span></th>
             <th class="c-job">Job</th>
             <th class="c-sched">Schedule</th>
-            <th class="c-last">Last run</th>
+            <th class="c-last{{if eq .SortMode.String "lastrun"}} sorted desc{{end}}">Last run</th>
             <th class="c-next{{if eq .SortMode.String "nextrun"}} sorted{{end}}">Next</th>
             <th class="c-time">When</th>
             <th class="c-act"><span class="sr-only">Actions</span></th>

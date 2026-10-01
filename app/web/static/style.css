@@ -97,6 +97,7 @@ table.jobs { width: 100%; border-collapse: collapse; }
 .jobs th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); font-weight: 600; padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .jobs th.sorted { color: var(--text); }
 .jobs th.sorted::after { content: " ↑"; color: var(--accent); }
+.jobs th.sorted.desc::after { content: " ↓"; }
 .jobs td { padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .row { position: relative; }
 .row:hover td { background: color-mix(in srgb, var(--text) 3%, transparent); }

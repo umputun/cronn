@@ -148,6 +148,22 @@ func TestSort_SelectChangesOrderAndPersists(t *testing.T) {
 	assert.Equal(t, jobFiveMin, rowNames(t, page)[0])
 }
 
+func TestSort_LastRunHeaderShowsDescendingArrow(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+
+	selectSort(t, page, "lastrun")
+	require.Eventually(t, func() bool {
+		return evalBool(t, page, `() => document.querySelector('th.c-last').classList.contains('sorted')`)
+	}, 5*time.Second, 100*time.Millisecond, "the last run header is marked sorted")
+	arrow, err := page.Evaluate(`() => getComputedStyle(document.querySelector('th.c-last'), '::after').content`)
+	require.NoError(t, err)
+	assert.Equal(t, `" ↓"`, arrow, "most recent first is a descending sort")
+	assert.False(t, evalBool(t, page, `() => document.querySelector('th.c-next').classList.contains('sorted')`))
+
+	selectSort(t, page, "default")
+}
+
 func TestSort_OpenSelectSurvivesPoll(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

@@ -150,12 +150,13 @@ func TestServer_ProcessEvents(t *testing.T) {
 	go server.processEvents(ctx)
 
 	// send job start event
+	started := time.Now()
 	server.eventChan <- JobEvent{
 		JobID:     HashCommand("test command"),
 		Command:   "test command",
 		Schedule:  "* * * * *",
 		EventType: enums.EventTypeStarted,
-		StartedAt: time.Now(),
+		StartedAt: started,
 	}
 
 	// give time to process
@@ -177,6 +178,7 @@ func TestServer_ProcessEvents(t *testing.T) {
 		Schedule:   "* * * * *",
 		EventType:  enums.EventTypeCompleted,
 		ExitCode:   0,
+		StartedAt:  started,
 		FinishedAt: time.Now(),
 	}
 
@@ -571,12 +573,13 @@ func TestServer_HandleJobEvent(t *testing.T) {
 	defer server.store.Close()
 
 	// test job start event
+	started := time.Now()
 	event := JobEvent{
 		JobID:     HashCommand("test"),
 		Command:   "test",
 		Schedule:  "* * * * *",
 		EventType: enums.EventTypeStarted,
-		StartedAt: time.Now(),
+		StartedAt: started,
 	}
 
 	server.handleJobEvent(event)
@@ -596,6 +599,7 @@ func TestServer_HandleJobEvent(t *testing.T) {
 		Schedule:   "* * * * *",
 		EventType:  enums.EventTypeCompleted,
 		ExitCode:   0,
+		StartedAt:  started,
 		FinishedAt: time.Now(),
 	}
 

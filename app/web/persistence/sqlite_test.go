@@ -788,6 +788,56 @@ func TestSQLiteStore_GetExecutionByID(t *testing.T) {
 	})
 }
 
+func TestSQLiteStore_GetExecutionByStart(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	defer store.Close()
+
+	start := time.Now().Add(-time.Hour)
+	for i, rec := range []request.RecordExecution{
+		{JobID: "job1", StartedAt: start, Output: "job1 at start"},
+		{JobID: "job1", StartedAt: start.Add(time.Minute), Output: "job1 later"},
+		{JobID: "job2", StartedAt: start.Add(2 * time.Minute), Output: "job2"},
+	} {
+		rec.FinishedAt, rec.Status = rec.StartedAt.Add(time.Second), enums.JobStatusSuccess
+		require.NoError(t, store.RecordExecution(rec), "record %d", i)
+	}
+
+	tbl := []struct {
+		name    string
+		jobID   string
+		start   int64
+		wantOut string
+	}{
+		{name: "first start of the job", jobID: "job1", start: start.UnixMicro(), wantOut: "job1 at start"},
+		{name: "later start of the job", jobID: "job1", start: start.Add(time.Minute).UnixMicro(), wantOut: "job1 later"},
+		{name: "start of another job", jobID: "job1", start: start.Add(2 * time.Minute).UnixMicro()},
+		{name: "unknown start", jobID: "job1", start: start.Add(time.Microsecond).UnixMicro()},
+		{name: "unknown job", jobID: "job3", start: start.UnixMicro()},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := store.GetExecutionByStart(tt.jobID, tt.start)
+			if tt.wantOut == "" {
+				require.ErrorIs(t, err, ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.jobID, got.JobID)
+			assert.Equal(t, tt.wantOut, got.Output)
+			assert.Equal(t, tt.start, got.StartedAt.UnixMicro())
+		})
+	}
+
+	t.Run("query error", func(t *testing.T) {
+		_, err := store.db.Exec("DROP TABLE executions")
+		require.NoError(t, err)
+		_, err = store.GetExecutionByStart("job1", start.UnixMicro())
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrNotFound)
+	})
+}
+
 func TestSQLiteStore_SaveAndLoadJobs_NameAndLastResult(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)

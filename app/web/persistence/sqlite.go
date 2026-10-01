@@ -328,6 +328,58 @@ func (s *SQLiteStore) GetExecutionByID(execID int) (ExecutionInfo, error) {
 	return execution, nil
 }
 
+// GetExecutionByStart retrieves the job's execution that started at the given unix microsecond.
+// Returns ErrNotFound if the job has no such execution.
+func (s *SQLiteStore) GetExecutionByStart(jobID string, start int64) (ExecutionInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// the start is matched in go: a stored DATETIME is text, and its round trip compares equal only
+	// for the same time.Time value, not for the same instant
+	rows, err := s.db.Queryx(`SELECT id, started_at FROM executions WHERE job_id = ?`, jobID)
+	if err != nil {
+		return ExecutionInfo{}, fmt.Errorf("failed to query execution starts: %w", err)
+	}
+	execID := 0
+	for rows.Next() {
+		var meta struct {
+			ID        int       `db:"id"`
+			StartedAt time.Time `db:"started_at"`
+		}
+		if err = rows.StructScan(&meta); err != nil {
+			_ = rows.Close()
+			return ExecutionInfo{}, fmt.Errorf("failed to scan execution start: %w", err)
+		}
+		if meta.StartedAt.UnixMicro() == start {
+			execID = meta.ID
+			break
+		}
+	}
+	if err = rows.Close(); err != nil {
+		return ExecutionInfo{}, fmt.Errorf("failed to close execution starts: %w", err)
+	}
+	if err = rows.Err(); err != nil {
+		return ExecutionInfo{}, fmt.Errorf("failed to read execution starts: %w", err)
+	}
+	if execID == 0 {
+		return ExecutionInfo{}, ErrNotFound
+	}
+
+	var execution ExecutionInfo
+	err = s.db.Get(&execution, `
+		SELECT id, job_id, started_at, finished_at, status, exit_code, executed_command, output
+		FROM executions
+		WHERE id = ?`,
+		execID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ExecutionInfo{}, ErrNotFound
+		}
+		return ExecutionInfo{}, fmt.Errorf("failed to query execution: %w", err)
+	}
+	return execution, nil
+}
+
 // CleanupOldExecutions removes old executions beyond the limit for a job
 func (s *SQLiteStore) CleanupOldExecutions(jobID string, limit int) error {
 	s.mu.Lock()

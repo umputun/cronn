@@ -300,7 +300,7 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 - **Failing jobs alert** at the top, naming the most recent failure with a direct link to its details
 - **Filter tabs with counts**: All, Failed, Running, Succeeded, Never ran and Disabled; search matches job names and commands
 - **Sorting**: crontab order, next run or last run
-- **Job inspector**: click a job to see its full command, state, last and next run, and its latest 50 runs; pick a run to see its output, exit code, duration and, for manual runs, the command actually executed. Failures without output still show their exit code
+- **Job inspector**: click a job to see its full command, state, last and next run, and its latest 50 runs; pick a run to see its output, exit code, duration and, for manual runs, the command actually executed. Failures without output still show their exit code. A running job shows its output as it is produced, refreshed every 5 seconds, and the run turns into its recorded entry when it finishes
 - **Manual runs** from a run dialog:
   - Edit the command for a one-off run
   - Set a date (YYYYMMDD) for template variables; the field appears only when the command has templates

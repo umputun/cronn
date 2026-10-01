@@ -39,7 +39,7 @@
     <button class="go"
             hx-get="{{url (printf "/api/jobs/%s/inspector" .ID)}}"
             hx-target="#inspector"
-            hx-swap="innerHTML">Inspect →</button>
+            hx-swap="innerHTML" hx-sync="#inspector:replace">Inspect →</button>
 </div>
 {{end}}{{end}}
 {{end}}
@@ -118,7 +118,7 @@
                             id="open-{{.ID}}"
                             hx-get="{{url (printf "/api/jobs/%s/inspector" .ID)}}"
                             hx-target="#inspector"
-                            hx-swap="innerHTML">{{template "job-name" .}}</button>
+                            hx-swap="innerHTML" hx-sync="#inspector:replace">{{template "job-name" .}}</button>
                     {{if not .Enabled}}<span class="tag off">disabled</span>{{end}}
                 </div>
                 {{if .Name}}<div class="cmd" title="{{.Command}}">{{.Command}}</div>{{end}}

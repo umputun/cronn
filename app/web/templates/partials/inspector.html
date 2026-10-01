@@ -24,22 +24,21 @@
     </div>
     {{template "inspector-live" .}}
     <div id="insp-output">
-        {{with .Output}}{{template "run-output" .}}{{end}}
+        {{with .Live}}{{template "live-output" .}}{{else}}{{with .Output}}{{template "run-output" .}}{{end}}{{end}}
     </div>
 </div>
 <input type="hidden" id="selected-job" name="selected-job" value="{{.Job.ID}}" hx-swap-oob="true">
-<input type="hidden" id="selected-run" name="selected-run" value="{{if .SelectedRun}}{{.SelectedRun}}{{end}}" hx-swap-oob="true">
 {{end}}
 
 {{define "inspector-live"}}
 <div id="insp-live"
      hx-get="{{url (printf "/api/jobs/%s/inspector" .Job.ID)}}?part=live"
      hx-trigger="every 5s, refresh-jobs from:body, refresh-inspector from:body"
-     hx-include="#selected-run"
+     hx-include="#insp-output"
      hx-swap="outerHTML">
     <div class="insp-state">
         <div class="chips">
-            {{if .Job.IsRunning}}<span class="chip running">Running for {{humanDuration (since .Job.LastRun)}}</span>
+            {{if .Job.IsRunning}}<span class="chip running">Running for {{humanDuration (since .RunningSince)}}</span>
             {{else if eq .Job.LastStatus.String "failed"}}<span class="chip fail">Last run failed{{with .Job.LastExitCode}} · exit {{deref .}}{{end}}</span>
             {{else if eq .Job.LastStatus.String "success"}}<span class="chip ok">Last run succeeded</span>
             {{else}}<span class="chip">Never ran</span>{{end}}
@@ -63,19 +62,32 @@
     </div>
     <div class="runs-h">Runs <small>newest first · latest 50 shown</small></div>
     <div class="runs">
+        {{range .Active}}
+        <button class="run{{if eq .Token $.SelectedRun}} sel{{end}}"
+                id="live-{{.Start}}"
+                aria-pressed="{{if eq .Token $.SelectedRun}}true{{else}}false{{end}}"
+                hx-get="{{url (printf "/api/jobs/%s/live-output" $.Job.ID)}}?start={{.Start}}"
+                hx-target="#insp-output" hx-swap="innerHTML" hx-sync="#inspector:replace">
+            <span class="dot running" aria-hidden="true"></span>
+            <span class="when">{{.StartedAt.Format "Jan 2 15:04:05"}}{{if .ExecutedCommand}} <span class="tag man">manual</span>{{end}}</span>
+            <span>{{humanDuration (since .StartedAt)}}</span>
+            <span class="ex">running</span>
+        </button>
+        {{end}}
         {{range .Runs}}
-        <button class="run{{if eq .ID $.SelectedRun}} sel{{end}}"
+        {{$sel := eq (printf "%d" .ID) $.SelectedRun}}
+        <button class="run{{if $sel}} sel{{end}}"
                 id="exec-{{.ID}}"
-                aria-pressed="{{if eq .ID $.SelectedRun}}true{{else}}false{{end}}"
+                aria-pressed="{{if $sel}}true{{else}}false{{end}}"
                 hx-get="{{url (printf "/api/jobs/%s/executions/%d/output" $.Job.ID .ID)}}"
-                hx-target="#insp-output" hx-swap="innerHTML">
+                hx-target="#insp-output" hx-swap="innerHTML" hx-sync="#inspector:replace">
             <span class="dot {{if eq .Status.String "success"}}ok{{else}}fail{{end}}" aria-hidden="true"></span>
-            <span>{{.StartedAt.Format "Jan 2 15:04:05"}}{{if .ExecutedCommand}} <span class="tag man">manual</span>{{end}}</span>
+            <span class="when">{{.StartedAt.Format "Jan 2 15:04:05"}}{{if .ExecutedCommand}} <span class="tag man">manual</span>{{end}}</span>
             <span>{{runDuration (.FinishedAt.Sub .StartedAt)}}</span>
             <span class="ex{{if ne .ExitCode 0}} bad{{end}}">exit {{.ExitCode}}</span>
         </button>
         {{else}}
-        <div class="runs-none">No runs recorded yet.</div>
+        {{if not $.Active}}<div class="runs-none">No runs recorded yet.</div>{{end}}
         {{end}}
     </div>
 </div>
@@ -83,16 +95,12 @@
 
 {{define "run-output"}}
 <div class="out">
+    <input type="hidden" name="selected-run" value="{{.Run.ID}}">
     <div class="out-h">
         <b>Run {{.Run.StartedAt.Format "15:04:05"}}</b>
         <span>{{if .Run.ExecutedCommand}}manual{{else}}scheduled{{end}}</span>
         <span class="r{{if ne .Run.ExitCode 0}} bad{{end}}">exit {{.Run.ExitCode}} · {{runDuration (.Run.FinishedAt.Sub .Run.StartedAt)}}</span>
-        <button class="view-toggle wrap-toggle" type="button" aria-label="Wrap log lines" aria-pressed="true"
-                title="Wrap log lines" hx-on:click="uiToggleInspectorMode('wrap')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                <path d="M3 6h18M3 10h18M3 14h12a3 3 0 0 1 0 6h-3m3-3-3 3 3 3M3 20h5"/>
-            </svg>
-        </button>
+        {{template "wrap-toggle"}}
     </div>
     <div class="out-cmd"><b>{{.CommandLabel}}:</b> {{.Command}}</div>
     {{if .Run.Output}}
@@ -103,12 +111,41 @@
 </div>
 {{end}}
 
-{{define "run-output-response"}}
-{{template "run-output" .}}
-<input type="hidden" id="selected-run" name="selected-run" value="{{.Run.ID}}" hx-swap-oob="true">
+{{define "wrap-toggle"}}
+<button class="view-toggle wrap-toggle" type="button" aria-label="Wrap log lines" aria-pressed="true"
+        title="Wrap log lines" hx-on:click="uiToggleInspectorMode('wrap')">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <path d="M3 6h18M3 10h18M3 14h12a3 3 0 0 1 0 6h-3m3-3-3 3 3 3M3 20h5"/>
+    </svg>
+</button>
+{{end}}
+
+{{define "live-output"}}
+<div class="out" id="live-out"
+     hx-get="{{url (printf "/api/jobs/%s/live-output" .JobID)}}?start={{.Start}}&poll=1"
+     hx-trigger="every 5s" hx-swap="outerHTML" hx-sync="#inspector:abort">
+    <input type="hidden" name="selected-run" value="{{.Token}}">
+    <div class="out-h">
+        <b>Run {{.StartedAt.Format "15:04:05"}}</b>
+        <span>{{if .ExecutedCommand}}manual{{else}}scheduled{{end}}</span>
+        <span class="r live">running · {{humanDuration (since .StartedAt)}}</span>
+        {{template "wrap-toggle"}}
+    </div>
+    <div class="out-cmd"><b>{{.CommandLabel}}:</b> {{.Command}}</div>
+    {{if not .Capture}}
+    <div class="empty-out">Output capture is disabled.</div>
+    {{else if .Output}}
+    <pre>{{.Output}}</pre>
+    {{else}}
+    <div class="empty-out">No output yet.</div>
+    {{end}}
+</div>
+{{end}}
+
+{{define "live-output-gone"}}
+<div class="out"><div class="empty-out">This run's output is no longer available.</div></div>
 {{end}}
 
 {{define "inspector-closed"}}
 <input type="hidden" id="selected-job" name="selected-job" value="" hx-swap-oob="true">
-<input type="hidden" id="selected-run" name="selected-run" value="" hx-swap-oob="true">
 {{end}}

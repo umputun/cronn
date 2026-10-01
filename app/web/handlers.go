@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,10 +28,31 @@ type jobsQuery struct {
 // inspectorData is the template data of the job inspector panel
 type inspectorData struct {
 	Job            persistence.JobInfo
+	Active         []liveRunView // runs in progress, newest first
 	Runs           []persistence.ExecutionInfo
-	SelectedRun    int
+	SelectedRun    string    // a recorded run's execution id, or the token of a run in progress
+	RunningSince   time.Time // start of the newest run in progress
 	ManualDisabled bool
-	Output         *runOutputData // output of the selected run, nil when the job has no runs
+	Output         *runOutputData  // output of the selected recorded run
+	Live           *liveOutputData // output of the selected run in progress
+}
+
+// liveRunView is a run in progress as listed in the inspector
+type liveRunView struct {
+	Start           int64 // start time in unix microseconds, the run's identity while it is in progress
+	Token           string
+	StartedAt       time.Time
+	ExecutedCommand string
+}
+
+// liveOutputData is the template data of a run in progress in the inspector
+type liveOutputData struct {
+	liveRunView
+	JobID        string
+	Command      string
+	CommandLabel string
+	Capture      bool // false when output capture is disabled
+	Output       string
 }
 
 // runOutputData is the template data of one run's output in the inspector
@@ -409,7 +431,8 @@ func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleInspector renders the job inspector. part=live renders only the refreshable part (status, runs) for
-// the inspector's own polling; otherwise the whole panel plus the selection inputs and the latest run's output
+// the inspector's own polling; otherwise the whole panel, the selected-job input, and the output of the newest
+// run in progress, or of the latest recorded run when nothing runs
 func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.jobByID(r.PathValue("id"))
 	if !ok && r.Header.Get("HX-Request") == "true" {
@@ -427,22 +450,41 @@ func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
 		s.updateNextRun(&job)
 	}
 
+	// active runs are read before history: a run finishing in between is then in both, and its
+	// recorded row wins, where the reverse order would leave it in neither
+	active := s.activeRuns(job.ID)
 	runs, err := s.store.GetExecutions(job.ID, inspectorRuns)
 	if err != nil {
 		log.Printf("[ERROR] failed to get executions for job %s: %v", job.ID, err)
 		http.Error(w, "Failed to load execution history", http.StatusInternalServerError)
 		return
 	}
-	data := inspectorData{Job: job, Runs: runs, ManualDisabled: s.disableManual}
+	active = slices.DeleteFunc(active, func(a activeRun) bool {
+		return slices.ContainsFunc(runs, func(r persistence.ExecutionInfo) bool {
+			return r.StartedAt.UnixMicro() == a.StartedAt.UnixMicro()
+		})
+	})
+	data := inspectorData{Job: job, Runs: runs, ManualDisabled: s.disableManual, RunningSince: job.LastRun}
+	for _, run := range active {
+		data.Active = append(data.Active, run.view())
+	}
+	if len(active) > 0 {
+		data.RunningSince = active[0].StartedAt
+	}
 
 	if r.FormValue("part") == "live" {
-		data.SelectedRun, _ = strconv.Atoi(r.FormValue("selected-run"))
+		data.SelectedRun = r.FormValue("selected-run")
 		s.render(w, "partials/jobs.html", "inspector-live", data)
 		return
 	}
 
-	if len(runs) > 0 {
-		data.SelectedRun = runs[0].ID
+	switch {
+	case len(active) > 0:
+		data.SelectedRun = data.Active[0].Token
+		live := s.newLiveOutput(job, active[0])
+		data.Live = &live
+	case len(runs) > 0:
+		data.SelectedRun = strconv.Itoa(runs[0].ID)
 		out := s.newRunOutput(job, runs[0])
 		data.Output = &out
 	}
@@ -486,7 +528,64 @@ func (s *Server) handleRunOutput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
-	s.render(w, "partials/jobs.html", "run-output-response", s.newRunOutput(job, run))
+	s.render(w, "partials/jobs.html", "run-output", s.newRunOutput(job, run))
+}
+
+// handleLiveOutput renders the output of a run in progress, identified by its start (unix microseconds).
+// The fragment polls itself while the run is in progress; once the run is recorded, it is replaced by that
+// run's ordinary output, matched by start time rather than by position, so a newer run never takes its place.
+func (s *Server) handleLiveOutput(w http.ResponseWriter, r *http.Request) {
+	start, err := strconv.ParseInt(r.FormValue("start"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid run start", http.StatusBadRequest)
+		return
+	}
+	job, ok := s.jobByID(r.PathValue("id"))
+	if !ok {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	if run, ok := s.activeRunAt(job.ID, start); ok {
+		if r.FormValue("poll") == "" {
+			w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
+		}
+		s.render(w, "partials/jobs.html", "live-output", s.newLiveOutput(job, run))
+		return
+	}
+
+	run, err := s.store.GetExecutionByStart(job.ID, start)
+	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
+		log.Printf("[ERROR] failed to get execution of job %s started at %d: %v", job.ID, start, err)
+		http.Error(w, "Failed to load execution", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
+	if err != nil {
+		s.render(w, "partials/jobs.html", "live-output-gone", nil)
+		return
+	}
+	s.render(w, "partials/jobs.html", "run-output", s.newRunOutput(job, run))
+}
+
+// newLiveOutput pairs a run in progress with its command and the output it has produced so far
+func (s *Server) newLiveOutput(job persistence.JobInfo, run activeRun) liveOutputData {
+	data := liveOutputData{liveRunView: run.view(), JobID: job.ID, Command: job.Command,
+		CommandLabel: "Job command", Capture: run.Output != nil}
+	if run.ExecutedCommand != "" {
+		data.Command, data.CommandLabel = run.ExecutedCommand, "Executed"
+	}
+	if run.Output != nil {
+		data.Output = run.Output()
+	}
+	return data
+}
+
+// view makes the inspector entry of a run in progress
+func (r activeRun) view() liveRunView {
+	start := r.StartedAt.UnixMicro()
+	return liveRunView{Start: start, Token: fmt.Sprintf("live:%d", start), StartedAt: r.StartedAt,
+		ExecutedCommand: r.ExecutedCommand}
 }
 
 // newRunOutput pairs a run with the command it ran: the executed command of a manual run, the job command

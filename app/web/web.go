@@ -47,6 +47,7 @@ type Server struct {
 	templates          map[string]*template.Template
 	jobsMu             sync.RWMutex
 	jobs               map[string]persistence.JobInfo // job id -> job info
+	active             map[string]map[int64]activeRun // job id -> start (unix micro) -> run in progress, guarded by jobsMu
 	parser             cron.Parser                    // for schedule parsing (NextRun calculations)
 	schedule           *scheduleDescriber             // readable schedule text for templates
 	jobsProvider       JobsProvider                   // for loading job specifications
@@ -80,6 +81,8 @@ type JobsProvider interface {
 	List() ([]crontab.JobSpec, error)
 }
 
+//go:generate moq -out mocks/persistence.go -pkg mocks -skip-ensure -fmt goimports . Persistence
+
 // Persistence defines storage operations for job management
 type Persistence interface {
 	LoadJobs() ([]persistence.JobInfo, error)
@@ -87,6 +90,7 @@ type Persistence interface {
 	RecordExecution(req request.RecordExecution) error
 	GetExecutions(jobID string, limit int) ([]persistence.ExecutionInfo, error)
 	GetExecutionByID(execID int) (persistence.ExecutionInfo, error)
+	GetExecutionByStart(jobID string, start int64) (persistence.ExecutionInfo, error)
 	CleanupOldExecutions(jobID string, limit int) error
 	Close() error
 }
@@ -102,6 +106,7 @@ type JobEvent struct {
 	Output          string
 	StartedAt       time.Time
 	FinishedAt      time.Time
+	LiveOutput      func() string // started events only; nil when output capture is disabled
 }
 
 // TemplateData holds data for templates
@@ -262,6 +267,7 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{
 		store:              store,
 		jobs:               make(map[string]persistence.JobInfo),
+		active:             make(map[string]map[int64]activeRun),
 		parser:             parser,
 		schedule:           schedule,
 		jobsProvider:       cfg.JobsProvider,
@@ -398,6 +404,7 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /jobs/{id}/toggle", s.handleToggleJob)
 		api.HandleFunc("GET /jobs/{id}/inspector", s.handleInspector)
 		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/output", s.handleRunOutput)
+		api.HandleFunc("GET /jobs/{id}/live-output", s.handleLiveOutput)
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
 		api.HandleFunc("GET /neighbors", s.handleNeighbors)
 	})

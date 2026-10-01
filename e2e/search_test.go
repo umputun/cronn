@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestSearch_FiltersByCommand(t *testing.T) {
 	}, 5*time.Second, 100*time.Millisecond)
 	text, err := page.Locator("#match-count").TextContent()
 	require.NoError(t, err)
-	assert.Equal(t, "1 of 8 jobs", strings.TrimSpace(text))
+	assert.Equal(t, fmt.Sprintf("1 of %d jobs", totalJobs), strings.TrimSpace(text))
 }
 
 func TestSearch_FiltersByName(t *testing.T) {

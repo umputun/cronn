@@ -23,6 +23,7 @@ func (s *Server) OnJobStart(req request.OnJobStart) {
 		Schedule:        req.Schedule,
 		EventType:       enums.EventTypeStarted,
 		StartedAt:       req.StartTime,
+		LiveOutput:      req.LiveOutput,
 	}
 	select {
 	case s.eventChan <- event:
@@ -205,15 +206,51 @@ func (s *Server) processEvents(ctx context.Context) {
 	}
 }
 
-// handleJobEvent handles a single job event
+// activeRun is a run in progress, keyed in Server.active by its start time
+type activeRun struct {
+	StartedAt       time.Time
+	ExecutedCommand string
+	Output          func() string // output so far; nil when output capture is disabled
+}
+
+// activeRuns returns the job's runs in progress, newest first
+func (s *Server) activeRuns(jobID string) []activeRun {
+	s.jobsMu.RLock()
+	defer s.jobsMu.RUnlock()
+	res := make([]activeRun, 0, len(s.active[jobID]))
+	for _, run := range s.active[jobID] {
+		res = append(res, run)
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].StartedAt.After(res[j].StartedAt) })
+	return res
+}
+
+// activeRunAt returns the job's run in progress that started at start (unix micro)
+func (s *Server) activeRunAt(jobID string, start int64) (activeRun, bool) {
+	s.jobsMu.RLock()
+	defer s.jobsMu.RUnlock()
+	run, ok := s.active[jobID][start]
+	return run, ok
+}
+
+// handleJobEvent handles a single job event. A job can have several runs in progress at once (no --dedup,
+// or a manual run with an edited command), so each is tracked by its start time until it finishes.
 func (s *Server) handleJobEvent(event JobEvent) {
 	id := HashCommand(event.Command)
+	finished := event.EventType == enums.EventTypeCompleted || event.EventType == enums.EventTypeFailed
+	runStatus := enums.JobStatusSuccess
+	if event.EventType == enums.EventTypeFailed {
+		runStatus = enums.JobStatusFailed
+	}
 
-	// track if we need to record execution
-	var needsRecord bool
-	var recordStatus enums.JobStatus
+	// recorded before the run leaves the active set, so a poll of its output always finds it in one of the two.
+	// the database write stays outside the lock to avoid blocking dashboard reads
+	if finished {
+		s.recordExecutionAndCleanup(id, event, runStatus)
+	}
 
 	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
 	job, exists := s.jobs[id]
 	if !exists {
 		// create new job entry if it doesn't exist
@@ -235,42 +272,36 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		}
 	}
 
-	switch event.EventType {
-	case enums.EventTypeStarted:
+	switch {
+	case event.EventType == enums.EventTypeStarted:
+		if s.active[id] == nil {
+			s.active[id] = make(map[int64]activeRun)
+		}
+		s.active[id][event.StartedAt.UnixMicro()] = activeRun{StartedAt: event.StartedAt,
+			ExecutedCommand: event.ExecutedCommand, Output: event.LiveOutput}
 		job.IsRunning = true
-		job.LastRun = event.StartedAt
+		if event.StartedAt.After(job.LastRun) {
+			job.LastRun = event.StartedAt
+		}
 		job.LastStatus = enums.JobStatusRunning
-	case enums.EventTypeCompleted:
-		job.IsRunning = false
-		job.LastStatus = enums.JobStatusSuccess
+	case finished:
+		delete(s.active[id], event.StartedAt.UnixMicro())
+		if len(s.active[id]) == 0 {
+			delete(s.active, id)
+		}
+		job.IsRunning = len(s.active[id]) > 0
+		job.LastStatus = runStatus
+		if job.IsRunning {
+			job.LastStatus = enums.JobStatusRunning
+		}
 		job.LastExitCode = &event.ExitCode
 		job.LastDuration = event.FinishedAt.Sub(event.StartedAt)
 		if job.Enabled {
 			s.updateNextRun(&job)
 		}
-		needsRecord = true
-		recordStatus = job.LastStatus
-	case enums.EventTypeFailed:
-		job.IsRunning = false
-		job.LastStatus = enums.JobStatusFailed
-		job.LastExitCode = &event.ExitCode
-		job.LastDuration = event.FinishedAt.Sub(event.StartedAt)
-		if job.Enabled {
-			s.updateNextRun(&job)
-		}
-		needsRecord = true
-		recordStatus = job.LastStatus
 	}
 	job.UpdatedAt = time.Now()
-
-	// store the updated job back in the map
 	s.jobs[id] = job
-	s.jobsMu.Unlock()
-
-	// perform database operations outside the lock to avoid blocking dashboard reads
-	if needsRecord {
-		s.recordExecutionAndCleanup(id, event, recordStatus)
-	}
 }
 
 // recordExecutionAndCleanup saves execution to database and cleans up old executions

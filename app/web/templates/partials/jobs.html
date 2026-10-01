@@ -144,7 +144,7 @@
                         {{if .IsRunning}}disabled{{end}}
                         hx-get="{{url (printf "/api/jobs/%s/run-form" .ID)}}"
                         hx-target="#dialog-slot" hx-swap="innerHTML"
-                        aria-label="Run {{template "job-name" .}} now">▶<span class="lbl"> Run</span></button>
+                        aria-label="Run {{template "job-name" .}} now">▶<span class="btn-lbl"> Run</span></button>
                 {{end}}
                 <button class="btn icon toggle-btn" id="toggle-{{.ID}}"
                         hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}" hx-swap="none"

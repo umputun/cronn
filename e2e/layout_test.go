@@ -42,6 +42,30 @@ func TestTable_NarrowLayoutFoldsScheduleAndLabelsTimes(t *testing.T) {
 	assert.Contains(t, when, "Next")
 }
 
+func TestTable_RunButtonLabelCenteredBesideGlyph(t *testing.T) {
+	// the label span shared the run-form .lbl class, whose bottom margin lifted "Run" above the glyph
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+
+	res, err := row(page, jobHourly).Locator(".run-btn").Evaluate(`b => {
+		const l = b.querySelector('span'), br = b.getBoundingClientRect(), lr = l.getBoundingClientRect();
+		return {margin: getComputedStyle(l).marginBottom, color: getComputedStyle(l).color, btnColor: getComputedStyle(b).color,
+			off: Math.abs((lr.top + lr.bottom) / 2 - (br.top + br.bottom) / 2)};
+	}`, nil)
+	require.NoError(t, err)
+	got, ok := res.(map[string]any)
+	require.True(t, ok, "unexpected result %v", res)
+	assert.Equal(t, "0px", got["margin"])
+	assert.Equal(t, got["btnColor"], got["color"], "the label uses the button's text color")
+	assert.InDelta(t, 0, got["off"], 1, "the label is vertically centered in the button")
+
+	phone := newPageSized(t, 390, 844)
+	navigateToDashboard(t, phone)
+	visible, err := row(phone, jobHourly).Locator(".run-btn span").IsVisible()
+	require.NoError(t, err)
+	assert.False(t, visible, "phone rows show the glyph only")
+}
+
 func TestTable_TouchTargetsBelowWideLayout(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{820, 1180}, {390, 844}} {
 		t.Run(fmt.Sprintf("%dx%d", size.w, size.h), func(t *testing.T) {

@@ -303,7 +303,7 @@ dialog::backdrop { background: rgba(5, 7, 10, .6); }
     .c-job { grid-area: job; }
     .c-act { grid-area: act; align-self: start; }
     .c-time { grid-area: time; display: flex !important; flex-wrap: wrap; gap: 2px 16px; }
-    .btn .lbl { display: none; }
+    .btn .btn-lbl { display: none; }
     .c-act .btn { width: 44px; padding: 0; }
     .insp, #inspector.wide .insp { inset: 0; width: 100%; border-left: 0; box-shadow: none; }
     .insp-state .actions .btn { flex: 1; }

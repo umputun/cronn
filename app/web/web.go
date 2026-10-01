@@ -81,6 +81,8 @@ type JobsProvider interface {
 	List() ([]crontab.JobSpec, error)
 }
 
+//go:generate moq -out mocks/persistence.go -pkg mocks -skip-ensure -fmt goimports . Persistence
+
 // Persistence defines storage operations for job management
 type Persistence interface {
 	LoadJobs() ([]persistence.JobInfo, error)
@@ -88,6 +90,7 @@ type Persistence interface {
 	RecordExecution(req request.RecordExecution) error
 	GetExecutions(jobID string, limit int) ([]persistence.ExecutionInfo, error)
 	GetExecutionByID(execID int) (persistence.ExecutionInfo, error)
+	GetExecutionByStart(jobID string, start int64) (persistence.ExecutionInfo, error)
 	CleanupOldExecutions(jobID string, limit int) error
 	Close() error
 }

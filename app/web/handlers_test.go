@@ -1,6 +1,8 @@
 package web
 
 import (
+	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,7 @@ import (
 	"github.com/umputun/cronn/app/service"
 	"github.com/umputun/cronn/app/service/request"
 	"github.com/umputun/cronn/app/web/enums"
+	"github.com/umputun/cronn/app/web/mocks"
 	"github.com/umputun/cronn/app/web/persistence"
 )
 
@@ -797,6 +800,115 @@ func TestServer_handleLiveOutput(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, get(id, "start=abc").Code)
 		assert.Equal(t, http.StatusNotFound, get("nope", "start="+micro(startB)).Code)
 	})
+
+	t.Run("store error", func(t *testing.T) {
+		store := server.store
+		server.store = &mocks.PersistenceMock{
+			GetExecutionByStartFunc: func(string, int64) (persistence.ExecutionInfo, error) {
+				return persistence.ExecutionInfo{}, errors.New("db is gone")
+			},
+			CloseFunc: store.Close,
+		}
+		assert.Equal(t, http.StatusInternalServerError, get(id, "start=12345").Code)
+	})
+}
+
+func TestServer_handleLiveOutputFindsRetainedRunBeyondListLimit(t *testing.T) {
+	tbl := []struct {
+		hist     int
+		wantGone bool
+	}{{hist: 0}, {hist: 80}, {hist: 50, wantGone: true}}
+	for _, tt := range tbl {
+		t.Run(fmt.Sprintf("exec-max-hist %d", tt.hist), func(t *testing.T) {
+			server := newHandlersTestServer(t, Config{ExecMaxLogLines: 100, LogExecMaxHist: tt.hist})
+			id := HashCommand("live cmd")
+			event := func(typ enums.EventType, at time.Time, output string) JobEvent {
+				return JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: typ, StartedAt: at,
+					FinishedAt: at.Add(time.Second), Output: output}
+			}
+			old := time.Now().Add(-2 * time.Hour)
+			server.handleJobEvent(event(enums.EventTypeStarted, old, ""))
+			for i := range 55 {
+				at := old.Add(time.Duration(i+1) * time.Minute)
+				server.handleJobEvent(event(enums.EventTypeStarted, at, ""))
+				server.handleJobEvent(event(enums.EventTypeCompleted, at, "newer run"))
+			}
+			server.handleJobEvent(event(enums.EventTypeCompleted, old, "old run done"))
+
+			req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+			req.SetPathValue("id", id)
+			req.Form = url.Values{"start": {strconv.FormatInt(old.UnixMicro(), 10)}, "poll": {"1"}}
+			w := httptest.NewRecorder()
+			server.handleLiveOutput(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+			if tt.wantGone {
+				assert.Contains(t, w.Body.String(), "no longer available", "the default retention prunes the old run")
+				return
+			}
+			assert.Contains(t, w.Body.String(), "old run done", "a retained run outside the newest 50 is still found")
+		})
+	}
+}
+
+func TestServer_handleInspectorFinishedRunListedOnce(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	id := HashCommand("live cmd")
+	start := time.Now().Add(-time.Minute)
+	server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
+		StartedAt: start, LiveOutput: func() string { return "partial" }})
+	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: id, StartedAt: start,
+		FinishedAt: start.Add(time.Second), Status: enums.JobStatusSuccess}))
+	runs, err := server.store.GetExecutions(id, 1)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector", http.NoBody)
+	req.SetPathValue("id", id)
+	w := httptest.NewRecorder()
+	server.handleInspector(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.NotContains(t, body, `id="live-`, "a run already recorded is not listed as in progress too")
+	assert.Contains(t, body, `<input type="hidden" name="selected-run" value="`+strconv.Itoa(runs[0].ID)+`">`)
+	_, sel, found := strings.Cut(body, `class="run sel"`)
+	require.True(t, found)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(sel), `id="exec-`+strconv.Itoa(runs[0].ID)+`"`))
+}
+
+func TestServer_handleInspectorRunFinishingDuringHistoryRead(t *testing.T) {
+	// regression: a run finishing between the history read and the active snapshot was in neither
+	server := newHandlersTestServer(t, Config{})
+	id := HashCommand("live cmd")
+	older, start := time.Now().Add(-time.Hour), time.Now().Add(-time.Minute)
+	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: id, StartedAt: older,
+		FinishedAt: older.Add(time.Second), Status: enums.JobStatusSuccess, Output: "older run output"}))
+	server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
+		StartedAt: start, LiveOutput: func() string { return "run A output" }})
+
+	store := server.store
+	server.store = &mocks.PersistenceMock{
+		GetExecutionsFunc: func(jobID string, limit int) ([]persistence.ExecutionInfo, error) {
+			runs, err := store.GetExecutions(jobID, limit)
+			require.NoError(t, err)
+			server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeCompleted,
+				StartedAt: start, FinishedAt: time.Now(), Output: "run A output"})
+			return runs, nil
+		},
+		RecordExecutionFunc:      store.RecordExecution,
+		CleanupOldExecutionsFunc: store.CleanupOldExecutions,
+		CloseFunc:                store.Close,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector", http.NoBody)
+	req.SetPathValue("id", id)
+	w := httptest.NewRecorder()
+	server.handleInspector(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, "run A output")
+	assert.NotContains(t, body, "older run output")
+	token := "live:" + strconv.FormatInt(start.UnixMicro(), 10)
+	assert.Contains(t, body, `<input type="hidden" name="selected-run" value="`+token+`">`)
 }
 
 func TestServer_handleInspectorRunningJob(t *testing.T) {

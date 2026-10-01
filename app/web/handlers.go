@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -449,14 +450,21 @@ func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
 		s.updateNextRun(&job)
 	}
 
+	// active runs are read before history: a run finishing in between is then in both, and its
+	// recorded row wins, where the reverse order would leave it in neither
+	active := s.activeRuns(job.ID)
 	runs, err := s.store.GetExecutions(job.ID, inspectorRuns)
 	if err != nil {
 		log.Printf("[ERROR] failed to get executions for job %s: %v", job.ID, err)
 		http.Error(w, "Failed to load execution history", http.StatusInternalServerError)
 		return
 	}
+	active = slices.DeleteFunc(active, func(a activeRun) bool {
+		return slices.ContainsFunc(runs, func(r persistence.ExecutionInfo) bool {
+			return r.StartedAt.UnixMicro() == a.StartedAt.UnixMicro()
+		})
+	})
 	data := inspectorData{Job: job, Runs: runs, ManualDisabled: s.disableManual, RunningSince: job.LastRun}
-	active := s.activeRuns(job.ID)
 	for _, run := range active {
 		data.Active = append(data.Active, run.view())
 	}
@@ -546,20 +554,18 @@ func (s *Server) handleLiveOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runs, err := s.store.GetExecutions(job.ID, inspectorRuns)
-	if err != nil {
-		log.Printf("[ERROR] failed to get executions for job %s: %v", job.ID, err)
-		http.Error(w, "Failed to load execution history", http.StatusInternalServerError)
+	run, err := s.store.GetExecutionByStart(job.ID, start)
+	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
+		log.Printf("[ERROR] failed to get execution of job %s started at %d: %v", job.ID, start, err)
+		http.Error(w, "Failed to load execution", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
-	for _, run := range runs {
-		if run.StartedAt.UnixMicro() == start {
-			s.render(w, "partials/jobs.html", "run-output", s.newRunOutput(job, run))
-			return
-		}
+	if err != nil {
+		s.render(w, "partials/jobs.html", "live-output-gone", nil)
+		return
 	}
-	s.render(w, "partials/jobs.html", "live-output-gone", nil)
+	s.render(w, "partials/jobs.html", "run-output", s.newRunOutput(job, run))
 }
 
 // newLiveOutput pairs a run in progress with its command and the output it has produced so far

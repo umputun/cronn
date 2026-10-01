@@ -9,6 +9,16 @@ try {
     uiInspector.classList.add('wrap');
 }
 
+// Tab enables keyboard focus rings until pointer input. Esc alone must not give mouse-opened controls a ring
+// when focus is restored or polling replaces them
+document.documentElement.dataset.keynav = 'false';
+document.addEventListener('keydown', function (evt) {
+    if (evt.key === 'Tab') document.documentElement.dataset.keynav = 'true';
+}, true);
+document.addEventListener('pointerdown', function () {
+    document.documentElement.dataset.keynav = 'false';
+}, true);
+
 function uiSyncInspectorButtons() {
     for (const mode of ['wide', 'wrap']) {
         const button = uiInspector.querySelector('.' + mode + '-toggle');

@@ -34,6 +34,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; background: none; border: 0; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 2px solid var(--run); outline-offset: 2px; }
+/* ui.js sets data-keynav; the login page loads no ui.js and keeps the ring. :where keeps specificity equal to the rule above */
+:where([data-keynav="false"]) :focus-visible { outline: none; }
 .mono, code { font-family: var(--mono); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 

@@ -85,6 +85,7 @@ Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
 - **CSS Custom Properties**: light tokens in `:root`, dark under `[data-theme="dark"]`; the login page keeps its own `--color-*` tokens
 - **Container queries on `.app`**: at 1180px and up the inspector docks beside the table; below that it is a fixed overlay drawer, full screen under 600px; 44px touch targets below 1180px; phone rows become two-line blocks under 720px
 - The run dialog becomes a bottom sheet under 600px (media query, since a modal dialog sits outside the container)
+- **Focus ring**: the global `:focus-visible` outline is drawn in the dashboard only after a Tab press and until the next pointer press. `ui.js` keeps that state in `data-keynav` on `<html>`, and `:where([data-keynav="false"]) :focus-visible` removes the outline. A browser treats Esc as keyboard use too, so without the gate a mouse user who closes the inspector or run dialog with Esc gets a ring on the row, and again after each poll re-focuses it. The login page loads no `ui.js` and keeps the ring
 
 ### Dashboard: Table, Inspector, Run Dialog
 - One job table (`jobs-table`) with no alternative views. Rows carry `data-job-id`; the `.job-open` name button opens the inspector

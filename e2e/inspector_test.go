@@ -145,6 +145,67 @@ func TestInspector_CloseWorksWithServerUnreachable(t *testing.T) {
 	require.NoError(t, page.Unroute("**/api/**"))
 }
 
+func focusRingShown(t *testing.T, page playwright.Page) bool {
+	t.Helper()
+	return evalBool(t, page, `() => getComputedStyle(document.activeElement).outlineStyle !== 'none'`)
+}
+
+func TestInspector_EscAfterMouseLeavesNoFocusRing(t *testing.T) {
+	// a mouse user who closed the inspector or the run dialog with Esc got the keyboard focus ring on the row
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobHourly)
+
+	openInspector(t, page, jobHourly)
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#inspector .insp"))
+	require.True(t, focusOnRow(t, page, id))
+	assert.False(t, focusRingShown(t, page), "Esc after a mouse open shows no ring on the row")
+	_, err := page.Evaluate(`() => document.activeElement.setAttribute('data-before-poll', '')`)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return focusOnRow(t, page, id) && evalBool(t, page, `() => !document.activeElement.hasAttribute('data-before-poll')`)
+	}, 8*time.Second, 50*time.Millisecond, "a poll replaces the row and focus moves to the new button")
+	assert.False(t, focusRingShown(t, page), "the re-rendered row shows no ring either")
+
+	openRunForm(t, page, jobHourly)
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("dialog.run-dialog"))
+	require.True(t, activeElementIn(t, page, "#jobs-container"))
+	assert.False(t, focusRingShown(t, page), "Esc on a run dialog opened by mouse shows no ring")
+}
+
+func TestInspector_KeyboardNavigationKeepsFocusRing(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobHourly)
+
+	require.NoError(t, row(page, jobHourly).Locator(".job-open").Focus())
+	require.NoError(t, page.Keyboard().Press("Tab"))
+	assert.True(t, focusRingShown(t, page), "Tab shows the ring on the next control")
+	require.NoError(t, page.Keyboard().Press("Shift+Tab"))
+	require.True(t, focusOnRow(t, page, id))
+	assert.True(t, focusRingShown(t, page), "Shift+Tab shows the ring on the row")
+
+	_, err := page.ExpectResponse(inspectorRe, func() error { return page.Keyboard().Press("Enter") })
+	require.NoError(t, err)
+	waitVisible(t, page.Locator("#inspector .insp"))
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#inspector .insp"))
+	require.True(t, focusOnRow(t, page, id))
+	assert.True(t, focusRingShown(t, page), "Enter and Esc keep the ring for a keyboard user")
+
+	require.NoError(t, page.Locator("#search").Focus())
+	assert.False(t, focusRingShown(t, page), "the search input keeps its own border styling in place of the ring")
+
+	require.NoError(t, page.Mouse().Click(5, 5))
+	openInspector(t, page, jobHourly)
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#inspector .insp"))
+	require.True(t, focusOnRow(t, page, id))
+	assert.False(t, focusRingShown(t, page), "a mouse press ends keyboard mode")
+}
+
 func TestInspector_DockedOnWideScreens(t *testing.T) {
 	page := newPageSized(t, 1440, 900)
 	navigateToDashboard(t, page)

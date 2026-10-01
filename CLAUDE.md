@@ -65,7 +65,9 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 
 ### HTMX Integration Patterns
 - **Out-of-band updates**: `hx-swap-oob="innerHTML"` for updating multiple elements in single response
-- **Auto-refresh polling**: the table polls with `hx-trigger="load, every 5s, refresh-jobs from:body"` and `hx-include="#search, #selected-job"`; the inspector's live part polls itself, its run output does not
+- **Auto-refresh polling**: the table polls with `hx-trigger="load, every 5s, refresh-jobs from:body"` and `hx-include="#search, #selected-job"`; the inspector's live part polls itself with `hx-include="#insp-output"`; a recorded run's output does not poll, a run in progress (`#live-out`, `GET /api/jobs/{id}/live-output?start=<unix micro>`) polls itself every 5s until it is recorded, then that response is the recorded run's output, matched by start time
+- **Request ordering in the inspector**: every request that fills `#inspector` or `#insp-output` syncs on `#inspector` - clicks with `:replace`, the live-output poll with `:abort` - so a click always wins over a poll; `uiCloseInspector` fires `htmx:abort` on `#inspector` before emptying it. The status poll (`#insp-live`) is not synced
+- **OOB from a replaceable element is lost**: htmx 2 resolves OOB targets from the requesting element's root node, so a response to a button the status poll has since replaced drops its OOB updates (the main swap still lands). State that must follow a click goes inside the swapped fragment, not out of band
 - **Response coordination**: `HX-Refresh: true` header triggers full page refresh when needed
 - **Event coordination**: Custom events like `refresh-jobs` coordinate updates between components (used by toggle, sort, filter)
 - **Lazy-load dropdowns**: Native `<details>/<summary>` with `hx-trigger="toggle once"` for dropdowns that fetch content on first open (used in neighbors selector)
@@ -74,6 +76,7 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 - Server implements `JobEventHandler` interface to receive job events
 - Events processed asynchronously via channel with goroutine
 - Job state updated in memory immediately, persisted separately during sync cycles
+- **Runs in progress**: `OnJobStart` carries `LiveOutput func() string` (nil when `--log.exec-max-lines=0`), a reader of the run's web capture, which spans all repeater attempts. The server keeps each run in progress in `Server.active` by job and start time, since one job can overlap itself (no `--dedup`, or a manual run with an edited command). `IsRunning` is derived from what is left there, and a finished run is recorded before it leaves the active set, so a poll finds it in one or the other
 
 ### Cookie-Based Preferences
 Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration. The cookies only set a fresh page's modes: each tab sends its own `filter` (hidden `#filter-mode`) and `sort` (`#sort-mode`) with every list request, and `getSortMode`/`getFilterMode` prefer those, so a change in one tab never leaks into another.
@@ -85,12 +88,12 @@ Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
 
 ### Dashboard: Table, Inspector, Run Dialog
 - One job table (`jobs-table`) with no alternative views. Rows carry `data-job-id`; the `.job-open` name button opens the inspector
-- **Selection state** lives in hidden inputs `#selected-job` and `#selected-run` outside every polled target, set by OOB fragments and sent with each table poll, so selection survives polling
-- **Minimal JS** in `static/ui.js`, only where htmx has no attribute: focus restore on the re-rendered row, opening/removing dialogs, focus into the inspector and marking the covered page `inert` while it overlays (re-checked on resize, since the CSS decides by width), closing the inspector without a request, and the poll-failure notice (`uiPollDone`, scoped to the table's own poll)
+- **Selection state**: the selected job lives in the hidden input `#selected-job` outside every polled target, set by OOB fragments and sent with each table poll. The selected run travels inside the output it selected: each `.out` fragment carries a hidden `selected-run` input (a recorded run's id, or `live:<start>` for a run in progress), so the runs list highlight always matches the output on screen
+- **Minimal JS** in `static/ui.js`, only where htmx has no attribute: focus restore on the re-rendered row, opening/removing dialogs, focus into the inspector and marking the covered page `inert` while it overlays (re-checked on resize, since the CSS decides by width), closing the inspector without a request, keeping the reader's scroll position across live-output polls (following new lines only when already at the end), and the poll-failure notice (`uiPollDone`, scoped to the table's own poll)
 - `#dialog-slot` opens a swapped `<dialog>` on `hx-on::after-settle`, not after-swap: htmx binds the dialog's `hx-on:close` only at settle, and a dialog closed before that stays in the slot
 - **Run endpoint contract**: `POST /api/jobs/{id}/run` with `HX-Request` answers a rejection with 200 and the re-rendered form (message, edits kept) and an acceptance with 202, an OOB toast and `HX-Trigger-After-Swap: refresh-jobs`; callers without `HX-Request` (curl, scripts) keep 202 "Job triggered" and 4xx/5xx text
 - **Expired session**: `authMiddleware` answers htmx requests with 401 and `HX-Redirect` to the login page, so a poll never swaps the login form into the table
-- **Removed job**: when a crontab sync drops the job open in the inspector, its htmx request gets 200 with `HX-Retarget: #inspector` and `HX-Reswap: innerHTML` (the live part swaps `outerHTML` and would delete the slot) plus OOB-cleared selection inputs, so the panel closes; a run posted for a removed job re-renders the dialog with the submitted values. Non-htmx callers keep the 404
+- **Removed job**: when a crontab sync drops the job open in the inspector, its htmx request gets 200 with `HX-Retarget: #inspector` and `HX-Reswap: innerHTML` (the live part swaps `outerHTML` and would delete the slot) plus an OOB-cleared `#selected-job`, so the panel closes; a run posted for a removed job re-renders the dialog with the submitted values. Non-htmx callers keep the 404
 
 ## Authentication Architecture
 
@@ -301,7 +304,7 @@ require.Eventually(t, func() bool {
 - Run with `make e2e` (headless) or `make e2e-ui` (visible browser for debugging)
 - `TestMain` builds the binary once and starts a **single shared server + DB** for the whole run; tests share state and run in file/definition order
 - **Shared-state pattern**: because other tests mutate job state, assert invariants rather than fixed numbers to avoid order-dependent flakiness. Example: verify `total == running + success + failed + idle` instead of hardcoding each count
-- The e2e crontab (`createTestCrontab` in `e2e_test.go`) includes a `*/5` job, so a job may flip to `success` if a run crosses a 5-minute boundary — assert invariants, never an all-idle baseline
+- The e2e crontab (`createTestCrontab` in `e2e_test.go`) includes a `*/5` job, so a job may flip to `success` if a run crosses a 5-minute boundary — assert invariants, never an all-idle baseline. Its manual-only "Live tail" job prints six lines a second for 30s, long enough for the four live-output polls its scroll checks need; tests that start it wait for its previous run to end, and job counts in assertions come from `totalJobs`
 - **Bound every test run by scope and time**: the full e2e suite is slow (~50s per run). Target specific tests with `-run 'TestName'` and always pass `-timeout`; never loop the full suite repeatedly to chase a flake. To confirm a flake fix, run the single affected test, not the whole suite
 
 ## Testing and Development Workflow

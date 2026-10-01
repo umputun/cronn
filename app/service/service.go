@@ -233,16 +233,25 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	if isManual {
 		executedCommand = cmd
 	}
+	webCapture := s.newWebCapture()
 	if s.JobEventHandler != nil {
-		s.JobEventHandler.OnJobStart(request.OnJobStart{
+		start := request.OnJobStart{
 			Command:         r.Command,
 			ExecutedCommand: executedCommand,
 			Schedule:        r.Spec,
 			StartTime:       startTime,
-		})
+		}
+		if webCapture != nil {
+			start.LiveOutput = webCapture.GetOutput
+		}
+		s.JobEventHandler.OnJobStart(start)
 	}
 
-	notifyOutput, webOutput, err := s.executeCommand(ctx, cmd, s.Stdout, rptr)
+	notifyOutput, err := s.executeCommand(ctx, cmd, s.Stdout, rptr, webCapture)
+	webOutput := ""
+	if webCapture != nil {
+		webOutput = webCapture.GetOutput()
+	}
 
 	// notify job complete
 	endTime := time.Now()
@@ -345,19 +354,23 @@ func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sche
 	}
 }
 
-func (s *Scheduler) executeCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater) (notifyOutput, webOutput string, err error) {
+// newWebCapture returns the capture for the web log, or nil when ExecMaxLogLines disables it.
+func (s *Scheduler) newWebCapture() *OutputCapture {
+	if s.ExecMaxLogLines <= 0 {
+		return nil
+	}
+	return NewOutputCapture(s.ExecMaxLogLines)
+}
+
+// executeCommand runs the command through the repeater, writing every attempt's output to logWriter
+// and webCapture (when not nil), and returns the output captured for notifications.
+func (s *Scheduler) executeCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater,
+	webCapture *OutputCapture) (notifyOutput string, err error) {
 	if s.Jitter > 0 {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
 
-	// create output capture for notifications
 	notifyCapture := NewOutputCapture(s.NotifyMaxLogLines)
-
-	// create output capture for web logs if enabled (0 = disabled)
-	var webCapture *OutputCapture
-	if s.ExecMaxLogLines > 0 {
-		webCapture = NewOutputCapture(s.ExecMaxLogLines)
-	}
 
 	execErr := rptr.Do(ctx, func() error {
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
@@ -384,14 +397,10 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 	})
 
 	notifyOutput = notifyCapture.GetOutput()
-	if webCapture != nil {
-		webOutput = webCapture.GetOutput()
-	}
-
 	if execErr != nil {
-		return notifyOutput, webOutput, fmt.Errorf("command execution failed: %w", execErr)
+		return notifyOutput, fmt.Errorf("command execution failed: %w", execErr)
 	}
-	return notifyOutput, webOutput, nil
+	return notifyOutput, nil
 }
 
 func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string) error {
@@ -554,7 +563,7 @@ func (s *Scheduler) resumeInterrupted(concur int) {
 		for _, cmd := range cmds {
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
-				notifyOutput, _, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater)
+				notifyOutput, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater, nil)
 				if err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)

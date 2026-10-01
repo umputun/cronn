@@ -312,13 +312,13 @@ func TestScheduler_execute(t *testing.T) {
 	rep := repeater.New(&strategy.Once{})
 	svc := Scheduler{EnableLogPrefix: true}
 	wr := bytes.NewBuffer(nil)
-	_, _, err := svc.executeCommand(context.Background(), "echo 123", wr, rep)
+	_, err := svc.executeCommand(context.Background(), "echo 123", wr, rep, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "{echo 123} 123\n", wr.String())
 
 	svc = Scheduler{EnableLogPrefix: false}
 	wr = bytes.NewBuffer(nil)
-	_, _, err = svc.executeCommand(context.Background(), "echo 123", wr, rep)
+	_, err = svc.executeCommand(context.Background(), "echo 123", wr, rep, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "123\n", wr.String())
 }
@@ -327,7 +327,7 @@ func TestScheduler_executeFailedNotFound(t *testing.T) {
 	rep := repeater.New(&strategy.Once{})
 	svc := Scheduler{}
 	wr := bytes.NewBuffer(nil)
-	_, _, err := svc.executeCommand(context.Background(), "no-such-command", wr, rep)
+	_, err := svc.executeCommand(context.Background(), "no-such-command", wr, rep, nil)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "not found")
 }
@@ -336,7 +336,7 @@ func TestScheduler_executeFailedExitCode(t *testing.T) {
 	rep := repeater.New(&strategy.Once{})
 	svc := Scheduler{NotifyMaxLogLines: 10}
 	wr := bytes.NewBuffer(nil)
-	notifyOutput, _, err := svc.executeCommand(context.Background(), "testfiles/fail.sh", wr, rep)
+	notifyOutput, err := svc.executeCommand(context.Background(), "testfiles/fail.sh", wr, rep, nil)
 	require.Error(t, err)
 	assert.Contains(t, wr.String(), "TestScheduler_executeFailed")
 	t.Log(err)
@@ -354,8 +354,10 @@ func TestScheduler_ExecuteCommand_IndependentOutputLimits(t *testing.T) {
 
 	// generate command that produces 10 lines of output
 	cmd := "for i in 1 2 3 4 5 6 7 8 9 10; do echo line$i; done"
-	notifyOutput, webOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep)
+	web := svc.newWebCapture()
+	notifyOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep, web)
 	require.NoError(t, err)
+	webOutput := web.GetOutput()
 
 	// notify output should have last 3 lines
 	notifyLines := strings.Split(strings.TrimSpace(notifyOutput), "\n")
@@ -380,7 +382,8 @@ func TestScheduler_ExecuteCommand_WebOutputDisabled(t *testing.T) {
 	wr := bytes.NewBuffer(nil)
 
 	cmd := "for i in 1 2 3 4 5 6 7 8; do echo line$i; done"
-	notifyOutput, webOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep)
+	web := svc.newWebCapture()
+	notifyOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep, web)
 	require.NoError(t, err)
 
 	// notify output should have last 5 lines
@@ -389,8 +392,7 @@ func TestScheduler_ExecuteCommand_WebOutputDisabled(t *testing.T) {
 	assert.Equal(t, "line4", notifyLines[0])
 	assert.Equal(t, "line8", notifyLines[4])
 
-	// web output should be empty (disabled)
-	assert.Empty(t, webOutput)
+	assert.Nil(t, web, "web capture is disabled")
 }
 
 func TestScheduler_ExecuteCommand_NotifyOutputDisabled(t *testing.T) {
@@ -399,8 +401,10 @@ func TestScheduler_ExecuteCommand_NotifyOutputDisabled(t *testing.T) {
 	wr := bytes.NewBuffer(nil)
 
 	cmd := "for i in 1 2 3 4 5 6 7 8; do echo line$i; done"
-	notifyOutput, webOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep)
+	web := svc.newWebCapture()
+	notifyOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep, web)
 	require.NoError(t, err)
+	webOutput := web.GetOutput()
 
 	// notify output should be empty (0 lines captured)
 	assert.Empty(t, notifyOutput)
@@ -418,14 +422,82 @@ func TestScheduler_ExecuteCommand_BothOutputsSameContent(t *testing.T) {
 	wr := bytes.NewBuffer(nil)
 
 	cmd := "echo line1; echo line2; echo line3"
-	notifyOutput, webOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep)
+	web := svc.newWebCapture()
+	notifyOutput, err := svc.executeCommand(context.Background(), cmd, wr, rep, web)
 	require.NoError(t, err)
+	webOutput := web.GetOutput()
 
 	// both outputs should be identical when buffer limits are not reached
 	assert.Equal(t, notifyOutput, webOutput)
 	assert.Contains(t, notifyOutput, "line1")
 	assert.Contains(t, notifyOutput, "line2")
 	assert.Contains(t, notifyOutput, "line3")
+}
+
+func TestScheduler_runJobWithCommandLiveOutput(t *testing.T) {
+	newSvc := func(handler *mocks.JobEventHandlerMock, execLines int) Scheduler {
+		return Scheduler{
+			Stdout:          bytes.NewBuffer(nil),
+			Resumer:         &mocks.ResumerMock{OnStartFunc: func(string) (string, error) { return "", nil }, OnFinishFunc: func(string) error { return nil }},
+			DeDup:           NewDeDup(false),
+			JobEventHandler: handler,
+			NotifyTimeout:   time.Second,
+			ExecMaxLogLines: execLines,
+		}
+	}
+	spec := crontab.JobSpec{Spec: "* * * * *", Command: "live job"}
+
+	t.Run("output readable while the command runs", func(t *testing.T) {
+		started := make(chan request.OnJobStart, 1)
+		handler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc:    func(req request.OnJobStart) { started <- req },
+			OnJobCompleteFunc: func(request.OnJobComplete) {},
+		}
+		svc := newSvc(handler, 10)
+		done := make(chan error, 1)
+		go func() {
+			done <- svc.runJobWithCommand(context.Background(), spec, "echo first; sleep 2; echo second", nil,
+				repeater.New(&strategy.Once{}), false)
+		}()
+
+		req := <-started
+		require.NotNil(t, req.LiveOutput)
+		require.Eventually(t, func() bool { return req.LiveOutput() == "first" }, time.Second, 10*time.Millisecond)
+		assert.Empty(t, handler.OnJobCompleteCalls(), "the job is still running")
+
+		require.NoError(t, <-done)
+		require.Len(t, handler.OnJobCompleteCalls(), 1)
+		assert.Equal(t, "first\nsecond", handler.OnJobCompleteCalls()[0].Req.Output)
+		assert.Equal(t, "first\nsecond", req.LiveOutput())
+	})
+
+	t.Run("output spans retry attempts", func(t *testing.T) {
+		var live func() string
+		handler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc:    func(req request.OnJobStart) { live = req.LiveOutput },
+			OnJobCompleteFunc: func(request.OnJobComplete) {},
+		}
+		svc := newSvc(handler, 10)
+		err := svc.runJobWithCommand(context.Background(), spec, "echo attempt; exit 1", nil,
+			repeater.New(&strategy.FixedDelay{Repeats: 2, Delay: time.Millisecond}), false)
+		require.Error(t, err)
+		require.NotNil(t, live)
+		assert.Equal(t, "attempt\nattempt", live())
+		assert.Equal(t, "attempt\nattempt", handler.OnJobCompleteCalls()[0].Req.Output)
+	})
+
+	t.Run("no live output when capture is disabled", func(t *testing.T) {
+		handler := &mocks.JobEventHandlerMock{
+			OnJobStartFunc:    func(request.OnJobStart) {},
+			OnJobCompleteFunc: func(request.OnJobComplete) {},
+		}
+		svc := newSvc(handler, 0)
+		err := svc.runJobWithCommand(context.Background(), spec, "echo hi", nil, repeater.New(&strategy.Once{}), false)
+		require.NoError(t, err)
+		require.Len(t, handler.OnJobStartCalls(), 1)
+		assert.Nil(t, handler.OnJobStartCalls()[0].Req.LiveOutput)
+		assert.Empty(t, handler.OnJobCompleteCalls()[0].Req.Output)
+	})
 }
 
 func TestScheduler_jobFunc(t *testing.T) {

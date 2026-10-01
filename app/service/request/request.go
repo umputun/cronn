@@ -13,6 +13,9 @@ type OnJobStart struct {
 	ExecutedCommand string
 	Schedule        string
 	StartTime       time.Time
+	// LiveOutput returns the output captured so far, all retry attempts included.
+	// It is nil when web output capture is disabled.
+	LiveOutput func() string
 }
 
 // OnJobComplete contains parameters for job completion event

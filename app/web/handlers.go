@@ -430,7 +430,8 @@ func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleInspector renders the job inspector. part=live renders only the refreshable part (status, runs) for
-// the inspector's own polling; otherwise the whole panel plus the selection inputs and the latest run's output
+// the inspector's own polling; otherwise the whole panel, the selected-job input, and the output of the newest
+// run in progress, or of the latest recorded run when nothing runs
 func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.jobByID(r.PathValue("id"))
 	if !ok && r.Header.Get("HX-Request") == "true" {

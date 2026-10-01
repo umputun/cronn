@@ -129,7 +129,8 @@ uiInspector.addEventListener('htmx:afterSettle', function () {
     uiSyncInspectorButtons();
 });
 
-// uiCloseInspector empties the inspector and clears the selection locally; the next poll sends the cleared ids.
+// uiCloseInspector empties the inspector, which drops the run selection with it, and clears the selected job;
+// the next table poll sends the cleared id.
 // An inspector request still in flight is aborted first, or its response would bring back the selection
 function uiCloseInspector() {
     const selected = document.getElementById('selected-job');

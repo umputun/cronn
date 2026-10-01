@@ -870,11 +870,13 @@ func TestServer_handleJobEventOverlappingRuns(t *testing.T) {
 	t.Run("newer run finishes first", func(t *testing.T) {
 		server := newHandlersTestServer(t, Config{})
 		a, b := time.Now().Add(-time.Minute), time.Now().Add(-30*time.Second)
-		server.handleJobEvent(start(a, "a out"))
 		server.handleJobEvent(start(b, "b out"))
+		server.handleJobEvent(start(a, "a out"))
+		job, _ := server.jobByID(id)
+		assert.True(t, b.Equal(job.LastRun), "a start event arriving late does not move last run back")
 		server.handleJobEvent(finish(enums.EventTypeCompleted, b, 0))
 
-		job, _ := server.jobByID(id)
+		job, _ = server.jobByID(id)
 		assert.True(t, job.IsRunning, "the older run is still in progress")
 		assert.Equal(t, enums.JobStatusRunning, job.LastStatus)
 		assert.True(t, b.Equal(job.LastRun), "last run does not move back to the older start")

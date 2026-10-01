@@ -241,7 +241,7 @@ func TestFilter_MatchCountFollowsFilter(t *testing.T) {
 
 	text, err := page.Locator("#match-count").TextContent()
 	require.NoError(t, err)
-	assert.Equal(t, "8 jobs", strings.TrimSpace(text))
+	assert.Equal(t, strconv.Itoa(totalJobs)+" jobs", strings.TrimSpace(text))
 
 	id := jobID(t, page, jobFailing)
 	setEnabled(t, id, true)
@@ -252,6 +252,6 @@ func TestFilter_MatchCountFollowsFilter(t *testing.T) {
 	require.GreaterOrEqual(t, shown, 1)
 	text, err = page.Locator("#match-count").TextContent()
 	require.NoError(t, err)
-	assert.Equal(t, strconv.Itoa(shown)+" of 8 jobs", strings.TrimSpace(text))
+	assert.Equal(t, strconv.Itoa(shown)+" of "+strconv.Itoa(totalJobs)+" jobs", strings.TrimSpace(text))
 	clickTab(t, page, "All")
 }

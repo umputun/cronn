@@ -5,6 +5,7 @@ package e2e
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -116,9 +117,7 @@ func TestInspector_SelectionSurvivesPollsAndClearsOnNewJob(t *testing.T) {
 	rowCls, err := row(page, jobFailing).GetAttribute("class")
 	require.NoError(t, err)
 	assert.Contains(t, rowCls, "sel", "job selection survives polls")
-	selectedRun, err := page.Locator("#selected-run").InputValue()
-	require.NoError(t, err)
-	assert.Equal(t, strings.TrimPrefix(secondID, "exec-"), selectedRun)
+	assert.Equal(t, strings.TrimPrefix(secondID, "exec-"), selectedRun(page))
 
 	openInspector(t, page, jobHourly)
 	require.Eventually(t, func() bool {
@@ -466,4 +465,200 @@ func TestInspector_RemovedJobClosesPanel(t *testing.T) {
 		"focus lands on search, since the job's row is gone")
 
 	openInspector(t, page, jobWeekday)
+}
+
+func TestInspector_ManualTagSpacingInRunsList(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobFailing)
+	setEnabled(t, id, true)
+	runJob(t, id)
+	openInspector(t, page, jobFailing)
+
+	measure := func() map[string]any {
+		res, err := page.Evaluate(`() => {
+			const cell = document.querySelector('#inspector .runs .run .when'), tag = cell.querySelector('.tag');
+			const r = document.createRange();
+			r.selectNodeContents(cell.firstChild);
+			const text = r.getBoundingClientRect(), badge = tag.getBoundingClientRect(), box = cell.getBoundingClientRect();
+			return {gap: badge.top - text.bottom, spaced: badge.top - text.bottom >= 4, wrapped: badge.top >= text.bottom,
+				inside: badge.left >= box.left - 1 && badge.right <= box.right + 1 && badge.bottom <= box.bottom + 1};
+		}`)
+		require.NoError(t, err)
+		got, ok := res.(map[string]any)
+		require.True(t, ok, "unexpected result %v", res)
+		return got
+	}
+
+	docked := measure()
+	assert.Equal(t, false, docked["wrapped"], "the manual tag shares the timestamp's line when it fits")
+	require.NoError(t, page.Locator("#inspector .wide-toggle").Click())
+	require.Eventually(t, func() bool { return measure()["wrapped"] == true }, 3*time.Second, 100*time.Millisecond,
+		"in the narrow wide-mode runs column the tag wraps clear of the timestamp line")
+	wide := measure()
+	assert.Equal(t, true, wide["spaced"], "the wrapped tag keeps a 4px gap below the timestamp, got %v", wide["gap"])
+	assert.Equal(t, true, wide["inside"], "the wrapped tag stays inside the date cell")
+	require.NoError(t, page.Keyboard().Press("Escape"))
+}
+
+var liveOutRe = regexp.MustCompile(`/api/jobs/[^/]+/live-output\?`)
+
+func startLive(t *testing.T, page playwright.Page) string {
+	t.Helper()
+	id := jobID(t, page, jobLive)
+	setEnabled(t, id, true)
+	require.Eventually(t, func() bool { return !jobStatus(t, id).IsRunning }, 40*time.Second, 200*time.Millisecond)
+	startJob(t, id)
+	return id
+}
+
+func liveText(t *testing.T, page playwright.Page) string {
+	t.Helper()
+	text, err := page.Locator("#live-out pre").TextContent()
+	require.NoError(t, err)
+	return text
+}
+
+func selectedRun(page playwright.Page) string {
+	input := page.Locator("#insp-output input[name=selected-run]")
+	if count, err := input.Count(); err != nil || count == 0 {
+		return ""
+	}
+	val, err := input.InputValue()
+	if err != nil {
+		return ""
+	}
+	return val
+}
+
+func delayRoute(t *testing.T, page playwright.Page, re *regexp.Regexp, d time.Duration) {
+	t.Helper()
+	require.NoError(t, page.Route(re, func(r playwright.Route) {
+		go func() {
+			time.Sleep(d)
+			_ = r.Continue()
+		}()
+	}))
+	t.Cleanup(func() { _ = page.Unroute(re) })
+}
+
+func TestInspector_LiveOutputFollowsRunningJob(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := startLive(t, page)
+
+	openInspector(t, page, jobLive)
+	waitVisible(t, page.Locator("#live-out pre"))
+	assert.True(t, strings.HasPrefix(selectedRun(page), "live:"), "a running job opens on its run in progress")
+	assert.NotContains(t, liveText(t, page), "tick 7 line 1")
+
+	require.Eventually(t, func() bool { return strings.Contains(liveText(t, page), "tick 7 line 1") },
+		12*time.Second, 200*time.Millisecond, "a poll brings the lines printed since the inspector opened")
+	assert.True(t, jobStatus(t, id).IsRunning, "new lines arrived while the job was still running")
+	atEnd := `() => { const p = document.querySelector('#live-out pre');
+		return p.scrollHeight > p.clientHeight && p.scrollHeight - p.scrollTop - p.clientHeight < 4; }`
+	assert.True(t, evalBool(t, page, atEnd), "a log scrolled to its end keeps following new lines")
+	nextPoll := func() {
+		before := liveText(t, page)
+		require.Eventually(t, func() bool { return liveText(t, page) != before }, 8*time.Second, 200*time.Millisecond)
+	}
+
+	require.NoError(t, page.Locator("#live-out .wrap-toggle").Click())
+	_, err := page.Evaluate(`() => { const p = document.querySelector('#live-out pre'); p.scrollTop = p.scrollHeight; p.scrollLeft = 120; }`)
+	require.NoError(t, err)
+	nextPoll()
+	assert.True(t, evalBool(t, page, atEnd), "the unwrapped log still follows new lines")
+	assert.True(t, evalBool(t, page, `() => document.querySelector('#live-out pre').scrollLeft === 120`),
+		"an unwrapped log at its end keeps its sideways position")
+
+	_, err = page.Evaluate(`() => { document.querySelector('#live-out pre').scrollTop = 60; }`)
+	require.NoError(t, err)
+	nextPoll()
+	assert.True(t, evalBool(t, page, `() => { const p = document.querySelector('#live-out pre');
+		return p.scrollTop === 60 && p.scrollLeft === 120; }`), "a reader scrolled up keeps the place")
+
+	require.Eventually(t, func() bool {
+		count, e := page.Locator("#live-out").Count()
+		return e == nil && count == 0
+	}, 35*time.Second, 200*time.Millisecond, "the finished run replaces the live output")
+	out := inspectorText(t, page, "#insp-output")
+	assert.Contains(t, out, "tick 30 line 6")
+	assert.Contains(t, out, "exit 0")
+	execID := selectedRun(page)
+	_, err = strconv.Atoi(execID)
+	require.NoError(t, err, "the selection is now the recorded run, got %q", execID)
+	require.Eventually(t, func() bool {
+		first, e := page.Locator("#inspector .runs .run").First().GetAttribute("id")
+		return e == nil && first == "exec-"+execID
+	}, 8*time.Second, 100*time.Millisecond, "the recorded run heads the runs list")
+}
+
+func TestInspector_HistorySelectionWinsOverLivePoll(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobLive)
+	if jobStatus(t, id).LastRun.IsZero() {
+		startLive(t, page)
+		require.Eventually(t, func() bool { return !jobStatus(t, id).IsRunning }, 40*time.Second, 200*time.Millisecond)
+	}
+	startLive(t, page)
+	openInspector(t, page, jobLive)
+	waitVisible(t, page.Locator("#live-out"))
+	history := page.Locator("#inspector .runs [id^=exec-]").First()
+	historyID, err := history.GetAttribute("id")
+	require.NoError(t, err)
+	historyRun := strings.TrimPrefix(historyID, "exec-")
+	historyShown := func() bool {
+		count, e := page.Locator("#live-out").Count()
+		return e == nil && count == 0 && selectedRun(page) == historyRun
+	}
+
+	delayRoute(t, page, outputRe, 6*time.Second)
+	require.NoError(t, history.Click())
+	require.Eventually(t, historyShown, 10*time.Second, 100*time.Millisecond, "a slow history response spans a poll tick and still wins")
+	require.Eventually(t, func() bool {
+		pressed, e := page.Locator("#exec-" + historyRun).GetAttribute("aria-pressed")
+		return e == nil && pressed == "true"
+	}, 8*time.Second, 100*time.Millisecond, "the runs list highlights the run the output shows")
+	require.NoError(t, page.Unroute(outputRe))
+
+	require.NoError(t, page.Locator("#inspector .runs [id^=live-]").First().Click())
+	waitVisible(t, page.Locator("#live-out"))
+	delayRoute(t, page, liveOutRe, 4*time.Second)
+	_, err = page.ExpectRequest(liveOutRe, func() error { return nil }, playwright.PageExpectRequestOptions{Timeout: new(8000.0)})
+	require.NoError(t, err)
+	require.NoError(t, page.Locator("#exec-"+historyRun).Click())
+	require.Eventually(t, historyShown, 4*time.Second, 100*time.Millisecond)
+	require.Never(t, func() bool { return !historyShown() }, 5*time.Second, 200*time.Millisecond,
+		"the live poll that was in flight does not bring the live output back")
+}
+
+func TestInspector_PendingLiveResponseAfterJobChangeOrClose(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	startLive(t, page)
+	hourly := jobID(t, page, jobHourly)
+	openInspector(t, page, jobLive)
+	waitVisible(t, page.Locator("#live-out"))
+
+	delayRoute(t, page, liveOutRe, 3*time.Second)
+	_, err := page.ExpectRequest(liveOutRe, func() error { return nil }, playwright.PageExpectRequestOptions{Timeout: new(8000.0)})
+	require.NoError(t, err)
+	openInspector(t, page, jobHourly)
+	require.Never(t, func() bool {
+		count, e := page.Locator("#live-out").Count()
+		job, _ := page.Locator("#selected-job").InputValue()
+		return e == nil && (count > 0 || job != hourly || strings.HasPrefix(selectedRun(page), "live:"))
+	}, 4*time.Second, 100*time.Millisecond, "a live response for the previous job does not come back")
+
+	openInspector(t, page, jobLive)
+	waitVisible(t, page.Locator("#live-out"))
+	_, err = page.ExpectRequest(liveOutRe, func() error { return nil }, playwright.PageExpectRequestOptions{Timeout: new(8000.0)})
+	require.NoError(t, err)
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	require.Never(t, func() bool {
+		count, e := page.Locator("#inspector .insp").Count()
+		job, _ := page.Locator("#selected-job").InputValue()
+		return e == nil && (count > 0 || job != "" || selectedRun(page) != "")
+	}, 4*time.Second, 100*time.Millisecond, "a live response after closing does not reopen the inspector")
 }

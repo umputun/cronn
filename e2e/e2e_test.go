@@ -61,8 +61,9 @@ const (
 	jobFailing   = "Vendor feed import"
 	jobSilent    = "Silent failure"
 	jobSlow      = "Slow report"
+	jobLive      = "Live tail"
 	jobTemplated = "Templated job"
-	totalJobs    = 8
+	totalJobs    = 9
 )
 
 var (
@@ -192,6 +193,9 @@ func createTestCrontab() error {
   - spec: "0 0 1 1 *"
     command: "sleep 3"
     name: "Slow report"
+  - spec: "0 0 1 1 *"
+    command: 'sh -c "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do for j in 1 2 3 4 5 6; do echo tick \$i line \$j of a line long enough to scroll sideways when log lines are not wrapped in the inspector output pane; done; sleep 1; done"'
+    name: "Live tail"
   - spec: "0 0 1 1 *"
     command: "echo run {{.YYYYMMDD}}"
     name: "Templated job"

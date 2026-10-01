@@ -102,15 +102,42 @@ function uiInspectorSwapped(panel, evt) {
     if (!document.activeElement || document.activeElement === document.body) uiRestoreFocus('');
 }
 
-// uiCloseInspector empties the inspector and clears the selection locally; the next poll sends the cleared ids
+// the live log keeps the reader's place across its polls and follows new lines only when it was already at its
+// end; a fresh live log starts at its end. A swap cannot make scrolling conditional, so the position is carried here
+let uiLiveScroll = null;
+uiInspector.addEventListener('htmx:beforeSwap', function (evt) {
+    const target = evt.detail.target;
+    if (target.id === 'live-out') {
+        const pre = target.querySelector('pre');
+        uiLiveScroll = pre ? {top: pre.scrollTop, left: pre.scrollLeft, fromLive: true,
+            pinned: pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4} : {pinned: true, fromLive: true};
+    } else if (target === uiInspector || target.id === 'insp-output') {
+        uiLiveScroll = {pinned: true, fromLive: false};
+    }
+});
+uiInspector.addEventListener('htmx:afterSettle', function () {
+    if (!uiLiveScroll) return;
+    const pre = uiInspector.querySelector('#insp-output pre');
+    if (pre && uiLiveScroll.pinned && (uiLiveScroll.fromLive || uiInspector.querySelector('#live-out'))) {
+        pre.scrollTop = pre.scrollHeight;
+        if (uiLiveScroll.fromLive) pre.scrollLeft = uiLiveScroll.left || 0;
+    } else if (pre && !uiLiveScroll.pinned) {
+        pre.scrollTop = uiLiveScroll.top;
+        pre.scrollLeft = uiLiveScroll.left;
+    }
+    uiLiveScroll = null;
+    uiSyncInspectorButtons();
+});
+
+// uiCloseInspector empties the inspector and clears the selection locally; the next poll sends the cleared ids.
+// An inspector request still in flight is aborted first, or its response would bring back the selection
 function uiCloseInspector() {
     const selected = document.getElementById('selected-job');
     const jobID = selected ? selected.value : '';
-    document.getElementById('inspector').innerHTML = '';
+    htmx.trigger(uiInspector, 'htmx:abort');
+    uiInspector.innerHTML = '';
     uiSetCovered(false);
     if (selected) selected.value = '';
-    const run = document.getElementById('selected-run');
-    if (run) run.value = '';
     document.querySelectorAll('tr.row.sel').forEach(function (row) { row.classList.remove('sel'); });
     uiRestoreFocus(jobID);
 }

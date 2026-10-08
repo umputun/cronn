@@ -5,6 +5,7 @@ package e2e
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -173,6 +174,34 @@ func TestInspector_EscAfterMouseLeavesNoFocusRing(t *testing.T) {
 	waitHidden(t, page.Locator("dialog.run-dialog"))
 	require.True(t, activeElementIn(t, page, "#jobs-container"))
 	assert.False(t, focusRingShown(t, page), "Esc on a run dialog opened by mouse shows no ring")
+}
+
+func TestInspector_HeaderDotFollowsJobStatus(t *testing.T) {
+	// the dot beside the title kept the state the job had when the inspector opened
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobSlow)
+	setEnabled(t, id, true)
+	require.Eventually(t, func() bool { return !jobStatus(t, id).IsRunning }, 10*time.Second, 100*time.Millisecond)
+
+	openInspector(t, page, jobSlow)
+	dot := page.Locator("#inspector .insp-h .dot")
+	dotIs := func(state string) func() bool {
+		return func() bool {
+			cls, err := dot.GetAttribute("class")
+			return err == nil && slices.Contains(strings.Fields(cls), state)
+		}
+	}
+	require.Never(t, dotIs("running"), 300*time.Millisecond, 50*time.Millisecond)
+
+	startJob(t, id)
+	_, err := page.Evaluate(`() => htmx.trigger(document.body, 'refresh-inspector')`)
+	require.NoError(t, err)
+	require.Eventually(t, dotIs("running"), 2*time.Second, 50*time.Millisecond, "the header dot shows the run in progress")
+	require.Eventually(t, dotIs("ok"), 15*time.Second, 100*time.Millisecond, "the header dot shows the finished run")
+	count, err := page.Locator("#insp-dot").Count()
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 }
 
 func TestInspector_KeyboardNavigationKeepsFocusRing(t *testing.T) {

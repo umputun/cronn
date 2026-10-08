@@ -6,7 +6,7 @@
     </div>
     <div class="insp-h">
         <div class="row2">
-            <span class="dot {{template "job-dot" .Job}}" aria-hidden="true"></span>
+            <span class="dot {{template "job-dot" .Job}}" id="insp-dot" aria-hidden="true"></span>
             <h3 tabindex="-1" data-focus>{{template "job-name" .Job}}</h3>
             <button class="view-toggle wide-toggle" type="button" aria-label="Wide inspector" aria-pressed="false"
                     title="Wide inspector" hx-on:click="uiToggleInspectorMode('wide')">
@@ -91,6 +91,12 @@
         {{end}}
     </div>
 </div>
+{{end}}
+
+{{/* the header holds the focused heading and is not re-rendered, so its dot rides the status poll out of band */}}
+{{define "inspector-live-poll"}}
+{{template "inspector-live" .}}
+<span class="dot {{template "job-dot" .Job}}" id="insp-dot" aria-hidden="true" hx-swap-oob="true"></span>
 {{end}}
 
 {{define "run-output"}}

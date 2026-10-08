@@ -616,6 +616,8 @@ func TestServer_handleInspector(t *testing.T) {
 		assert.Contains(t, body, "<b>Job command:</b> sh -c &#39;exit 3&#39;")
 		assert.Equal(t, 3, strings.Count(body, `id="exec-`))
 		assert.Equal(t, 1, strings.Count(body, `class="run sel"`))
+		assert.Contains(t, body, `<span class="dot fail" id="insp-dot" aria-hidden="true"></span>`)
+		assert.Equal(t, 1, strings.Count(body, `id="insp-dot"`))
 	})
 
 	t.Run("live part keeps the selected run", func(t *testing.T) {
@@ -625,6 +627,7 @@ func TestServer_handleInspector(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 		body := w.Body.String()
 		assert.Contains(t, body, `id="insp-live"`)
+		assert.Contains(t, body, `<span class="dot fail" id="insp-dot" aria-hidden="true" hx-swap-oob="true"></span>`)
 		assert.NotContains(t, body, "selected-job")
 		_, sel, found := strings.Cut(body, `class="run sel"`)
 		require.True(t, found)

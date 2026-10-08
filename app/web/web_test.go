@@ -221,7 +221,7 @@ func TestServer_Templates(t *testing.T) {
 		main := tmpl.Lookup("main")
 		assert.NotNil(t, main, "main template should be defined")
 
-		for _, name := range []string{"jobs-table", "jobs-controls", "failing-alert", "inspector", "inspector-live",
+		for _, name := range []string{"jobs-table", "jobs-controls", "failing-alert", "inspector", "inspector-live", "inspector-live-poll",
 			"run-output", "run-form", "settings-modal"} {
 			assert.NotNil(t, tmpl.Lookup(name), "%s template should be defined", name)
 		}

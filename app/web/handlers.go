@@ -430,8 +430,8 @@ func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleInspector renders the job inspector. part=live renders only the refreshable part (status, runs) for
-// the inspector's own polling; otherwise the whole panel, the selected-job input, and the output of the newest
+// handleInspector renders the job inspector. part=live renders only the refreshable part (status, runs) and
+// the header dot out of band, for the inspector's own polling; otherwise the whole panel, the selected-job input, and the output of the newest
 // run in progress, or of the latest recorded run when nothing runs
 func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.jobByID(r.PathValue("id"))
@@ -474,7 +474,7 @@ func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
 
 	if r.FormValue("part") == "live" {
 		data.SelectedRun = r.FormValue("selected-run")
-		s.render(w, "partials/jobs.html", "inspector-live", data)
+		s.render(w, "partials/jobs.html", "inspector-live-poll", data)
 		return
 	}
 

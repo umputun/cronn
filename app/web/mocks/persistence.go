@@ -28,6 +28,9 @@ import (
 //			GetExecutionByStartFunc: func(jobID string, start int64) (persistence.ExecutionInfo, error) {
 //				panic("mock out the GetExecutionByStart method")
 //			},
+//			GetExecutionStepsFunc: func(execID int) ([]persistence.StepInfo, error) {
+//				panic("mock out the GetExecutionSteps method")
+//			},
 //			GetExecutionsFunc: func(jobID string, limit int) ([]persistence.ExecutionInfo, error) {
 //				panic("mock out the GetExecutions method")
 //			},
@@ -58,6 +61,9 @@ type PersistenceMock struct {
 
 	// GetExecutionByStartFunc mocks the GetExecutionByStart method.
 	GetExecutionByStartFunc func(jobID string, start int64) (persistence.ExecutionInfo, error)
+
+	// GetExecutionStepsFunc mocks the GetExecutionSteps method.
+	GetExecutionStepsFunc func(execID int) ([]persistence.StepInfo, error)
 
 	// GetExecutionsFunc mocks the GetExecutions method.
 	GetExecutionsFunc func(jobID string, limit int) ([]persistence.ExecutionInfo, error)
@@ -95,6 +101,11 @@ type PersistenceMock struct {
 			// Start is the start argument value.
 			Start int64
 		}
+		// GetExecutionSteps holds details about calls to the GetExecutionSteps method.
+		GetExecutionSteps []struct {
+			// ExecID is the execID argument value.
+			ExecID int
+		}
 		// GetExecutions holds details about calls to the GetExecutions method.
 		GetExecutions []struct {
 			// JobID is the jobID argument value.
@@ -120,6 +131,7 @@ type PersistenceMock struct {
 	lockClose                sync.RWMutex
 	lockGetExecutionByID     sync.RWMutex
 	lockGetExecutionByStart  sync.RWMutex
+	lockGetExecutionSteps    sync.RWMutex
 	lockGetExecutions        sync.RWMutex
 	lockLoadJobs             sync.RWMutex
 	lockRecordExecution      sync.RWMutex
@@ -254,6 +266,38 @@ func (mock *PersistenceMock) GetExecutionByStartCalls() []struct {
 	mock.lockGetExecutionByStart.RLock()
 	calls = mock.calls.GetExecutionByStart
 	mock.lockGetExecutionByStart.RUnlock()
+	return calls
+}
+
+// GetExecutionSteps calls GetExecutionStepsFunc.
+func (mock *PersistenceMock) GetExecutionSteps(execID int) ([]persistence.StepInfo, error) {
+	if mock.GetExecutionStepsFunc == nil {
+		panic("PersistenceMock.GetExecutionStepsFunc: method is nil but Persistence.GetExecutionSteps was just called")
+	}
+	callInfo := struct {
+		ExecID int
+	}{
+		ExecID: execID,
+	}
+	mock.lockGetExecutionSteps.Lock()
+	mock.calls.GetExecutionSteps = append(mock.calls.GetExecutionSteps, callInfo)
+	mock.lockGetExecutionSteps.Unlock()
+	return mock.GetExecutionStepsFunc(execID)
+}
+
+// GetExecutionStepsCalls gets all the calls that were made to GetExecutionSteps.
+// Check the length with:
+//
+//	len(mockedPersistence.GetExecutionStepsCalls())
+func (mock *PersistenceMock) GetExecutionStepsCalls() []struct {
+	ExecID int
+} {
+	var calls []struct {
+		ExecID int
+	}
+	mock.lockGetExecutionSteps.RLock()
+	calls = mock.calls.GetExecutionSteps
+	mock.lockGetExecutionSteps.RUnlock()
 	return calls
 }
 

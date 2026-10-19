@@ -19,8 +19,15 @@
             </button>
             <button class="x" aria-label="Close inspector" hx-on:click="uiCloseInspector()">×</button>
         </div>
+        {{if .Job.Steps}}
+        <div class="cmdlbl">Steps</div>
+        <ol class="cmdbox steps-def">
+            {{range .Job.Steps}}<li>{{if .Name}}<b>{{.Name}}</b> {{end}}<span>{{.Command}}</span></li>{{end}}
+        </ol>
+        {{else}}
         <div class="cmdlbl">Job command</div>
         <div class="cmdbox">{{.Job.Command}}</div>
+        {{end}}
     </div>
     {{template "inspector-live" .}}
     <div id="insp-output">
@@ -39,7 +46,7 @@
     <div class="insp-state">
         <div class="chips">
             {{if .Job.IsRunning}}<span class="chip running">Running for {{humanDuration (since .RunningSince)}}</span>
-            {{else if eq .Job.LastStatus.String "failed"}}<span class="chip fail">Last run failed{{with .Job.LastExitCode}} · exit {{deref .}}{{end}}</span>
+            {{else if eq .Job.LastStatus.String "failed"}}<span class="chip fail">Last run failed{{if .Job.LastStep}} · step {{.Job.LastStep}}{{end}}{{with .Job.LastExitCode}} · exit {{deref .}}{{end}}</span>
             {{else if eq .Job.LastStatus.String "success"}}<span class="chip ok">Last run succeeded</span>
             {{else}}<span class="chip">Never ran</span>{{end}}
             {{if .Job.Enabled}}<span class="chip on">Enabled</span>{{else}}<span class="chip off">Disabled</span>{{end}}
@@ -61,7 +68,7 @@
         <div><span>Next run</span>{{if not .Job.Enabled}}disabled{{else if .Job.NextRun.IsZero}}—{{else}}{{clock .Job.NextRun}} · in {{timeUntil .Job.NextRun}}{{end}}</div>
     </div>
     <div class="runs-h">Runs <small>newest first · latest 50 shown</small></div>
-    <div class="runs">
+    <div class="runs{{if .Job.Steps}} with-steps{{end}}">
         {{range .Active}}
         <button class="run{{if eq .Token $.SelectedRun}} sel{{end}}"
                 id="live-{{.Start}}"
@@ -71,7 +78,7 @@
             <span class="dot running" aria-hidden="true"></span>
             <span class="when">{{.StartedAt.Format "Jan 2 15:04:05"}}{{if .ExecutedCommand}} <span class="tag man">manual</span>{{end}}</span>
             <span>{{humanDuration (since .StartedAt)}}</span>
-            <span class="ex">running</span>
+            <span class="ex">running{{if .Step}} · {{.Step}}/{{len $.Job.Steps}}{{end}}</span>
         </button>
         {{end}}
         {{range .Runs}}
@@ -84,7 +91,7 @@
             <span class="dot {{if eq .Status.String "success"}}ok{{else}}fail{{end}}" aria-hidden="true"></span>
             <span class="when">{{.StartedAt.Format "Jan 2 15:04:05"}}{{if .ExecutedCommand}} <span class="tag man">manual</span>{{end}}</span>
             <span>{{runDuration (.FinishedAt.Sub .StartedAt)}}</span>
-            <span class="ex{{if ne .ExitCode 0}} bad{{end}}">exit {{.ExitCode}}</span>
+            <span class="ex{{if ne .ExitCode 0}} bad{{end}}">{{template "run-steps" (runStepsOf . (len $.Job.Steps))}}exit {{.ExitCode}}</span>
         </button>
         {{else}}
         {{if not $.Active}}<div class="runs-none">No runs recorded yet.</div>{{end}}
@@ -108,13 +115,55 @@
         <span class="r{{if ne .Run.ExitCode 0}} bad{{end}}">exit {{.Run.ExitCode}} · {{runDuration (.Run.FinishedAt.Sub .Run.StartedAt)}}</span>
         {{template "wrap-toggle"}}
     </div>
+    {{if .Steps}}
+    {{template "steps-list" .Steps}}
+    {{if .RerunFrom}}
+    <div class="rerun">
+        <button class="btn" id="rerun-{{.Run.ID}}"
+                hx-get="{{url (printf "/api/jobs/%s/run-form" .JobID)}}?from={{.RerunFrom}}&run={{.Run.ID}}"
+                hx-target="#dialog-slot" hx-swap="innerHTML">▶ Re-run from step {{.RerunFrom}}…</button>
+    </div>
+    {{end}}
+    {{else if .Run.StepFirst}}
+    <div class="empty-out">The steps of this run are not available.</div>
+    {{else}}
     <div class="out-cmd"><b>{{.CommandLabel}}:</b> {{.Command}}</div>
     {{if .Run.Output}}
     <pre>{{.Run.Output}}</pre>
     {{else}}
     <div class="empty-out">No output captured.{{if ne .Run.ExitCode 0}} The run failed with exit code {{.Run.ExitCode}}.{{end}}</div>
     {{end}}
+    {{end}}
 </div>
+{{end}}
+
+{{/* how far a recorded run of a job with steps got, ahead of its exit code: "step 2 · " for a failure,
+     "3/3 · " or "from 2 · 3/3 · " otherwise; nothing for a job without steps */}}
+{{define "run-steps"}}{{if .First}}{{if .Failed}}{{if gt .First 1}}from {{.First}} · {{end}}step {{.Last}} · {{else}}{{if gt .First 1}}from {{.First}} · {{end}}{{.Last}}/{{.Total}} · {{end}}{{end}}{{end}}
+
+{{define "steps-list"}}
+<div class="steps">
+    {{range .}}
+    {{if or (eq .Status "pending") (eq .Status "skipped")}}
+    <div class="step {{.Status}}" data-step="{{.Index}}">
+        <div class="step-h">{{template "step-head" .}}</div>
+    </div>
+    {{else}}
+    <details class="step {{.Status}}" data-step="{{.Index}}"{{if .Open}} open{{end}}>
+        <summary class="step-h">{{template "step-head" .}}</summary>
+        {{if .Output}}<pre>{{.Output}}</pre>
+        {{else}}<div class="empty-out">{{if eq .Status "running"}}No output yet.{{else}}No output captured.{{end}}</div>{{end}}
+    </details>
+    {{end}}
+    {{end}}
+</div>
+{{end}}
+
+{{define "step-head"}}
+<span class="si" aria-hidden="true">{{if eq .Status "success"}}✓{{else if eq .Status "failed"}}✕{{else if eq .Status "running"}}●{{else if eq .Status "skipped"}}–{{else}}○{{end}}</span>
+<span class="sn">{{.Index}}</span>
+<span class="sc">{{if .Name}}<b>{{.Name}}</b> {{end}}<span class="mono">{{.Command}}</span></span>
+<span class="sr">{{if eq .Status "success"}}exit 0 · {{runDuration .Duration}}{{else if eq .Status "failed"}}exit {{.ExitCode}} · {{runDuration .Duration}}{{else if eq .Status "running"}}running · {{humanDuration .Duration}}{{else}}{{.Status}}{{end}}{{if gt .Attempts 1}} · {{.Attempts}} tries{{end}}</span>
 {{end}}
 
 {{define "wrap-toggle"}}
@@ -137,6 +186,10 @@
         <span class="r live">running · {{humanDuration (since .StartedAt)}}</span>
         {{template "wrap-toggle"}}
     </div>
+    {{if .Steps}}
+    {{if not .Capture}}<div class="empty-out">Output capture is disabled.</div>{{end}}
+    {{template "steps-list" .Steps}}
+    {{else}}
     <div class="out-cmd"><b>{{.CommandLabel}}:</b> {{.Command}}</div>
     {{if not .Capture}}
     <div class="empty-out">Output capture is disabled.</div>
@@ -144,6 +197,7 @@
     <pre>{{.Output}}</pre>
     {{else}}
     <div class="empty-out">No output yet.</div>
+    {{end}}
     {{end}}
 </div>
 {{end}}

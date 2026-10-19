@@ -39,6 +39,12 @@ type Schedule struct {
 	Weekday string `yaml:"weekday,omitempty" json:"weekday,omitempty" jsonschema:"description=Weekday field (0-7 where 0 and 7 are Sunday)"`
 }
 
+// StepSpec is one command of a job that runs its steps one after another
+type StepSpec struct {
+	Name    string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional step name"`
+	Command string `yaml:"command" json:"command" jsonschema:"required,description=Command to execute"`
+}
+
 // RepeaterConfig defines job-specific retry settings using pointers to distinguish
 // between unset (nil) and explicitly set values, allowing proper merging with global
 // defaults from CLI parameters.
@@ -49,11 +55,13 @@ type RepeaterConfig struct {
 	Jitter   *bool          `yaml:"jitter,omitempty" json:"jitter,omitempty" jsonschema:"description=Enable random jitter"`
 }
 
-// JobSpec for spec and cmd + params
+// JobSpec for spec and cmd + params. A job runs either Command or Steps; for a job with steps the parser
+// sets Command to the steps joined by JoinSteps, which is the job's identity and display text, never executed
 type JobSpec struct {
 	Spec       string             `yaml:"spec,omitempty" json:"spec,omitempty" jsonschema:"description=Cron specification string"`
 	Sched      Schedule           `yaml:"sched,omitempty" json:"sched,omitempty" jsonschema:"description=Structured schedule format (alternative to spec)"` //nolint:modernize // yaml.v3 doesn't support omitzero
-	Command    string             `yaml:"command" json:"command" jsonschema:"required,description=Command to execute"`
+	Command    string             `yaml:"command,omitempty" json:"command,omitempty" jsonschema:"description=Command to execute (alternative to steps)"`
+	Steps      []StepSpec         `yaml:"steps,omitempty" json:"steps,omitempty" jsonschema:"description=Commands run one after another; a failed step stops the job (alternative to command)"`
 	Name       string             `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Optional job name or description"`
 	Repeater   *RepeaterConfig    `yaml:"repeater,omitempty" json:"repeater,omitempty" jsonschema:"description=Job-specific repeater configuration"`
 	Conditions *conditions.Config `yaml:"conditions,omitempty" json:"conditions,omitempty" jsonschema:"description=Resource thresholds for conditional execution"`
@@ -133,9 +141,21 @@ func (p Parser) parseYAML(data []byte) ([]JobSpec, error) {
 			spec := p.schedToSpec(config.Jobs[i].Sched)
 			config.Jobs[i].Spec = spec
 		}
+		if len(config.Jobs[i].Steps) > 0 {
+			config.Jobs[i].Command = JoinSteps(config.Jobs[i].Steps)
+		}
 	}
 
 	return config.Jobs, nil
+}
+
+// JoinSteps joins the commands of steps with " && ", the identity and display text of a job with steps
+func JoinSteps(steps []StepSpec) string {
+	cmds := make([]string, 0, len(steps))
+	for _, st := range steps {
+		cmds = append(cmds, st.Command)
+	}
+	return strings.Join(cmds, " && ")
 }
 
 // hasSchedule checks if Schedule has any fields set

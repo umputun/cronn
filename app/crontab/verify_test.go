@@ -50,6 +50,29 @@ func TestVerifyAgainstEmbeddedSchema(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid config with steps",
+			config:  &YamlConfig{Jobs: []JobSpec{{Spec: "@daily", Steps: []StepSpec{{Name: "a", Command: "a.sh"}, {Command: "b.sh"}}}}},
+			wantErr: false,
+		},
+		{
+			name:    "command and steps",
+			config:  &YamlConfig{Jobs: []JobSpec{{Spec: "@daily", Command: "echo", Steps: []StepSpec{{Command: "a.sh"}}}}},
+			wantErr: true,
+			errMsg:  "job 1: 'command' and 'steps' fields are mutually exclusive",
+		},
+		{
+			name:    "empty steps",
+			config:  &YamlConfig{Jobs: []JobSpec{{Spec: "@daily", Steps: []StepSpec{}}}},
+			wantErr: true,
+			errMsg:  "job 1: steps must contain at least one step",
+		},
+		{
+			name:    "blank step command",
+			config:  &YamlConfig{Jobs: []JobSpec{{Spec: "@daily", Steps: []StepSpec{{Command: "a.sh"}, {Name: "b", Command: "  "}}}}},
+			wantErr: true,
+			errMsg:  "job 1: step 2: command is required",
+		},
+		{
 			name:    "empty jobs list",
 			config:  &YamlConfig{Jobs: []JobSpec{}},
 			wantErr: true,
@@ -519,4 +542,6 @@ func TestGenerateSchema(t *testing.T) {
 	assert.Contains(t, schemaStr, "command")
 	assert.Contains(t, schemaStr, "spec")
 	assert.Contains(t, schemaStr, "sched")
+	assert.Contains(t, schemaStr, "StepSpec")
+	assert.Contains(t, schemaStr, "steps")
 }

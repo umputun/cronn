@@ -43,6 +43,7 @@ type liveRunView struct {
 	Token           string
 	StartedAt       time.Time
 	ExecutedCommand string
+	Step            int // step a run of a job with steps is at, 0 for a job without steps
 }
 
 // liveOutputData is the template data of a run in progress in the inspector
@@ -53,6 +54,8 @@ type liveOutputData struct {
 	CommandLabel string
 	Capture      bool // false when output capture is disabled
 	Output       string
+	Steps        []stepView // steps of a run of a job with steps
+	StepCount    int        // number of steps of the job
 }
 
 // runOutputData is the template data of one run's output in the inspector
@@ -61,6 +64,9 @@ type runOutputData struct {
 	Run          persistence.ExecutionInfo
 	Command      string
 	CommandLabel string
+	Steps        []stepView // steps of a run of a job with steps
+	StepCount    int        // number of steps of the job
+	RerunFrom    int        // step a failed run of a job with steps can be re-run from, 0 when it can't
 }
 
 // runForm is the template data of the manual run dialog
@@ -72,6 +78,9 @@ type runForm struct {
 	HasTemplates    bool
 	CommandEditable bool
 	Error           string
+	FromStep        int              // step a run of a job with steps starts from
+	StepOptions     []formStepOption // choices of the start step, one per step of the job
+	Steps           []formStep       // the steps from FromStep on, with their commands
 }
 
 // filterTab is one filter tab of the dashboard
@@ -113,6 +122,7 @@ func (s *Server) getJobsWithStats(q jobsQuery) jobsStats {
 		if jobCopy.Enabled {
 			s.updateNextRun(&jobCopy)
 		}
+		jobCopy.RunningStep = s.runningStepLocked(job.ID)
 		allJobs = append(allJobs, jobCopy)
 	}
 	s.jobsMu.RUnlock()
@@ -283,7 +293,17 @@ func (s *Server) handleRunForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
-	s.render(w, "partials/jobs.html", "run-form", s.newRunForm(job, job.Command, ""))
+	if len(job.Steps) == 0 {
+		s.render(w, "partials/jobs.html", "run-form", s.newRunForm(job, job.Command, ""))
+		return
+	}
+	form, err := s.stepsRunForm(r, job)
+	if err != nil {
+		log.Printf("[ERROR] failed to build run form of job %s: %v", job.ID, err)
+		http.Error(w, "Failed to build run form", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "partials/jobs.html", "run-form", form)
 }
 
 // newRunForm builds the run dialog data for a job with the given command and date values
@@ -372,6 +392,13 @@ func (s *Server) checkRun(r *http.Request, job persistence.JobInfo) (service.Man
 	}
 
 	req := service.ManualJobRequest{JobID: job.ID, Command: command, Schedule: job.Schedule}
+	if len(job.Steps) > 0 {
+		from, cmds, rerr := s.checkSteps(r, job)
+		if rerr != nil {
+			return service.ManualJobRequest{}, rerr
+		}
+		req.FromStep, req.Steps = from, cmds
+	}
 	if dateStr != "" {
 		parsed, err := time.ParseInLocation("20060102", dateStr, time.Local)
 		if err != nil {
@@ -395,6 +422,12 @@ func (s *Server) writeRunError(w http.ResponseWriter, r *http.Request, e runErro
 		// the definition is gone, so the form keeps the request's own id and values
 		job = persistence.JobInfo{ID: r.PathValue("id"), Command: r.FormValue("command")}
 		e.msg = "Job no longer exists in the crontab"
+	}
+	if len(job.Steps) > 0 {
+		form := s.newStepsRunForm(job, lenientFromStep(r, job), submittedSteps(r, job), r.FormValue("date"))
+		form.Error = e.msg
+		s.render(w, "partials/jobs.html", "run-form", form)
+		return
 	}
 	form := s.newRunForm(job, r.FormValue("command"), r.FormValue("date"))
 	form.HasTemplates = form.HasTemplates || form.Date != ""
@@ -568,15 +601,20 @@ func (s *Server) handleLiveOutput(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "partials/jobs.html", "run-output", s.newRunOutput(job, run))
 }
 
-// newLiveOutput pairs a run in progress with its command and the output it has produced so far
+// newLiveOutput pairs a run in progress with its command and the output it has produced so far, by step for
+// a job with steps
 func (s *Server) newLiveOutput(job persistence.JobInfo, run activeRun) liveOutputData {
 	data := liveOutputData{liveRunView: run.view(), JobID: job.ID, Command: job.Command,
-		CommandLabel: "Job command", Capture: run.Output != nil}
+		CommandLabel: "Job command", Capture: run.Output != nil, StepCount: len(job.Steps)}
 	if run.ExecutedCommand != "" {
 		data.Command, data.CommandLabel = run.ExecutedCommand, "Executed"
 	}
 	if run.Output != nil {
 		data.Output = run.Output()
+	}
+	if run.Steps != nil {
+		data.Steps = stateViews(run.Steps(), time.Now())
+		data.Capture = s.logExecMaxLines > 0
 	}
 	return data
 }
@@ -584,16 +622,27 @@ func (s *Server) newLiveOutput(job persistence.JobInfo, run activeRun) liveOutpu
 // view makes the inspector entry of a run in progress
 func (r activeRun) view() liveRunView {
 	start := r.StartedAt.UnixMicro()
-	return liveRunView{Start: start, Token: fmt.Sprintf("live:%d", start), StartedAt: r.StartedAt,
+	v := liveRunView{Start: start, Token: fmt.Sprintf("live:%d", start), StartedAt: r.StartedAt,
 		ExecutedCommand: r.ExecutedCommand}
+	if r.Steps != nil {
+		v.Step = currentStep(r.Steps())
+	}
+	return v
 }
 
 // newRunOutput pairs a run with the command it ran: the executed command of a manual run, the job command
-// otherwise, since scheduled runs do not record their resolved command
+// otherwise, since scheduled runs do not record their resolved command. A run of a job with steps comes with
+// its steps and, when it failed and manual runs are allowed, the step it can be re-run from
 func (s *Server) newRunOutput(job persistence.JobInfo, run persistence.ExecutionInfo) runOutputData {
-	data := runOutputData{JobID: job.ID, Run: run, Command: job.Command, CommandLabel: "Job command"}
+	data := runOutputData{JobID: job.ID, Run: run, Command: job.Command, CommandLabel: "Job command",
+		StepCount: len(job.Steps)}
 	if run.ExecutedCommand != "" {
 		data.Command, data.CommandLabel = run.ExecutedCommand, "Executed"
+	}
+	data.Steps = s.runSteps(run)
+	if run.Status == enums.JobStatusFailed && run.StepLast > 0 && run.StepLast <= len(job.Steps) &&
+		job.Enabled && !s.disableManual {
+		data.RerunFrom = run.StepLast
 	}
 	return data
 }

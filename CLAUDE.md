@@ -95,6 +95,7 @@ Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
 - `#dialog-slot` opens a swapped `<dialog>` on `hx-on::after-settle`, not after-swap: htmx binds the dialog's `hx-on:close` only at settle, and a dialog closed before that stays in the slot
 - **Run endpoint contract**: `POST /api/jobs/{id}/run` with `HX-Request` answers a rejection with 200 and the re-rendered form (message, edits kept) and an acceptance with 202, an OOB toast and `HX-Trigger-After-Swap: refresh-jobs`; callers without `HX-Request` (curl, scripts) keep 202 "Job triggered" and 4xx/5xx text
 - **Expired session**: `authMiddleware` answers htmx requests with 401 and `HX-Redirect` to the login page, so a poll never swaps the login form into the table
+- **Jobs with steps**: `JobInfo.Steps` comes from the crontab on every sync (`db:"-"`), `LastStep` is stored (`jobs.last_step`), `RunningStep` is derived from the newest active run's `LiveSteps` snapshot. A recorded run's steps live in `execution_steps` (its `executions.output` stays empty); `ExecutionInfo.StepFirst`/`StepLast` are aggregates over them and drive the runs list ("step 2 · exit 3", "from 2 · 3/3 · exit 0"). The output shows one `<details class="step" data-step>` per run step, failed and running ones open; `ui.js` re-applies the reader's own expand/collapse clicks after each live poll and follows the running step's `<pre>`. The run dialog's `#rf-from` select redraws `#rf-fields` through `GET run-form` with `hx-select`, carrying the `step-<n>` edits and date; `run=<exec id>` prefills the commands a failed run resolved ("Re-run from step N"), unless command editing is disabled
 - **Removed job**: when a crontab sync drops the job open in the inspector, its htmx request gets 200 with `HX-Retarget: #inspector` and `HX-Reswap: innerHTML` (the live part swaps `outerHTML` and would delete the slot) plus an OOB-cleared `#selected-job`, so the panel closes; a run posted for a removed job re-renders the dialog with the submitted values. Non-htmx callers keep the 404
 
 ## Authentication Architecture
@@ -201,12 +202,17 @@ Weekday templates (W-prefix): `WYYYYMMDD`, `WYYYY`, `WYYYYMM`, `WYYMMDD`, `WISOD
 - name (the YAML `name`, empty when unset)
 - last_status (idle/running/success/failed)
 - last_exit_code (nullable: NULL until a finished run is known; -1 is a real signal exit), last_duration
+- last_step (step the last run of a job with steps ended at, 0 otherwise)
 - enabled, created_at, updated_at
 - sort_index (for preserving job order)
 
 **Executions table:**
 - job_id, started_at, finished_at, status, exit_code, output
 - Index on (job_id, started_at) for query performance
+
+**Execution steps table** (runs of jobs with steps):
+- execution_id, idx, name, command (as executed), status, exit_code, attempts, started_at, finished_at, output
+- Written with its execution in one transaction, removed with it by `CleanupOldExecutions`
 
 ### SQLx Integration
 - Uses `github.com/jmoiron/sqlx` for struct scanning and named parameters
@@ -249,6 +255,7 @@ Job events update memory immediately via `JobEventHandler`, but persist only whe
 
 ### Parser Features
 - Auto-detects format by file extension (.yml/.yaml vs others)
+- `steps` (YAML only, list of `name`/`command`) is an alternative to `command`; the parser sets `JobSpec.Command` to the steps joined with ` && ` (`JoinSteps`), which is the job's identity and display text and is never executed. The scheduler runs each step through `runSteps` (`app/service/steps.go`): templates resolve once per run, the job's repeater applies per step, a failed step skips the rest, and the resumer registers the remaining chain `(s_i) && (s_i+1)` before each step
 - Inline comment support in crontab lines
 - Per-job repeater configuration overrides global settings
 - Conditional execution via `conditions` field (YAML only)
@@ -306,7 +313,7 @@ require.Eventually(t, func() bool {
 - Run with `make e2e` (headless) or `make e2e-ui` (visible browser for debugging)
 - `TestMain` builds the binary once and starts a **single shared server + DB** for the whole run; tests share state and run in file/definition order
 - **Shared-state pattern**: because other tests mutate job state, assert invariants rather than fixed numbers to avoid order-dependent flakiness. Example: verify `total == running + success + failed + idle` instead of hardcoding each count
-- The e2e crontab (`createTestCrontab` in `e2e_test.go`) includes a `*/5` job, so a job may flip to `success` if a run crosses a 5-minute boundary — assert invariants, never an all-idle baseline. Its manual-only "Live tail" job prints six lines a second for 30s, long enough for the four live-output polls its scroll checks need; tests that start it wait for its previous run to end, and job counts in assertions come from `totalJobs`
+- The e2e crontab (`createTestCrontab` in `e2e_test.go`) includes a `*/5` job, so a job may flip to `success` if a run crosses a 5-minute boundary — assert invariants, never an all-idle baseline. Its manual-only "Pipeline ok" (its middle step runs 8s) and "Pipeline broken" (step 2 exits 3) are jobs with steps. Its manual-only "Live tail" job prints six lines a second for 30s, long enough for the four live-output polls its scroll checks need; tests that start it wait for its previous run to end, and job counts in assertions come from `totalJobs`
 - **Bound every test run by scope and time**: the full e2e suite is slow (~50s per run). Target specific tests with `-run 'TestName'` and always pass `-timeout`; never loop the full suite repeatedly to chase a flake. To confirm a flake fix, run the single affected test, not the whole suite
 
 ## Testing and Development Workflow

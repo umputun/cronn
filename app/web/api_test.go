@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -415,5 +416,42 @@ func TestHandleAPIExecutionLogs(t *testing.T) {
 		err = json.NewDecoder(w.Body).Decode(&errResp)
 		require.NoError(t, err)
 		assert.Equal(t, "invalid execution ID", errResp["error"])
+	})
+}
+
+func TestHandleAPISteps(t *testing.T) {
+	s := newStepsServer(t, Config{ExecMaxLogLines: 100})
+	id := HashCommand(stepsJobCommand)
+	start := time.Now().Add(-time.Minute)
+	require.NoError(t, s.store.RecordExecution(request.RecordExecution{JobID: id, StartedAt: start,
+		FinishedAt: start.Add(time.Minute), Status: enums.JobStatusFailed, ExitCode: 3,
+		Steps: stepStates(enums.StepStatusSuccess, enums.StepStatusFailed, enums.StepStatusSkipped)}))
+	runs, err := s.store.GetExecutions(id, 1)
+	require.NoError(t, err)
+
+	t.Run("status lists the job's steps", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		s.handleAPIStatus(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", http.NoBody))
+		var resp APIStatusResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(t, resp.Jobs, 1)
+		assert.Equal(t, []APIStep{{Name: "Extract", Command: "extract.sh {{.YYYYMMDD}}"}, {Command: "transform.sh"},
+			{Command: "load.sh"}}, resp.Jobs[0].Steps)
+	})
+
+	t.Run("logs carry the steps and their joined output", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.SetPathValue("id", id)
+		req.SetPathValue("exec_id", strconv.Itoa(runs[0].ID))
+		w := httptest.NewRecorder()
+		s.handleAPIExecutionLogs(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp APILogsResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(t, resp.Steps, 3)
+		assert.Equal(t, "failed", resp.Steps[1].Status)
+		assert.Equal(t, 3, resp.Steps[1].Attempts)
+		assert.Equal(t, "skipped", resp.Steps[2].Status)
+		assert.Equal(t, "== step 1/3: extract.sh 20261016 ==\nout 1\n== step 2/3: transform.sh ==\nout 2", resp.Output)
 	})
 }

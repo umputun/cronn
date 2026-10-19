@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ func (s *Server) OnJobStart(req request.OnJobStart) {
 		EventType:       enums.EventTypeStarted,
 		StartedAt:       req.StartTime,
 		LiveOutput:      req.LiveOutput,
+		LiveSteps:       req.LiveSteps,
 	}
 	select {
 	case s.eventChan <- event:
@@ -48,6 +50,7 @@ func (s *Server) OnJobComplete(req request.OnJobComplete) {
 		Output:          req.Output,
 		StartedAt:       req.StartTime,
 		FinishedAt:      req.EndTime,
+		Steps:           req.Steps,
 	}
 	select {
 	case s.eventChan <- event:
@@ -137,6 +140,7 @@ func (s *Server) loadJobsFromCrontab() error {
 		// update or create job
 		if job, exists := s.jobs[id]; exists {
 			job.Name = spec.Name
+			job.Steps = toJobSteps(spec.Steps)
 			job.Schedule = spec.Spec
 			job.NextRun = schedule.Next(time.Now())
 			job.UpdatedAt = time.Now()
@@ -148,6 +152,7 @@ func (s *Server) loadJobsFromCrontab() error {
 				ID:         id,
 				Name:       spec.Name,
 				Command:    spec.Command,
+				Steps:      toJobSteps(spec.Steps),
 				Schedule:   spec.Spec,
 				NextRun:    schedule.Next(time.Now()),
 				LastStatus: enums.JobStatusIdle,
@@ -210,7 +215,8 @@ func (s *Server) processEvents(ctx context.Context) {
 type activeRun struct {
 	StartedAt       time.Time
 	ExecutedCommand string
-	Output          func() string // output so far; nil when output capture is disabled
+	Output          func() string              // output so far; nil when output capture is disabled
+	Steps           func() []request.StepState // step states so far; nil for a job without steps
 }
 
 // activeRuns returns the job's runs in progress, newest first
@@ -278,7 +284,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 			s.active[id] = make(map[int64]activeRun)
 		}
 		s.active[id][event.StartedAt.UnixMicro()] = activeRun{StartedAt: event.StartedAt,
-			ExecutedCommand: event.ExecutedCommand, Output: event.LiveOutput}
+			ExecutedCommand: event.ExecutedCommand, Output: event.LiveOutput, Steps: event.LiveSteps}
 		job.IsRunning = true
 		if event.StartedAt.After(job.LastRun) {
 			job.LastRun = event.StartedAt
@@ -296,6 +302,7 @@ func (s *Server) handleJobEvent(event JobEvent) {
 		}
 		job.LastExitCode = &event.ExitCode
 		job.LastDuration = event.FinishedAt.Sub(event.StartedAt)
+		job.LastStep = lastStep(event.Steps)
 		if job.Enabled {
 			s.updateNextRun(&job)
 		}
@@ -306,9 +313,13 @@ func (s *Server) handleJobEvent(event JobEvent) {
 
 // recordExecutionAndCleanup saves execution to database and cleans up old executions
 func (s *Server) recordExecutionAndCleanup(jobID string, event JobEvent, status enums.JobStatus) {
-	output := event.Output
+	output, steps := event.Output, event.Steps
 	if s.logExecMaxLines == 0 {
 		output = "" // skip storing output if disabled
+		steps = slices.Clone(steps)
+		for i := range steps {
+			steps[i].Output = ""
+		}
 	}
 
 	if err := s.store.RecordExecution(request.RecordExecution{
@@ -319,6 +330,7 @@ func (s *Server) recordExecutionAndCleanup(jobID string, event JobEvent, status 
 		ExitCode:        event.ExitCode,
 		ExecutedCommand: event.ExecutedCommand,
 		Output:          output,
+		Steps:           steps,
 	}); err != nil {
 		log.Printf("[WARN] failed to save execution: %v", err)
 	}

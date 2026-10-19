@@ -29,11 +29,20 @@ type JobInfo struct {
 	LastStatus   enums.JobStatus `db:"last_status"`
 	LastExitCode *int            `db:"last_exit_code"` // nil when no finished run is known; -1 is a real signal exit
 	LastDuration time.Duration   `db:"last_duration"`
-	IsRunning    bool            `db:"-"` // not stored in DB
+	LastStep     int             `db:"last_step"` // step the last run of a job with steps ended at, 0 for none
+	IsRunning    bool            `db:"-"`         // not stored in DB
+	RunningStep  int             `db:"-"`         // step the newest run in progress is at, 0 for none
+	Steps        []JobStep       `db:"-"`         // steps of a job with steps, from the crontab
 	Enabled      bool            `db:"enabled"`
 	CreatedAt    time.Time       `db:"created_at"`
 	UpdatedAt    time.Time       `db:"updated_at"`
 	SortIndex    int             `db:"sort_index"`
+}
+
+// JobStep is one step of a job with steps
+type JobStep struct {
+	Name    string
+	Command string
 }
 
 // ExecutionInfo represents a single job execution record
@@ -46,7 +55,14 @@ type ExecutionInfo struct {
 	ExitCode        int             `db:"exit_code"`
 	ExecutedCommand string          `db:"executed_command"`
 	Output          string          `db:"output"`
+	StepFirst       int             `db:"step_first"` // first step the run of a job with steps ran, 0 for a job without steps
+	StepLast        int             `db:"step_last"`  // last step the run reached (the failed one on failure), 0 for a job without steps
 }
+
+// executionColumns selects an execution with the range of steps it ran, from "executions e"
+const executionColumns = `e.id, e.job_id, e.started_at, e.finished_at, e.status, e.exit_code, e.executed_command, e.output,
+		COALESCE((SELECT MIN(idx) FROM execution_steps WHERE execution_id = e.id), 0) AS step_first,
+		COALESCE((SELECT MAX(idx) FROM execution_steps WHERE execution_id = e.id AND status != 'skipped'), 0) AS step_last`
 
 // SQLiteStore implements persistence using SQLite
 type SQLiteStore struct {
@@ -125,6 +141,21 @@ func (s *SQLiteStore) initialize(ctx context.Context) error {
 			FOREIGN KEY (job_id) REFERENCES jobs(id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_executions_job_started ON executions(job_id, started_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS execution_steps (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			execution_id INTEGER NOT NULL,
+			idx INTEGER NOT NULL,
+			name TEXT DEFAULT '',
+			command TEXT DEFAULT '',
+			status TEXT,
+			exit_code INTEGER DEFAULT 0,
+			attempts INTEGER DEFAULT 0,
+			started_at DATETIME,
+			finished_at DATETIME,
+			output TEXT DEFAULT '',
+			FOREIGN KEY (execution_id) REFERENCES executions(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_execution_steps_execution ON execution_steps(execution_id, idx)`,
 	}
 
 	for _, query := range queries {
@@ -149,6 +180,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		{"jobs", "name", "name TEXT DEFAULT ''"},
 		{"jobs", "last_exit_code", "last_exit_code INTEGER"},
 		{"jobs", "last_duration", "last_duration INTEGER DEFAULT 0"},
+		{"jobs", "last_step", "last_step INTEGER DEFAULT 0"},
 	}
 
 	for _, c := range columns {
@@ -210,7 +242,7 @@ func (s *SQLiteStore) LoadJobs() ([]JobInfo, error) {
 	var jobs []JobInfo
 	err := s.db.Select(&jobs, `
 		SELECT id, name, command, schedule, next_run, last_run, last_status, last_exit_code, last_duration,
-		       enabled, created_at, updated_at, sort_index
+		       last_step, enabled, created_at, updated_at, sort_index
 		FROM jobs
 		ORDER BY sort_index`)
 	if err != nil {
@@ -243,9 +275,9 @@ func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
 		_, err := tx.NamedExec(`
 			INSERT OR REPLACE INTO jobs 
 			(id, name, command, schedule, next_run, last_run, last_status, last_exit_code, last_duration,
-			 enabled, created_at, updated_at, sort_index)
+			 last_step, enabled, created_at, updated_at, sort_index)
 			VALUES (:id, :name, :command, :schedule, :next_run, :last_run, :last_status, :last_exit_code, :last_duration,
-			 :enabled, :created_at, :updated_at, :sort_index)`,
+			 :last_step, :enabled, :created_at, :updated_at, :sort_index)`,
 			job)
 		if err != nil {
 			return fmt.Errorf("failed to save job %s: %w", job.ID, err)
@@ -259,7 +291,7 @@ func (s *SQLiteStore) SaveJobs(jobs []JobInfo) error {
 	return nil
 }
 
-// RecordExecution logs a job execution event
+// RecordExecution logs a job execution event, with the states of its steps for a job with steps
 func (s *SQLiteStore) RecordExecution(req request.RecordExecution) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -267,15 +299,32 @@ func (s *SQLiteStore) RecordExecution(req request.RecordExecution) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO executions (job_id, started_at, finished_at, status, exit_code, executed_command, output)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		req.JobID, req.StartedAt, req.FinishedAt, req.Status.String(), req.ExitCode, req.ExecutedCommand, req.Output)
-
 	if err != nil {
 		return fmt.Errorf("failed to record execution: %w", err)
 	}
+	if len(req.Steps) > 0 {
+		execID, err := res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("failed to get execution id: %w", err)
+		}
+		if err := insertSteps(ctx, tx, execID, req.Steps); err != nil {
+			return err
+		}
+	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit execution: %w", err)
+	}
 	return nil
 }
 
@@ -286,10 +335,10 @@ func (s *SQLiteStore) GetExecutions(jobID string, limit int) ([]ExecutionInfo, e
 
 	var executions []ExecutionInfo
 	err := s.db.Select(&executions, `
-		SELECT id, job_id, started_at, finished_at, status, exit_code, executed_command, output
-		FROM executions
-		WHERE job_id = ?
-		ORDER BY started_at DESC
+		SELECT `+executionColumns+`
+		FROM executions e
+		WHERE e.job_id = ?
+		ORDER BY e.started_at DESC
 		LIMIT ?`,
 		jobID, limit)
 
@@ -313,9 +362,9 @@ func (s *SQLiteStore) GetExecutionByID(execID int) (ExecutionInfo, error) {
 
 	var execution ExecutionInfo
 	err := s.db.Get(&execution, `
-		SELECT id, job_id, started_at, finished_at, status, exit_code, executed_command, output
-		FROM executions
-		WHERE id = ?`,
+		SELECT `+executionColumns+`
+		FROM executions e
+		WHERE e.id = ?`,
 		execID)
 
 	if err != nil {
@@ -367,9 +416,9 @@ func (s *SQLiteStore) GetExecutionByStart(jobID string, start int64) (ExecutionI
 
 	var execution ExecutionInfo
 	err = s.db.Get(&execution, `
-		SELECT id, job_id, started_at, finished_at, status, exit_code, executed_command, output
-		FROM executions
-		WHERE id = ?`,
+		SELECT `+executionColumns+`
+		FROM executions e
+		WHERE e.id = ?`,
 		execID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -380,7 +429,7 @@ func (s *SQLiteStore) GetExecutionByStart(jobID string, start int64) (ExecutionI
 	return execution, nil
 }
 
-// CleanupOldExecutions removes old executions beyond the limit for a job
+// CleanupOldExecutions removes old executions beyond the limit for a job, with their steps
 func (s *SQLiteStore) CleanupOldExecutions(jobID string, limit int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -388,22 +437,34 @@ func (s *SQLiteStore) CleanupOldExecutions(jobID string, limit int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// delete executions beyond the limit, keeping the most recent ones
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM executions
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// executions beyond the limit, keeping the most recent ones
+	const oldExecutions = `
+		SELECT id FROM executions
 		WHERE job_id = ?
 		AND id NOT IN (
 			SELECT id FROM executions
 			WHERE job_id = ?
 			ORDER BY started_at DESC
 			LIMIT ?
-		)`,
-		jobID, jobID, limit)
-
-	if err != nil {
+		)`
+	if _, err := tx.ExecContext(ctx, `DELETE FROM execution_steps WHERE execution_id IN (`+oldExecutions+`)`,
+		jobID, jobID, limit); err != nil {
+		return fmt.Errorf("failed to cleanup steps of old executions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM executions WHERE id IN (`+oldExecutions+`)`,
+		jobID, jobID, limit); err != nil {
 		return fmt.Errorf("failed to cleanup old executions: %w", err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit cleanup: %w", err)
+	}
 	return nil
 }
 

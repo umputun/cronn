@@ -48,4 +48,15 @@ jobs:
     command: "check system health"
     name: "Health check"
   
+  # Steps run one after another; a failed step stops the job (alternative to command)
+  - spec: "0 3 * * 1-5"
+    name: "Nightly pipeline"
+    steps:
+      - name: "Backup"
+        command: "backup /data"
+      - name: "Sync"
+        command: "sync files"
+      - name: "Cleanup"
+        command: "cleanup temp"
+
   # Note: spec and sched are mutually exclusive - use only one per job

@@ -48,9 +48,8 @@ func validateRequiredFields(cfg *YamlConfig) error {
 
 	// validate each job
 	for i, job := range cfg.Jobs {
-		// check that command is not empty
-		if job.Command == "" {
-			return fmt.Errorf("job %d: command is required", i+1)
+		if err := validateCommandOrSteps(job, i+1); err != nil {
+			return err
 		}
 
 		// check that either spec or sched is provided (but not both)
@@ -81,6 +80,24 @@ func validateRequiredFields(cfg *YamlConfig) error {
 		}
 	}
 
+	return nil
+}
+
+// validateCommandOrSteps checks that a job has either a command or a non-empty list of steps, each with a command
+func validateCommandOrSteps(job JobSpec, jobNum int) error {
+	switch {
+	case job.Command != "" && job.Steps != nil:
+		return fmt.Errorf("job %d: 'command' and 'steps' fields are mutually exclusive", jobNum)
+	case job.Steps != nil && len(job.Steps) == 0:
+		return fmt.Errorf("job %d: steps must contain at least one step", jobNum)
+	case job.Command == "" && job.Steps == nil:
+		return fmt.Errorf("job %d: command is required", jobNum)
+	}
+	for i, st := range job.Steps {
+		if strings.TrimSpace(st.Command) == "" {
+			return fmt.Errorf("job %d: step %d: command is required", jobNum, i+1)
+		}
+	}
 	return nil
 }
 

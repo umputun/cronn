@@ -1,5 +1,6 @@
 // browser behaviour htmx has no attribute for: focus and inert state around overlays, closing the inspector
-// without a request, browser-only inspector view preferences, and marking a failed poll
+// without a request, browser-only inspector view preferences, the live log's scroll and expanded steps across
+// polls, and marking a failed poll
 
 const uiInspector = document.getElementById('inspector');
 try {
@@ -112,22 +113,42 @@ function uiInspectorSwapped(panel, evt) {
     if (!document.activeElement || document.activeElement === document.body) uiRestoreFocus('');
 }
 
+// uiLivePre is the log a live run writes to: the running step's for a job with steps, else the only one
+function uiLivePre(root) {
+    return root.querySelector('.step.running pre') || root.querySelector('pre');
+}
+
+// the steps a reader expanded or collapsed in the selected run, by step, kept across the live log's polls,
+// which re-render every step with its default state; selecting another run starts over
+let uiStepToggles = {};
+uiInspector.addEventListener('click', function (evt) {
+    const summary = evt.target.closest('#insp-output details.step > summary');
+    if (summary) uiStepToggles[summary.parentElement.dataset.step] = !summary.parentElement.open;
+});
+
 // the live log keeps the reader's place across its polls and follows new lines only when it was already at its
 // end; a fresh live log starts at its end. A swap cannot make scrolling conditional, so the position is carried here
 let uiLiveScroll = null;
 uiInspector.addEventListener('htmx:beforeSwap', function (evt) {
     const target = evt.detail.target;
     if (target.id === 'live-out') {
-        const pre = target.querySelector('pre');
-        uiLiveScroll = pre ? {top: pre.scrollTop, left: pre.scrollLeft, fromLive: true,
+        const pre = uiLivePre(target);
+        const step = pre && pre.closest('.step');
+        uiLiveScroll = pre ? {top: pre.scrollTop, left: pre.scrollLeft, fromLive: true, step: step && step.dataset.step,
             pinned: pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4} : {pinned: true, fromLive: true};
     } else if (target === uiInspector || target.id === 'insp-output') {
         uiLiveScroll = {pinned: true, fromLive: false};
+        uiStepToggles = {};
     }
 });
 uiInspector.addEventListener('htmx:afterSettle', function () {
     if (!uiLiveScroll) return;
-    const pre = uiInspector.querySelector('#insp-output pre');
+    uiInspector.querySelectorAll('#insp-output details.step').forEach(function (d) {
+        if (d.dataset.step in uiStepToggles) d.open = uiStepToggles[d.dataset.step];
+    });
+    const pre = uiLivePre(uiInspector.querySelector('#insp-output') || uiInspector);
+    const step = pre && pre.closest('.step');
+    if (pre && step && uiLiveScroll.step && step.dataset.step !== uiLiveScroll.step) uiLiveScroll.pinned = true;
     if (pre && uiLiveScroll.pinned && (uiLiveScroll.fromLive || uiInspector.querySelector('#live-out'))) {
         pre.scrollTop = pre.scrollHeight;
         if (uiLiveScroll.fromLive) pre.scrollLeft = uiLiveScroll.left || 0;

@@ -11,17 +11,14 @@
               hx-indicator="#rf-spin"
               hx-on::send-error="this.querySelector('.net-error').hidden = false"
               hx-on::timeout="this.querySelector('.net-error').hidden = false">
+            {{if .StepOptions}}
+            {{template "run-form-steps" .}}
+            {{else}}
             <div>
                 <label class="lbl" for="rf-cmd">Command {{if .CommandEditable}}<small>edits apply to this run only</small>{{end}}</label>
                 <textarea id="rf-cmd" name="command" class="field" rows="3"{{if not .CommandEditable}} readonly{{end}}>{{.Command}}</textarea>
             </div>
-            {{if .HasTemplates}}
-            <div>
-                <label class="lbl" for="rf-date">Date for templates</label>
-                <input id="rf-date" name="date" class="field" inputmode="numeric" pattern="\d{8}"
-                       placeholder="YYYYMMDD" value="{{.Date}}" autocomplete="off">
-                <div class="hint">Empty uses the current time; a supplied date is used at 00:00.</div>
-            </div>
+            {{if .HasTemplates}}{{template "run-form-date" .}}{{end}}
             {{end}}
             {{if .Error}}<div class="dlg-err" role="alert">Not started: {{.Error}}. Your edits are kept.</div>{{end}}
             <div class="dlg-err net-error" role="alert" hidden>Not sent: the server could not be reached. Your edits are kept.</div>
@@ -34,6 +31,39 @@
         </div>
     </div>
 </dialog>
+{{end}}
+
+{{define "run-form-date"}}
+<div>
+    <label class="lbl" for="rf-date">Date for templates</label>
+    <input id="rf-date" name="date" class="field" inputmode="numeric" pattern="\d{8}"
+           placeholder="YYYYMMDD" value="{{.Date}}" autocomplete="off">
+    <div class="hint">Empty uses the current time; a supplied date is used at 00:00.</div>
+</div>
+{{end}}
+
+{{/* the fields of a job with steps; changing the start step redraws them from the server, keeping edits */}}
+{{define "run-form-steps"}}
+<div id="rf-fields" class="rf-fields">
+    <div>
+        <label class="lbl" for="rf-from">Start from step</label>
+        <select id="rf-from" name="from" class="field"
+                hx-get="{{url (printf "/api/jobs/%s/run-form" .JobID)}}"
+                hx-include="#run-form" hx-target="#rf-fields" hx-select="#rf-fields" hx-swap="outerHTML">
+            {{range .StepOptions}}<option value="{{.Index}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+    </div>
+    <div class="rf-steps">
+        <div class="lbl">Steps {{if .CommandEditable}}<small>edits apply to this run only</small>{{end}}</div>
+        {{range .Steps}}
+        <div class="rf-step">
+            <label class="sn" for="rf-step-{{.Index}}">{{.Index}}{{if .Name}} <span>{{.Name}}</span>{{end}}</label>
+            <textarea id="rf-step-{{.Index}}" name="step-{{.Index}}" class="field" rows="2"{{if not $.CommandEditable}} readonly{{end}}>{{.Value}}</textarea>
+        </div>
+        {{end}}
+    </div>
+    {{if .HasTemplates}}{{template "run-form-date" .}}{{end}}
+</div>
 {{end}}
 
 {{define "run-accepted-oob"}}

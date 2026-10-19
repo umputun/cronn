@@ -12,6 +12,7 @@
 // - inspector_test.go: job inspector (runs, output, selection, focus)
 // - layout_test.go: table structure, footer, polling, responsive layouts
 // - toggle_test.go: enable/disable jobs
+// - steps_test.go: jobs with steps (table, inspector, live run, re-run from a step)
 package e2e
 
 import (
@@ -63,7 +64,9 @@ const (
 	jobSlow      = "Slow report"
 	jobLive      = "Live tail"
 	jobTemplated = "Templated job"
-	totalJobs    = 9
+	jobPipeline  = "Pipeline ok"
+	jobBroken    = "Pipeline broken"
+	totalJobs    = 11
 )
 
 var (
@@ -196,6 +199,19 @@ func createTestCrontab() error {
   - spec: "0 0 1 1 *"
     command: 'sh -c "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do for j in 1 2 3 4 5 6; do echo tick \$i line \$j of a line long enough to scroll sideways when log lines are not wrapped in the inspector output pane; done; sleep 1; done"'
     name: "Live tail"
+  - spec: "0 0 1 1 *"
+    name: "Pipeline ok"
+    steps:
+      - name: "Extract"
+        command: "echo extract {{.YYYYMMDD}}"
+      - command: "sh -c 'echo transform start; sleep 8; echo transform done'"
+      - command: "echo load"
+  - spec: "0 0 1 1 *"
+    name: "Pipeline broken"
+    steps:
+      - command: "echo fetching"
+      - command: "sh -c 'echo boom >&2; exit 3'"
+      - command: "echo never"
   - spec: "0 0 1 1 *"
     command: "echo run {{.YYYYMMDD}}"
     name: "Templated job"

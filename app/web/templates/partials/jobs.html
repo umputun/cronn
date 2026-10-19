@@ -1,5 +1,7 @@
 {{define "job-name"}}{{if .Name}}{{.Name}}{{else}}{{.Command}}{{end}}{{end}}
 
+{{define "step-chain"}}{{range $i, $st := .}}{{if $i}} → {{end}}{{if $st.Name}}{{$st.Name}}{{else}}{{$st.Command}}{{end}}{{end}}{{end}}
+
 {{define "job-dot"}}{{if not .Enabled}}off{{else if .IsRunning}}running{{else if eq .LastStatus.String "success"}}ok{{else if eq .LastStatus.String "failed"}}fail{{else}}never{{end}}{{end}}
 
 {{define "job-state"}}{{if not .Enabled}}Disabled{{else if .IsRunning}}Running{{else if eq .LastStatus.String "success"}}Succeeded{{else if eq .LastStatus.String "failed"}}Failed{{else}}Never ran{{end}}{{end}}
@@ -120,8 +122,10 @@
                             hx-target="#inspector"
                             hx-swap="innerHTML" hx-sync="#inspector:replace">{{template "job-name" .}}</button>
                     {{if not .Enabled}}<span class="tag off">disabled</span>{{end}}
+                    {{if .Steps}}<span class="tag steps">{{len .Steps}} steps</span>{{end}}
                 </div>
-                {{if .Name}}<div class="cmd" title="{{.Command}}">{{.Command}}</div>{{end}}
+                {{if .Steps}}<div class="cmd" title="{{template "step-chain" .Steps}}">{{template "step-chain" .Steps}}</div>
+                {{else if .Name}}<div class="cmd" title="{{.Command}}">{{.Command}}</div>{{end}}
                 <div class="fold-sched">{{describeSchedule .Schedule}} · <span class="mono">{{.Schedule}}</span></div>
             </td>
             <td class="c-sched">{{describeSchedule .Schedule}}<span class="mono">{{.Schedule}}</span></td>
@@ -161,16 +165,16 @@
 {{end}}
 
 {{define "last-run"}}
-{{if .IsRunning}}<span class="elapsed">running {{humanDuration (since .LastRun)}}</span>
+{{if .IsRunning}}<span class="elapsed">running {{humanDuration (since .LastRun)}}</span>{{if .RunningStep}}<span class="meta step-at">step {{.RunningStep}}/{{len .Steps}} {{stepAt .Steps .RunningStep}}</span>{{end}}
 {{else if .LastRun.IsZero}}<span class="never-txt">never ran</span>
-{{else}}{{ago .LastRun}}{{with .LastExitCode}}<span class="meta{{if ne (deref .) 0}} bad{{end}}">exit {{deref .}} · {{runDuration $.LastDuration}}</span>{{end}}
+{{else}}{{ago .LastRun}}{{with .LastExitCode}}<span class="meta{{if ne (deref .) 0}} bad{{end}}">{{if and $.LastStep (ne (deref .) 0)}}step {{$.LastStep}}/{{len $.Steps}} · {{end}}exit {{deref .}} · {{runDuration $.LastDuration}}</span>{{end}}
 {{end}}
 {{end}}
 
 {{define "last-run-short"}}
-{{if .IsRunning}}<span class="elapsed">running {{humanDuration (since .LastRun)}}</span>
+{{if .IsRunning}}<span class="elapsed">running {{humanDuration (since .LastRun)}}{{if .RunningStep}} · {{.RunningStep}}/{{len .Steps}}{{end}}</span>
 {{else if .LastRun.IsZero}}<span class="never-txt">never ran</span>
-{{else}}{{ago .LastRun}}{{with .LastExitCode}} · <span class="mono{{if ne (deref .) 0}} bad{{end}}">exit {{deref .}}</span>{{end}}
+{{else}}{{ago .LastRun}}{{with .LastExitCode}} · <span class="mono{{if ne (deref .) 0}} bad{{end}}">{{if and $.LastStep (ne (deref .) 0)}}step {{$.LastStep}}/{{len $.Steps}} · {{end}}exit {{deref .}}</span>{{end}}
 {{end}}
 {{end}}
 

@@ -241,6 +241,15 @@ jobs:
   # @-descriptors work with spec field
   - spec: "@midnight"
     command: "cleanup temp"
+
+  # Job with steps run one after another (alternative to command)
+  - spec: "0 3 * * 1-5"
+    name: "Nightly pipeline"
+    steps:
+      - name: "Extract"      # optional step name
+        command: "extract.sh {{.YYYYMMDDEOD}}"
+      - command: "transform.sh {{.YYYYMMDDEOD}}"
+      - command: "load.sh"
 ```
 
 The YAML format supports:
@@ -249,6 +258,7 @@ The YAML format supports:
   - `spec`: Traditional cron string or @-descriptors
   - `sched`: Structured format with separate fields (minute, hour, day, month, weekday)
 - Optional `name` field for job description
+- `steps` as an alternative to `command`, for commands that run one after another (see below)
 - Optional `repeater` field for job-specific retry configuration
 - Optional `conditions` field for conditional execution based on system resources
 - JSON Schema validation for configuration correctness
@@ -288,6 +298,32 @@ jobs:
       check_interval: 5m      # Check every 5 minutes
 ```
 
+Example with steps:
+```yaml
+jobs:
+  - spec: "0 3 * * 1-5"
+    name: "Nightly pipeline"
+    repeater:
+      attempts: 3       # each step gets up to 3 attempts of its own
+      duration: 1m
+    steps:
+      - name: "Extract"
+        command: "extract.sh {{.YYYYMMDDEOD}}"
+      - name: "Transform"
+        command: "transform.sh {{.YYYYMMDDEOD}}"
+      - command: "load.sh"
+```
+
+A job with `steps` runs its steps in order, each as its own command, and stops at the first step that still fails after its retries; the steps after it are skipped and the job is reported as failed with that step's exit code. Compared to joining the commands with `&&`:
+
+- the job's `repeater` applies to each step separately, so a retry repeats only the step that failed
+- templates resolve once for the whole run, so every step sees the same date even if the run crosses the end-of-day hour
+- `conditions` are checked once, before the first step
+- after a restart, `--resume` continues the chain from the step that failed or was interrupted
+- the dashboard shows each step's state, duration, attempts and output, and can re-run the job from a chosen step
+
+`command` and `steps` are mutually exclusive, and every step needs a `command`. Steps are available in the YAML format only. A job with steps is identified by its steps' commands, so changing any of them makes it a new job, just as changing `command` does.
+
 Both formats support the same template variables.
 
 ## Web Dashboard
@@ -301,8 +337,10 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 - **Filter tabs with counts**: All, Failed, Running, Succeeded, Never ran and Disabled; search matches job names and commands
 - **Sorting**: crontab order, next run or last run
 - **Job inspector**: click a job to see its full command, state, last and next run, and its latest 50 runs; pick a run to see its output, exit code, duration and, for manual runs, the command actually executed. Failures without output still show their exit code. A running job shows its output as it is produced, refreshed every 5 seconds, and the run turns into its recorded entry when it finishes
+- **Jobs with steps**: the table tags them with their step count and shows the step a run is at or failed at; the inspector lists the steps, and a run's output is shown by step with its status, duration, attempts and exit code, the failed or running step expanded
 - **Manual runs** from a run dialog:
   - Edit the command for a one-off run
+  - For a job with steps, start from any step and edit the commands of the steps that run; a failed run offers "Re-run from step N", which opens the dialog at the failed step with the commands as that run resolved them
   - Set a date (YYYYMMDD) for template variables; the field appears only when the command has templates
   - A rejected run (job disabled, already running, invalid date) is reported in the dialog with your edits kept
 - **Enable/disable jobs** from the table or the inspector without editing config files
@@ -462,6 +500,8 @@ POST /api/v1/jobs/{id}/toggle
 ```
 GET /api/v1/jobs/{id}/executions/{exec_id}/logs
 ```
+
+For a job with steps, the status response lists each job's `steps` (`name`, `command`), and the logs response adds `steps` with each step's `index`, `name`, executed `command`, `status` (`success`, `failed`, `skipped`), `exit_code`, `attempts`, times and `output`; its `output` joins the steps' outputs, each under a `== step i/N: command ==` line.
 
 #### Response Examples
 

@@ -48,7 +48,14 @@
         },
         "command": {
           "type": "string",
-          "description": "Command to execute"
+          "description": "Command to execute (alternative to steps)"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/StepSpec"
+          },
+          "type": "array",
+          "description": "Commands run one after another; a failed step stops the job (alternative to command)"
         },
         "name": {
           "type": "string",
@@ -64,10 +71,7 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "command"
-      ]
+      "type": "object"
     },
     "RepeaterConfig": {
       "properties": {
@@ -116,6 +120,23 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "StepSpec": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optional step name"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to execute"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "command"
+      ]
     },
     "YamlConfig": {
       "properties": {

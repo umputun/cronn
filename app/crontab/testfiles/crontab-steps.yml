@@ -1,0 +1,14 @@
+jobs:
+  - spec: "0 3 * * 1-5"
+    name: "Nightly pipeline"
+    repeater:
+      attempts: 3
+    steps:
+      - name: "Extract"
+        command: "extract.sh {{.YYYYMMDDEOD}}"
+      - command: "transform.sh"
+      - name: "Load"
+        command: "load.sh"
+
+  - spec: "@daily"
+    command: "echo plain"

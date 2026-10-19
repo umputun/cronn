@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"slices"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -71,9 +72,11 @@ type Scheduler struct {
 // ManualJobRequest represents a request to manually trigger a job
 type ManualJobRequest struct {
 	JobID      string // original job ID to record execution against
-	Command    string // command to execute (may be edited)
+	Command    string // command to execute (may be edited), unused for a job with steps
 	Schedule   string
 	CustomDate *time.Time
+	FromStep   int      // for a job with steps: the 1-based step to start from, 0 means the first
+	Steps      []string // for a job with steps: commands of the steps from FromStep on (may be edited), empty keeps the job's own
 }
 
 // Resumer defines interface for resumer.Resumer providing auto-restart for failed jobs
@@ -256,21 +259,13 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	// notify job complete
 	endTime := time.Now()
 	if s.JobEventHandler != nil {
-		exitCode := 0
-		if err != nil {
-			if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
-				exitCode = exitError.ExitCode()
-			} else {
-				exitCode = 1 // generic error for non-exec errors
-			}
-		}
 		s.JobEventHandler.OnJobComplete(request.OnJobComplete{
 			Command:         r.Command,
 			ExecutedCommand: executedCommand,
 			Schedule:        r.Spec,
 			StartTime:       startTime,
 			EndTime:         endTime,
-			ExitCode:        exitCode,
+			ExitCode:        exitCodeOf(err),
 			Output:          webOutput, // use web-specific output
 			Err:             err,
 		})
@@ -302,9 +297,28 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	return nil
 }
 
-// jobFuncWithEditedCommand creates job function with edited command for manual execution
-// r.Command is used for job identity, editedCmd is what actually gets executed
-func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobSpec, editedCmd string, customTime *time.Time) cron.FuncJob {
+// exitCodeOf returns the exit code a run's error reports: the command's own code, 1 for an error that is
+// not a command exit, 0 for no error
+func exitCodeOf(err error) int {
+	if err == nil {
+		return 0
+	}
+	if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
+		return exitError.ExitCode()
+	}
+	return 1
+}
+
+// manualRun is what a manual run executes instead of the job's own definition
+type manualRun struct {
+	command  string             // edited command of a job without steps
+	steps    []crontab.StepSpec // steps of a job with steps, from fromStep on, possibly edited
+	fromStep int                // 1-based position of steps[0] in the job
+}
+
+// jobFuncWithEditedCommand creates job function with edited command or steps for manual execution
+// r.Command is used for job identity, the manual run is what actually gets executed
+func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobSpec, mr manualRun, customTime *time.Time) cron.FuncJob {
 	return func() {
 		jobDesc := s.jobDescription(r)
 		jobRepeater := s.getJobRepeater(r.Repeater)
@@ -317,7 +331,14 @@ func (s *Scheduler) jobFuncWithEditedCommand(ctx context.Context, r crontab.JobS
 			}
 		}
 
-		if err := s.runJobWithCommand(ctx, r, editedCmd, customTime, jobRepeater, true); err != nil {
+		var err error
+		if len(r.Steps) > 0 {
+			err = s.runSteps(ctx, stepsParams{job: r, steps: mr.steps, fromStep: mr.fromStep, customTime: customTime,
+				repeater: jobRepeater, manual: true})
+		} else {
+			err = s.runJobWithCommand(ctx, r, mr.command, customTime, jobRepeater, true)
+		}
+		if err != nil {
 			log.Printf("[WARN] %v, %s", err, jobDesc)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)
@@ -345,7 +366,13 @@ func (s *Scheduler) jobFuncWithTime(ctx context.Context, r crontab.JobSpec, sche
 		}
 
 		log.Printf("[INFO] executing: %s", jobDesc)
-		if err := s.runJobWithCommand(ctx, r, r.Command, customTime, jobRepeater, false); err != nil {
+		var err error
+		if len(r.Steps) > 0 {
+			err = s.runSteps(ctx, stepsParams{job: r, steps: r.Steps, fromStep: 1, customTime: customTime, repeater: jobRepeater})
+		} else {
+			err = s.runJobWithCommand(ctx, r, r.Command, customTime, jobRepeater, false)
+		}
+		if err != nil {
 			log.Printf("[WARN] job failed: %s, %v", jobDesc, err)
 		} else {
 			log.Printf("[INFO] completed %s", jobDesc)
@@ -362,14 +389,24 @@ func (s *Scheduler) newWebCapture() *OutputCapture {
 	return NewOutputCapture(s.ExecMaxLogLines)
 }
 
-// executeCommand runs the command through the repeater, writing every attempt's output to logWriter
-// and webCapture (when not nil), and returns the output captured for notifications.
+// executeCommand waits for the jitter, then runs the command through the repeater, writing every attempt's
+// output to logWriter and webCapture (when not nil), and returns the output captured for notifications.
 func (s *Scheduler) executeCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater,
 	webCapture *OutputCapture) (notifyOutput string, err error) {
+	s.jitter()
+	return s.runCommand(ctx, command, logWriter, rptr, webCapture)
+}
+
+// jitter waits a random time up to the configured jitter, spreading the start of jobs
+func (s *Scheduler) jitter() {
 	if s.Jitter > 0 {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
 	}
+}
 
+// runCommand is executeCommand without the jitter, also used for each step of a job with steps
+func (s *Scheduler) runCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater,
+	webCapture *OutputCapture) (notifyOutput string, err error) {
 	notifyCapture := NewOutputCapture(s.NotifyMaxLogLines)
 
 	execErr := rptr.Do(ctx, func() error {
@@ -444,7 +481,8 @@ func (s *Scheduler) loadFromFileParser(ctx context.Context) error {
 	}
 
 	for _, js := range jss {
-		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Name: js.Name, Repeater: js.Repeater, Conditions: js.Conditions}
+		req := crontab.JobSpec{Spec: js.Spec, Command: js.Command, Steps: js.Steps, Name: js.Name, Repeater: js.Repeater,
+			Conditions: js.Conditions}
 		if err = s.schedule(ctx, req); err != nil {
 			return fmt.Errorf("can't add %s, %s: %w", js.Spec, js.Command, err)
 		}
@@ -518,6 +556,7 @@ func (s *Scheduler) listenForManualTriggers(ctx context.Context) {
 			jobSpec := crontab.JobSpec{
 				Spec:     originalJob.Spec,    // use original schedule
 				Command:  originalJob.Command, // use original command for identity
+				Steps:    originalJob.Steps,
 				Name:     originalJob.Name,
 				Repeater: originalJob.Repeater, // preserve retry logic
 			}
@@ -528,22 +567,58 @@ func (s *Scheduler) listenForManualTriggers(ctx context.Context) {
 				continue
 			}
 
+			mr, mrErr := newManualRun(jobSpec, req)
+			if mrErr != nil {
+				log.Printf("[WARN] manual trigger failed: %v", mrErr)
+				continue
+			}
+
 			// execute job in a new goroutine with context check
-			go func(js crontab.JobSpec, editedCmd string, customTime *time.Time) {
+			go func(js crontab.JobSpec, mr manualRun, customTime *time.Time) {
 				// check if context is still valid before executing
 				select {
 				case <-ctx.Done():
 					log.Printf("[WARN] skipping manual execution of %s, context canceled", js.Command)
 					return
 				default:
-					log.Printf("[INFO] manually executing job: %s (edited: %s)", js.Command, editedCmd)
+					log.Printf("[INFO] manually executing job: %s (edited: %s)", js.Command, mr.description())
 					// create and execute the job function with edited command
-					jobFunc := s.jobFuncWithEditedCommand(ctx, js, editedCmd, customTime)
+					jobFunc := s.jobFuncWithEditedCommand(ctx, js, mr, customTime)
 					jobFunc.Run()
 				}
-			}(jobSpec, req.Command, req.CustomDate)
+			}(jobSpec, mr, req.CustomDate)
 		}
 	}
+}
+
+// newManualRun makes what a manual request runs: its command for a job without steps, otherwise the job's
+// steps from the requested one on, with the request's edited commands in place of the steps' own
+func newManualRun(js crontab.JobSpec, req ManualJobRequest) (manualRun, error) {
+	if len(js.Steps) == 0 {
+		return manualRun{command: req.Command}, nil
+	}
+	from := max(req.FromStep, 1)
+	if from > len(js.Steps) {
+		return manualRun{}, fmt.Errorf("can't start from step %d of %d", from, len(js.Steps))
+	}
+	steps := slices.Clone(js.Steps[from-1:])
+	if len(req.Steps) > 0 {
+		if len(req.Steps) != len(steps) {
+			return manualRun{}, fmt.Errorf("can't run %d edited steps from step %d of %d", len(req.Steps), from, len(js.Steps))
+		}
+		for i, cmd := range req.Steps {
+			steps[i].Command = cmd
+		}
+	}
+	return manualRun{steps: steps, fromStep: from}, nil
+}
+
+// description returns the commands a manual run executes, for logs
+func (m manualRun) description() string {
+	if len(m.steps) == 0 {
+		return m.command
+	}
+	return fmt.Sprintf("from step %d: %s", m.fromStep, crontab.JoinSteps(m.steps))
 }
 
 // jobIDFromCommand generates a SHA256 hash of a command for use as a unique ID

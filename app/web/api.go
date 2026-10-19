@@ -3,8 +3,10 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -30,6 +32,26 @@ type APIJob struct {
 	LastStatus string    `json:"last_status"`
 	IsRunning  bool      `json:"is_running"`
 	Enabled    bool      `json:"enabled"`
+	Steps      []APIStep `json:"steps,omitempty"`
+}
+
+// APIStep is one step of a job with steps in JSON API response
+type APIStep struct {
+	Name    string `json:"name,omitempty"`
+	Command string `json:"command"`
+}
+
+// APIStepRun is one step of an execution of a job with steps in JSON API response
+type APIStepRun struct {
+	Index      int       `json:"index"`
+	Name       string    `json:"name,omitempty"`
+	Command    string    `json:"command"`
+	Status     string    `json:"status"`
+	ExitCode   int       `json:"exit_code"`
+	Attempts   int       `json:"attempts"`
+	StartedAt  time.Time `json:"started_at,omitzero"`
+	FinishedAt time.Time `json:"finished_at,omitzero"`
+	Output     string    `json:"output"`
 }
 
 // APIStats represents aggregated statistics in JSON API response
@@ -59,14 +81,15 @@ type APIHistoryResponse struct {
 
 // APILogsResponse is the JSON response for execution logs
 type APILogsResponse struct {
-	ID              int       `json:"id"`
-	JobID           string    `json:"job_id"`
-	StartedAt       time.Time `json:"started_at,omitzero"`
-	FinishedAt      time.Time `json:"finished_at,omitzero"`
-	Status          string    `json:"status"`
-	ExitCode        int       `json:"exit_code"`
-	ExecutedCommand string    `json:"executed_command,omitempty"`
-	Output          string    `json:"output"`
+	ID              int          `json:"id"`
+	JobID           string       `json:"job_id"`
+	StartedAt       time.Time    `json:"started_at,omitzero"`
+	FinishedAt      time.Time    `json:"finished_at,omitzero"`
+	Status          string       `json:"status"`
+	ExitCode        int          `json:"exit_code"`
+	ExecutedCommand string       `json:"executed_command,omitempty"`
+	Output          string       `json:"output"`
+	Steps           []APIStepRun `json:"steps,omitempty"`
 }
 
 // toAPIExecution converts persistence.ExecutionInfo to APIExecution
@@ -92,7 +115,40 @@ func toAPIJob(job persistence.JobInfo) APIJob {
 		LastStatus: job.LastStatus.String(),
 		IsRunning:  job.IsRunning,
 		Enabled:    job.Enabled,
+		Steps:      toAPISteps(job.Steps),
 	}
+}
+
+// toAPISteps converts the steps of a job, nil for a job without steps
+func toAPISteps(steps []persistence.JobStep) []APIStep {
+	if len(steps) == 0 {
+		return nil
+	}
+	res := make([]APIStep, len(steps))
+	for i, st := range steps {
+		res[i] = APIStep{Name: st.Name, Command: st.Command}
+	}
+	return res
+}
+
+// toAPIStepRuns converts the recorded steps of an execution, and joins their outputs into one, each under a
+// header line, as the output of a run of a job with steps is stored by step only
+func toAPIStepRuns(steps []persistence.StepInfo, total int) (runs []APIStepRun, output string) {
+	parts := make([]string, 0, len(steps))
+	for _, st := range steps {
+		runs = append(runs, APIStepRun{Index: st.Index, Name: st.Name, Command: st.Command, Status: st.Status.String(),
+			ExitCode: st.ExitCode, Attempts: st.Attempts, StartedAt: st.StartedAt, FinishedAt: st.FinishedAt,
+			Output: st.Output})
+		if st.Status == enums.StepStatusSkipped {
+			continue
+		}
+		part := fmt.Sprintf("== step %d/%d: %s ==", st.Index, total, st.Command)
+		if st.Output != "" {
+			part += "\n" + st.Output
+		}
+		parts = append(parts, part)
+	}
+	return runs, strings.Join(parts, "\n")
 }
 
 // handleAPIStatus returns JSON status for all jobs - designed for CLI/jq consumption
@@ -230,6 +286,22 @@ func (s *Server) handleAPIExecutionLogs(w http.ResponseWriter, r *http.Request) 
 		ExitCode:        execution.ExitCode,
 		ExecutedCommand: execution.ExecutedCommand,
 		Output:          execution.Output,
+	}
+	if execution.StepFirst > 0 {
+		steps, err := s.store.GetExecutionSteps(execution.ID)
+		if err != nil {
+			log.Printf("[ERROR] failed to get steps of execution %d: %v", execID, err)
+			s.writeJSONError(w, http.StatusInternalServerError, "failed to load execution steps")
+			return
+		}
+		total := 0
+		for _, st := range steps {
+			total = max(total, st.Index)
+		}
+		if job, ok := s.jobByID(jobID); ok && len(job.Steps) > 0 {
+			total = len(job.Steps)
+		}
+		resp.Steps, resp.Output = toAPIStepRuns(steps, total)
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)

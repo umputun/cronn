@@ -47,6 +47,7 @@ package enums
 //go:generate go run github.com/go-pkgz/enum@latest -type theme -lower -sql
 //go:generate go run github.com/go-pkgz/enum@latest -type sortMode -lower -sql
 //go:generate go run github.com/go-pkgz/enum@latest -type filterMode -lower -sql
+//go:generate go run github.com/go-pkgz/enum@latest -type stepStatus -lower -sql
 
 // jobStatus represents the status of a job.
 // This is an unexported type used only as input for the code generator.
@@ -104,4 +105,17 @@ const (
 	filterModeFailed
 	filterModeIdle
 	filterModeDisabled
+)
+
+// stepStatus represents the status of one step of a job with steps.
+// This is an unexported type used only as input for the code generator.
+// Use the exported StepStatus type and its constants in actual code.
+type stepStatus int
+
+const (
+	stepStatusPending stepStatus = iota
+	stepStatusRunning
+	stepStatusSuccess
+	stepStatusFailed
+	stepStatusSkipped
 )

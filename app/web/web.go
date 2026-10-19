@@ -91,6 +91,7 @@ type Persistence interface {
 	GetExecutions(jobID string, limit int) ([]persistence.ExecutionInfo, error)
 	GetExecutionByID(execID int) (persistence.ExecutionInfo, error)
 	GetExecutionByStart(jobID string, start int64) (persistence.ExecutionInfo, error)
+	GetExecutionSteps(execID int) ([]persistence.StepInfo, error)
 	CleanupOldExecutions(jobID string, limit int) error
 	Close() error
 }
@@ -106,7 +107,9 @@ type JobEvent struct {
 	Output          string
 	StartedAt       time.Time
 	FinishedAt      time.Time
-	LiveOutput      func() string // started events only; nil when output capture is disabled
+	LiveOutput      func() string              // started events only; nil when output capture is disabled
+	LiveSteps       func() []request.StepState // started events of a job with steps only
+	Steps           []request.StepState        // finished events of a job with steps only
 }
 
 // TemplateData holds data for templates
@@ -467,6 +470,8 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 		"runDuration":      s.runDuration,
 		"clock":            s.clock,
 		"deref":            s.deref,
+		"stepAt":           stepAt,
+		"runStepsOf":       runStepsOf,
 	}
 
 	// parse base template with all partials

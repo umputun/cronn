@@ -3,6 +3,7 @@ package crontab
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -515,4 +516,54 @@ func TestParseYAMLWithConditions(t *testing.T) {
 	require.NotNil(t, jobs[4].Repeater)
 	assert.NotNil(t, jobs[4].Repeater.Attempts)
 	assert.Equal(t, 3, *jobs[4].Repeater.Attempts)
+}
+
+func TestParseYAMLWithSteps(t *testing.T) {
+	p := New("testfiles/crontab-steps.yml", time.Hour, nil)
+	jobs, err := p.List()
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+
+	assert.Equal(t, "Nightly pipeline", jobs[0].Name)
+	assert.Equal(t, []StepSpec{
+		{Name: "Extract", Command: "extract.sh {{.YYYYMMDDEOD}}"},
+		{Command: "transform.sh"},
+		{Name: "Load", Command: "load.sh"},
+	}, jobs[0].Steps)
+	assert.Equal(t, "extract.sh {{.YYYYMMDDEOD}} && transform.sh && load.sh", jobs[0].Command)
+	require.NotNil(t, jobs[0].Repeater)
+	assert.Equal(t, 3, *jobs[0].Repeater.Attempts)
+
+	assert.Equal(t, "echo plain", jobs[1].Command)
+	assert.Nil(t, jobs[1].Steps)
+}
+
+func TestParseYAMLWithStepsInvalid(t *testing.T) {
+	tests := []struct {
+		name   string
+		yaml   string
+		errMsg string
+	}{
+		{name: "command and steps", errMsg: "'command' and 'steps' fields are mutually exclusive",
+			yaml: "jobs:\n  - spec: \"@daily\"\n    command: echo\n    steps:\n      - command: a\n"},
+		{name: "empty steps", errMsg: "steps must contain at least one step",
+			yaml: "jobs:\n  - spec: \"@daily\"\n    steps: []\n"},
+		{name: "step without command", errMsg: "job 1: step 2: command is required",
+			yaml: "jobs:\n  - spec: \"@daily\"\n    steps:\n      - command: a\n      - name: b\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "crontab.yml")
+			require.NoError(t, os.WriteFile(file, []byte(tc.yaml), 0o600))
+			_, err := New(file, time.Hour, nil).List()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errMsg)
+		})
+	}
+}
+
+func TestJoinSteps(t *testing.T) {
+	assert.Empty(t, JoinSteps(nil))
+	assert.Equal(t, "a", JoinSteps([]StepSpec{{Command: "a"}}))
+	assert.Equal(t, "a && b c", JoinSteps([]StepSpec{{Name: "x", Command: "a"}, {Command: "b c"}}))
 }

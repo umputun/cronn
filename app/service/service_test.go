@@ -2167,3 +2167,101 @@ func (w *safeWriter) String() string {
 	defer w.mu.Unlock()
 	return w.buf.String()
 }
+
+func TestNewManualRun(t *testing.T) {
+	stepsJob := crontab.JobSpec{Steps: []crontab.StepSpec{{Name: "a", Command: "echo a"}, {Command: "echo b"}, {Command: "echo c"}}}
+	tests := []struct {
+		name    string
+		job     crontab.JobSpec
+		req     ManualJobRequest
+		want    manualRun
+		wantErr string
+	}{
+		{name: "command job", job: crontab.JobSpec{Command: "echo x"}, req: ManualJobRequest{Command: "echo y"},
+			want: manualRun{command: "echo y"}},
+		{name: "all steps", job: stepsJob, req: ManualJobRequest{},
+			want: manualRun{steps: stepsJob.Steps, fromStep: 1}},
+		{name: "from step 2", job: stepsJob, req: ManualJobRequest{FromStep: 2},
+			want: manualRun{steps: stepsJob.Steps[1:], fromStep: 2}},
+		{name: "edited steps", job: stepsJob, req: ManualJobRequest{FromStep: 2, Steps: []string{"echo B", "echo C"}},
+			want: manualRun{steps: []crontab.StepSpec{{Command: "echo B"}, {Command: "echo C"}}, fromStep: 2}},
+		{name: "step out of range", job: stepsJob, req: ManualJobRequest{FromStep: 4},
+			wantErr: "can't start from step 4 of 3"},
+		{name: "edited steps count mismatch", job: stepsJob, req: ManualJobRequest{FromStep: 2, Steps: []string{"echo B"}},
+			wantErr: "can't run 1 edited steps from step 2 of 3"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := newManualRun(tc.job, tc.req)
+			if tc.wantErr != "" {
+				require.EqualError(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	t.Run("edits leave the job's steps intact", func(t *testing.T) {
+		_, err := newManualRun(stepsJob, ManualJobRequest{Steps: []string{"x", "y", "z"}})
+		require.NoError(t, err)
+		assert.Equal(t, "echo a", stepsJob.Steps[0].Command)
+	})
+}
+
+func TestScheduler_ManualTriggerSteps(t *testing.T) {
+	steps := []crontab.StepSpec{{Command: "echo one"}, {Command: "echo two"}, {Command: "echo three"}}
+	job := crontab.JobSpec{Spec: "* * * * *", Steps: steps, Command: crontab.JoinSteps(steps)}
+	completed := make(chan request.OnJobComplete, 1)
+	s := &Scheduler{
+		CrontabParser: &mocks.CrontabParserMock{
+			StringFunc: func() string { return "test.yml" },
+			ListFunc:   func() ([]crontab.JobSpec, error) { return []crontab.JobSpec{job}, nil },
+		},
+		ManualTrigger: make(chan ManualJobRequest, 1),
+		Resumer:       resumer.New("", false),
+		DeDup:         NewDeDup(false),
+		JobEventHandler: &mocks.JobEventHandlerMock{
+			OnJobStartFunc:    func(request.OnJobStart) {},
+			OnJobCompleteFunc: func(req request.OnJobComplete) { completed <- req },
+		},
+		Stdout:          &bytes.Buffer{},
+		Repeater:        repeater.New(&strategy.Once{}),
+		ExecMaxLogLines: 10,
+	}
+	go s.listenForManualTriggers(t.Context())
+
+	s.ManualTrigger <- ManualJobRequest{JobID: s.jobIDFromCommand(job.Command), Schedule: job.Spec, FromStep: 2,
+		Steps: []string{"echo TWO", "echo three"}}
+
+	select {
+	case req := <-completed:
+		require.NoError(t, req.Err)
+		assert.Equal(t, job.Command, req.Command)
+		assert.Equal(t, "echo TWO && echo three", req.ExecutedCommand)
+		require.Len(t, req.Steps, 2)
+		assert.Equal(t, 2, req.Steps[0].Index)
+		assert.Equal(t, "TWO", req.Steps[0].Output)
+	case <-time.After(5 * time.Second):
+		t.Fatal("manual run of a job with steps did not complete")
+	}
+}
+
+func TestScheduler_jobFuncSteps(t *testing.T) {
+	steps := []crontab.StepSpec{{Command: "echo one"}, {Command: "echo two"}}
+	job := crontab.JobSpec{Spec: "@startup", Steps: steps, Command: crontab.JoinSteps(steps)}
+	handler := &mocks.JobEventHandlerMock{
+		OnJobStartFunc:    func(request.OnJobStart) {},
+		OnJobCompleteFunc: func(request.OnJobComplete) {},
+	}
+	wr := bytes.NewBuffer(nil)
+	svc := Scheduler{Stdout: wr, Resumer: resumer.New("", false), Repeater: repeater.New(&strategy.Once{}),
+		DeDup: NewDeDup(true), JobEventHandler: handler, NotifyTimeout: time.Second}
+	scheduleMock := &mocks.ScheduleMock{NextFunc: func(time.Time) time.Time { return time.Now() }}
+
+	svc.jobFunc(context.Background(), job, scheduleMock).Run()
+
+	assert.Equal(t, "one\ntwo\n", wr.String(), "each step runs its own command, the joined command never runs")
+	require.Len(t, handler.OnJobCompleteCalls(), 1)
+	assert.Len(t, handler.OnJobCompleteCalls()[0].Req.Steps, 2)
+}

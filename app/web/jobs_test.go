@@ -819,3 +819,75 @@ func TestServer_sortJobs_EdgeCases(t *testing.T) {
 		assert.Equal(t, "3", sorted[2].ID)
 	})
 }
+
+func TestServer_handleJobEventOverlappingRuns(t *testing.T) {
+	id := HashCommand("overlap")
+	start := func(at time.Time, output string) JobEvent {
+		return JobEvent{Command: "overlap", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: at,
+			LiveOutput: func() string { return output }}
+	}
+	finish := func(typ enums.EventType, at time.Time, code int) JobEvent {
+		return JobEvent{Command: "overlap", Schedule: "* * * * *", EventType: typ, StartedAt: at,
+			FinishedAt: at.Add(time.Second), ExitCode: code}
+	}
+	statuses := func(t *testing.T, s *Server) []enums.JobStatus {
+		t.Helper()
+		runs, err := s.store.GetExecutions(id, 10)
+		require.NoError(t, err)
+		res := make([]enums.JobStatus, 0, len(runs))
+		for _, run := range runs {
+			res = append(res, run.Status)
+		}
+		return res
+	}
+
+	t.Run("older run finishes first", func(t *testing.T) {
+		server := newHandlersTestServer(t, Config{})
+		a, b := time.Now().Add(-time.Minute), time.Now().Add(-30*time.Second)
+		server.handleJobEvent(start(a, "a out"))
+		server.handleJobEvent(start(b, "b out"))
+		server.handleJobEvent(finish(enums.EventTypeFailed, a, 2))
+
+		job, ok := server.jobByID(id)
+		require.True(t, ok)
+		assert.True(t, job.IsRunning, "the newer run is still in progress")
+		assert.Equal(t, enums.JobStatusRunning, job.LastStatus)
+		assert.Equal(t, 2, *job.LastExitCode)
+		assert.True(t, b.Equal(job.LastRun))
+		assert.Equal(t, []enums.JobStatus{enums.JobStatusFailed}, statuses(t, server), "the finished run keeps its own status")
+		active := server.activeRuns(id)
+		require.Len(t, active, 1)
+		assert.Equal(t, "b out", active[0].Output())
+
+		server.handleJobEvent(finish(enums.EventTypeCompleted, b, 0))
+		job, _ = server.jobByID(id)
+		assert.False(t, job.IsRunning)
+		assert.Equal(t, enums.JobStatusSuccess, job.LastStatus)
+		assert.Empty(t, server.activeRuns(id))
+		assert.Equal(t, []enums.JobStatus{enums.JobStatusSuccess, enums.JobStatusFailed}, statuses(t, server))
+	})
+
+	t.Run("newer run finishes first", func(t *testing.T) {
+		server := newHandlersTestServer(t, Config{})
+		a, b := time.Now().Add(-time.Minute), time.Now().Add(-30*time.Second)
+		server.handleJobEvent(start(b, "b out"))
+		server.handleJobEvent(start(a, "a out"))
+		job, _ := server.jobByID(id)
+		assert.True(t, b.Equal(job.LastRun), "a start event arriving late does not move last run back")
+		server.handleJobEvent(finish(enums.EventTypeCompleted, b, 0))
+
+		job, _ = server.jobByID(id)
+		assert.True(t, job.IsRunning, "the older run is still in progress")
+		assert.Equal(t, enums.JobStatusRunning, job.LastStatus)
+		assert.True(t, b.Equal(job.LastRun), "last run does not move back to the older start")
+		active := server.activeRuns(id)
+		require.Len(t, active, 1)
+		assert.Equal(t, "a out", active[0].Output(), "the older run keeps its own output")
+
+		server.handleJobEvent(finish(enums.EventTypeFailed, a, 1))
+		job, _ = server.jobByID(id)
+		assert.False(t, job.IsRunning)
+		assert.Equal(t, enums.JobStatusFailed, job.LastStatus)
+		assert.Equal(t, []enums.JobStatus{enums.JobStatusSuccess, enums.JobStatusFailed}, statuses(t, server))
+	})
+}

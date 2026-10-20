@@ -61,8 +61,9 @@ const (
 	jobFailing   = "Vendor feed import"
 	jobSilent    = "Silent failure"
 	jobSlow      = "Slow report"
+	jobLive      = "Live tail"
 	jobTemplated = "Templated job"
-	totalJobs    = 8
+	totalJobs    = 9
 )
 
 var (
@@ -193,6 +194,9 @@ func createTestCrontab() error {
     command: "sleep 3"
     name: "Slow report"
   - spec: "0 0 1 1 *"
+    command: 'sh -c "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do for j in 1 2 3 4 5 6; do echo tick \$i line \$j of a line long enough to scroll sideways when log lines are not wrapped in the inspector output pane; done; sleep 1; done"'
+    name: "Live tail"
+  - spec: "0 0 1 1 *"
     command: "echo run {{.YYYYMMDD}}"
     name: "Templated job"
 `
@@ -215,9 +219,12 @@ func envOr(name, def string) string {
 func checkPortFree(port string) error {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return err
+		return fmt.Errorf("listen on port %s: %w", port, err)
 	}
-	return ln.Close()
+	if err := ln.Close(); err != nil {
+		return fmt.Errorf("close listener on port %s: %w", port, err)
+	}
+	return nil
 }
 
 func waitForServer(url string, timeout time.Duration) error {
@@ -481,9 +488,9 @@ func TestDashboard_ShowsJobsByName(t *testing.T) {
 	assert.Equal(t, totalJobs, count)
 
 	for _, name := range []string{jobFiveMin, jobHourly, jobWeekday, jobFailing, jobSlow} {
-		visible, err := row(page, name).IsVisible()
-		require.NoError(t, err)
-		assert.True(t, visible, "row for %q should be visible", name)
+		rowVisible, rowErr := row(page, name).IsVisible()
+		require.NoError(t, rowErr)
+		assert.True(t, rowVisible, "row for %q should be visible", name)
 	}
 
 	cmd, err := row(page, jobHourly).Locator(".cmd").TextContent()

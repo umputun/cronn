@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func waitRowState(t *testing.T, page playwright.Page, name, state string) {
+func waitWeekdayDisabled(t *testing.T, page playwright.Page) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		s, err := row(page, name).GetAttribute("data-state")
-		return err == nil && s == state
-	}, 8*time.Second, 100*time.Millisecond, "row %q should reach state %q", name, state)
+		s, err := row(page, jobWeekday).GetAttribute("data-state")
+		return err == nil && s == "off"
+	}, 8*time.Second, 100*time.Millisecond, "row %q should be disabled", jobWeekday)
 }
 
 func waitRowEnabled(t *testing.T, page playwright.Page, name string) {
@@ -37,7 +37,7 @@ func TestToggle_DisableFromRowAndEnableBack(t *testing.T) {
 	disabledBefore := countOf(t, page, "disabled")
 
 	require.NoError(t, row(page, jobWeekday).Locator(".toggle-btn").Click())
-	waitRowState(t, page, jobWeekday, "off")
+	waitWeekdayDisabled(t, page)
 	assert.False(t, jobStatus(t, id).Enabled)
 
 	r := row(page, jobWeekday)
@@ -67,7 +67,7 @@ func TestToggle_DisabledTabListsOnlyDisabledJobs(t *testing.T) {
 	setEnabled(t, id, false)
 	t.Cleanup(func() { setEnabled(t, id, true) })
 
-	waitRowState(t, page, jobWeekday, "off")
+	waitWeekdayDisabled(t, page)
 	clickTab(t, page, "Disabled")
 	names := rowNames(t, page)
 	assert.Contains(t, names, jobWeekday)
@@ -85,7 +85,7 @@ func TestToggle_PersistsAcrossReload(t *testing.T) {
 	_, err := page.Reload()
 	require.NoError(t, err)
 	waitForJobsLoaded(t, page)
-	waitRowState(t, page, jobWeekday, "off")
+	waitWeekdayDisabled(t, page)
 }
 
 func TestToggle_FromInspector(t *testing.T) {
@@ -104,7 +104,7 @@ func TestToggle_FromInspector(t *testing.T) {
 	count, err := page.Locator("#insp-run").Count()
 	require.NoError(t, err)
 	assert.Zero(t, count, "a disabled job has no Run now button")
-	waitRowState(t, page, jobWeekday, "off")
+	waitWeekdayDisabled(t, page)
 
 	require.NoError(t, page.Locator("#insp-toggle").Click())
 	waitRowEnabled(t, page, jobWeekday)

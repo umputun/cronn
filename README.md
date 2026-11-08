@@ -288,6 +288,21 @@ jobs:
       check_interval: 5m      # Check every 5 minutes
 ```
 
+Example with steps around the main command. Cronn runs each command with `sh -c`, so a multi-line command can run setup and cleanup steps around the main one:
+```yaml
+jobs:
+  - spec: "0 0 * * *"
+    name: "Locked backup"
+    command: |
+      /scripts/lock.sh || exit $?
+      /scripts/backup.sh; rc=$?
+      /scripts/unlock.sh; after_rc=$?
+      [ "$rc" -ne 0 ] || rc=$after_rc
+      exit "$rc"
+```
+
+If `lock.sh` fails, nothing else runs and the job fails with its exit code. If `backup.sh` fails, `unlock.sh` still runs and the job reports the backup's exit code. If only `unlock.sh` fails, the job fails with the unlock's exit code. The job still records one exit code and one combined output, and retries and auto-resume re-run the whole command.
+
 Both formats support the same template variables.
 
 ## Web Dashboard

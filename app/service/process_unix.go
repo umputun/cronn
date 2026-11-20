@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-// setProcessGroup runs the command in its own process group, so a stop reaches every process that stays in the command's group
+// setProcessGroup runs the command in its own process group, so a stop reaches every process that stays
+// in the command's group
 func (s *Scheduler) setProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }

@@ -2203,6 +2203,55 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 	})
 }
 
+func TestScheduler_executeCommandCanceled(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		do      func(cancel context.CancelFunc, fun func() error) error
+		wantErr error
+	}{
+		{name: "canceled before any attempt, repeater returns nil", command: "echo ok",
+			do: func(cancel context.CancelFunc, _ func() error) error { cancel(); return nil }, wantErr: errCanceled},
+		{name: "canceled while waiting to retry, repeater returns the last error", command: "exit 3",
+			do: func(cancel context.CancelFunc, fun func() error) error { err := fun(); cancel(); return err }, wantErr: errCanceled},
+		{name: "canceled after a successful attempt", command: "echo ok",
+			do: func(cancel context.CancelFunc, fun func() error) error { err := fun(); cancel(); return err }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			rptr := &mocks.RepeaterMock{DoFunc: func(_ context.Context, fun func() error, _ ...error) error { return tc.do(cancel, fun) }}
+			svc := Scheduler{}
+			_, err := svc.executeCommand(ctx, tc.command, bytes.NewBuffer(nil), rptr, nil)
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+
+	t.Run("a resumed run whose retry wait is canceled keeps its marker", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		resmr := &mocks.ResumerMock{
+			ListFunc:     func() []resumer.Cmd { return []resumer.Cmd{{Command: "exit 3", Fname: "resume.file"}} },
+			OnFinishFunc: func(string) error { return nil },
+		}
+		rptr := &mocks.RepeaterMock{DoFunc: func(_ context.Context, fun func() error, _ ...error) error {
+			err := fun()
+			cancel()
+			return err
+		}}
+		svc := Scheduler{Stdout: bytes.NewBuffer(nil), Resumer: resmr, Repeater: rptr, DeDup: NewDeDup(true),
+			NotifyTimeout: time.Second}
+		svc.resumeInterrupted(ctx, 1)
+		require.Eventually(t, func() bool { return len(rptr.DoCalls()) == 1 }, 5*time.Second, 10*time.Millisecond)
+		svc.waitRuns()
+		assert.Empty(t, resmr.OnFinishCalls())
+	})
+}
+
 func TestScheduler_EODHour(t *testing.T) {
 	tests := []struct {
 		name    string

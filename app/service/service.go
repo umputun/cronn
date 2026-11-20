@@ -326,8 +326,9 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	}
 
 	notifyOutput, err := s.executeCommand(runCtx, cmd, s.Stdout, rptr, webCapture)
-	// unregistered before the cause is read: a StopRun that reported success is then always recorded as a stop,
-	// and one arriving later finds no run. A stopped command may trap SIGTERM and exit 0, so the cause decides
+	// unregistered before the cause is read, so a StopRun arriving later finds no run. A StopRun that reported
+	// success is recorded as a stop unless a shutdown canceled the run first. The cause decides, not the exit
+	// status, since a stopped command may trap SIGTERM and exit 0
 	s.unregisterRun(r.Command, startTime)
 	stopped := errors.Is(context.Cause(runCtx), errStopped)
 	interrupted := !stopped && errors.Is(err, errCanceled)
@@ -484,11 +485,11 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 
 	notifyCapture := NewOutputCapture(s.NotifyMaxLogLines)
 
-	// recorded here because the repeater may hand back ctx.Err() in place of the attempt's own error
-	canceled := false
+	// the repeater may end a canceled loop with nil, the previous attempt's error or ctx.Err(), so the
+	// outcome comes from whether an attempt succeeded and whether ctx was canceled
+	succeeded := false
 	execErr := rptr.Do(ctx, func() error {
 		if ctx.Err() != nil {
-			canceled = true
 			return fmt.Errorf("failed to execute command %s: %w", command, errCanceled)
 		}
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
@@ -510,12 +511,10 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
 		err := s.runCommand(ctx, cmd, command)
-		if errors.Is(err, errCanceled) {
-			canceled = true
-		}
+		succeeded = err == nil
 		return err
 	})
-	if canceled || errors.Is(execErr, context.Canceled) {
+	if !succeeded && ctx.Err() != nil {
 		execErr = fmt.Errorf("failed to execute command %s: %w", command, errCanceled)
 	}
 

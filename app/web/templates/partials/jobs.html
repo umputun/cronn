@@ -134,14 +134,19 @@
                 <div><span class="k">Next</span>{{if not .Enabled}}disabled{{else if .NextRun.IsZero}}—{{else}}in {{timeUntil .NextRun}}{{end}}</div>
             </td>
             <td class="c-act">
+                {{if and .IsRunning $.StopEnabled}}
+                <button class="btn stop-btn" id="stop-{{.ID}}"
+                        hx-get="{{url (printf "/api/jobs/%s/stop-form" .ID)}}"
+                        hx-target="#dialog-slot" hx-swap="innerHTML"
+                        aria-label="Stop {{template "job-name" .}}">■<span class="btn-lbl"> Stop</span></button>
+                {{end}}
                 {{if not .Enabled}}
                 <button class="btn ghost" id="toggle-{{.ID}}"
                         hx-post="{{url (printf "/api/jobs/%s/toggle" .ID)}}" hx-swap="none"
                         aria-label="Enable {{template "job-name" .}}">Enable</button>
                 {{else}}
-                {{if not $.ManualDisabled}}
+                {{if and (not $.ManualDisabled) (not .IsRunning)}}
                 <button class="btn run-btn" id="run-{{.ID}}"
-                        {{if .IsRunning}}disabled{{end}}
                         hx-get="{{url (printf "/api/jobs/%s/run-form" .ID)}}"
                         hx-target="#dialog-slot" hx-swap="innerHTML"
                         aria-label="Run {{template "job-name" .}} now">▶<span class="btn-lbl"> Run</span></button>

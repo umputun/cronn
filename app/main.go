@@ -137,7 +137,7 @@ func main() {
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	hupCh := signals(cancel) // handle SIGQUIT and SIGTERM
+	hupCh := signals(cancel) // handle SIGQUIT, SIGTERM and SIGINT
 
 	updateInterval := time.Duration(math.MaxInt64) // very long interval, effectively disabling automatic refresh
 	if opts.UpdateEnable && opts.UpdateInterval > 0 {
@@ -171,9 +171,13 @@ func main() {
 		opts.Log.ExecMaxHist = 0
 	}
 
+	// created ahead of the web server, which stops runs through it, and filled in once that server exists
+	cronService := &service.Scheduler{}
+
 	// initialize web server if enabled
 	var eventHandler service.JobEventHandler
 	var isJobDisabled func(string) bool
+	var webServer *web.Server
 	if opts.Web.Enabled {
 		baseURL := validateBaseURL(opts.Web.BaseURL)
 
@@ -187,6 +191,7 @@ func main() {
 			Hostname:           hostname,
 			Version:            revision,
 			ManualTrigger:      manualTrigger,
+			RunStopper:         cronService,
 			JobsProvider:       crontabParser,
 			PasswordHash:       opts.Web.PasswordHash,
 			LoginTTL:           opts.Web.LoginTTL,
@@ -197,24 +202,17 @@ func main() {
 			LogExecMaxHist:     opts.Log.ExecMaxHist,
 			NeighborsURL:       opts.Web.NeighborsURL,
 		}
-		webServer, err := web.New(cfg)
+		var err error
+		webServer, err = web.New(cfg)
 		if err != nil {
 			log.Printf("[ERROR] failed to create web server: %v", err)
 			os.Exit(1)
 		}
 		eventHandler = webServer // web.Server implements JobEventHandler
 		isJobDisabled = webServer.IsJobDisabled
-
-		// start web server in background
-		go func() {
-			if err := webServer.Run(ctx, opts.Web.Address); err != nil {
-				log.Printf("[ERROR] web server failed: %v", err)
-			}
-		}()
-		log.Printf("[INFO] web UI enabled on %s", opts.Web.Address)
 	}
 
-	cronService := service.Scheduler{
+	*cronService = service.Scheduler{
 		Cron:              cron.New(),
 		Resumer:           resumer.New(opts.Resume, opts.Resume != ""),
 		ResumeConcurrency: opts.ResumeConcur,
@@ -242,6 +240,16 @@ func main() {
 	cronService.RepeaterDefaults.Duration = opts.Repeater.Duration
 	cronService.RepeaterDefaults.Factor = opts.Repeater.Factor
 	cronService.RepeaterDefaults.Jitter = opts.Repeater.Jitter
+
+	// served only once the scheduler is filled in, since a stop request reaches it
+	if webServer != nil {
+		go func() {
+			if err := webServer.Run(ctx, opts.Web.Address); err != nil {
+				log.Printf("[ERROR] web server failed: %v", err)
+			}
+		}()
+		log.Printf("[INFO] web UI enabled on %s", opts.Web.Address)
+	}
 
 	cronService.Do(ctx)
 }
@@ -360,8 +368,8 @@ func setupLogs() io.Writer {
 }
 
 func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
-	sigChan := make(chan os.Signal, 1)
-	hupCh = make(chan struct{})
+	sigChan := make(chan os.Signal, 4) // room for a burst of distinct signals, so a pending SIGHUP does not drop a SIGTERM
+	hupCh = make(chan struct{}, 1)
 	go func() {
 		stacktrace := make([]byte, 8192)
 		for sig := range sigChan {
@@ -370,13 +378,18 @@ func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
 				length := runtime.Stack(stacktrace, true)
 				fmt.Println(string(stacktrace[:length]))
 			case syscall.SIGHUP: // reload crontab file on SIGHUP
-				hupCh <- struct{}{}
-			case syscall.SIGTERM: // terminate on SIGTERM
+				// nothing reads hupCh without --update, and a blocked send would leave SIGTERM and SIGINT unhandled
+				select {
+				case hupCh <- struct{}{}:
+				default:
+				}
+			case syscall.SIGTERM, syscall.SIGINT: // terminate; jobs run in their own process groups, so a terminal's
+				// SIGINT does not reach them and the scheduler stops them instead
 				cancel()
 			}
 		}
 	}()
-	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 	return hupCh
 }
 

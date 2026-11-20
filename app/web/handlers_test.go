@@ -939,6 +939,189 @@ func TestServer_handleInspectorRunningJob(t *testing.T) {
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(sel), `id="live-`+strconv.FormatInt(start.UnixMicro(), 10)+`"`))
 }
 
+func TestServer_handleStopForm(t *testing.T) {
+	start := time.Now().Add(-time.Minute)
+	newServer := func(t *testing.T, cfg Config) (*Server, string) {
+		if cfg.RunStopper == nil {
+			cfg.RunStopper = &mocks.RunStopperMock{StopRunFunc: func(string, int64) bool { return true }}
+		}
+		s := newHandlersTestServer(t, cfg)
+		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
+			StartedAt: start.Add(-time.Hour)})
+		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
+			StartedAt: start, ExecutedCommand: "live cmd --edited"})
+		return s, HashCommand("live cmd")
+	}
+	get := func(s *Server, id, query string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/stop-form"+query, http.NoBody)
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		s.handleStopForm(w, req)
+		return w
+	}
+	startParam := strconv.FormatInt(start.UnixMicro(), 10)
+
+	t.Run("without a start the newest run is the target", func(t *testing.T) {
+		s, id := newServer(t, Config{})
+		w := get(s, id, "")
+		require.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, `<dialog class="run-dialog stop-dialog" data-job-id="`+id+`"`)
+		assert.Contains(t, body, `<input type="hidden" name="start" value="`+startParam+`">`)
+		assert.Contains(t, body, "live cmd --edited")
+		assert.Contains(t, body, "Ends the run started at "+start.Format("15:04:05"))
+	})
+
+	t.Run("a start picks that run", func(t *testing.T) {
+		s, id := newServer(t, Config{})
+		older := strconv.FormatInt(start.Add(-time.Hour).UnixMicro(), 10)
+		body := get(s, id, "?start="+older).Body.String()
+		assert.Contains(t, body, `name="start" value="`+older+`"`)
+	})
+
+	t.Run("a run no longer in progress closes the dialog and refreshes", func(t *testing.T) {
+		s, id := newServer(t, Config{})
+		w := get(s, id, "?start=1")
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, w.Body.String())
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
+		w = get(s, "nope", "")
+		assert.Empty(t, w.Body.String())
+	})
+
+	t.Run("invalid start", func(t *testing.T) {
+		s, id := newServer(t, Config{})
+		assert.Equal(t, http.StatusBadRequest, get(s, id, "?start=x").Code)
+	})
+
+	t.Run("manual control disabled", func(t *testing.T) {
+		s, id := newServer(t, Config{DisableManual: true})
+		assert.Equal(t, http.StatusForbidden, get(s, id, "").Code)
+	})
+}
+
+func TestServer_handleStopRun(t *testing.T) {
+	start := time.Now().Add(-time.Minute)
+	type call struct {
+		command string
+		start   int64
+	}
+	newServer := func(t *testing.T, cfg Config, running bool) (*Server, *mocks.RunStopperMock, string) {
+		stopper := &mocks.RunStopperMock{StopRunFunc: func(string, int64) bool { return running }}
+		cfg.RunStopper = stopper
+		s := newHandlersTestServer(t, cfg)
+		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: start})
+		return s, stopper, HashCommand("live cmd")
+	}
+	post := func(s *Server, id, startValue string, htmx bool) *httptest.ResponseRecorder {
+		form := url.Values{"start": {startValue}}
+		req := httptest.NewRequest(http.MethodPost, "/api/jobs/"+id+"/stop", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		s.handleStopRun(w, req)
+		return w
+	}
+	startParam := strconv.FormatInt(start.UnixMicro(), 10)
+
+	t.Run("stopped: curl gets 202, htmx gets the toast and a refresh", func(t *testing.T) {
+		s, stopper, id := newServer(t, Config{}, true)
+		w := post(s, id, startParam, false)
+		assert.Equal(t, http.StatusAccepted, w.Code)
+		assert.Equal(t, "Stop requested", w.Body.String())
+		require.Len(t, stopper.StopRunCalls(), 1)
+		assert.Equal(t, call{command: "live cmd", start: start.UnixMicro()},
+			call{command: stopper.StopRunCalls()[0].Command, start: stopper.StopRunCalls()[0].Start})
+
+		w = post(s, id, startParam, true)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "Stop requested: <b>live cmd</b>")
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
+	})
+
+	t.Run("run not in progress: curl gets 404, htmx gets an empty slot", func(t *testing.T) {
+		s, _, id := newServer(t, Config{}, false)
+		assert.Equal(t, http.StatusNotFound, post(s, id, startParam, false).Code)
+		w := post(s, id, startParam, true)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, w.Body.String())
+		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
+	})
+
+	t.Run("unknown job never reaches the stopper", func(t *testing.T) {
+		s, stopper, _ := newServer(t, Config{}, true)
+		assert.Equal(t, http.StatusNotFound, post(s, "nope", startParam, false).Code)
+		assert.Empty(t, stopper.StopRunCalls())
+	})
+
+	t.Run("invalid start", func(t *testing.T) {
+		s, stopper, id := newServer(t, Config{}, true)
+		assert.Equal(t, http.StatusBadRequest, post(s, id, "x", true).Code)
+		assert.Empty(t, stopper.StopRunCalls())
+	})
+
+	t.Run("manual control disabled", func(t *testing.T) {
+		s, stopper, id := newServer(t, Config{DisableManual: true}, true)
+		assert.Equal(t, http.StatusForbidden, post(s, id, startParam, false).Code)
+		assert.Empty(t, stopper.StopRunCalls())
+	})
+
+	t.Run("no stopper configured", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		assert.Equal(t, http.StatusForbidden, post(s, "any", startParam, false).Code)
+	})
+}
+
+func TestServer_stopButtons(t *testing.T) {
+	start := time.Now().Add(-time.Minute)
+	newServer := func(t *testing.T, cfg Config) (*Server, string) {
+		cfg.RunStopper = &mocks.RunStopperMock{StopRunFunc: func(string, int64) bool { return true }}
+		s := newHandlersTestServer(t, cfg)
+		addJobs(s, sampleJobs()...)
+		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: start})
+		return s, HashCommand("live cmd")
+	}
+	inspector := func(s *Server, id string) string {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector", http.NoBody)
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		s.handleInspector(w, req)
+		return w.Body.String()
+	}
+	jobs := func(s *Server) string {
+		w := httptest.NewRecorder()
+		s.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
+		return w.Body.String()
+	}
+
+	t.Run("a running job shows Stop in place of Run", func(t *testing.T) {
+		s, id := newServer(t, Config{})
+		body := jobs(s)
+		assert.Contains(t, body, `id="stop-`+id+`"`)
+		assert.NotContains(t, body, `id="run-`+id+`"`)
+		assert.Contains(t, body, `id="run-ok"`, "an idle job keeps Run")
+		assert.NotContains(t, body, `id="stop-ok"`)
+		assert.Contains(t, inspector(s, id), `hx-get="/api/jobs/`+id+`/stop-form?start=`+strconv.FormatInt(start.UnixMicro(), 10)+`"`)
+	})
+
+	t.Run("no Stop without a stopper", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: start})
+		id := HashCommand("live cmd")
+		assert.NotContains(t, jobs(s), `id="stop-`)
+		assert.NotContains(t, inspector(s, id), "stop-form")
+	})
+
+	t.Run("no Stop when manual control is disabled", func(t *testing.T) {
+		s, id := newServer(t, Config{DisableManual: true})
+		assert.NotContains(t, jobs(s), `id="stop-`)
+		assert.NotContains(t, inspector(s, id), "stop-form")
+	})
+}
+
 func TestServer_handleSettingsModal(t *testing.T) {
 	server := newHandlersTestServer(t, Config{Settings: SettingsInfo{Version: "v1.0.0", StartTime: time.Now().Add(-time.Hour),
 		WebEnabled: true, WebAddress: ":8080", CrontabPath: "test-crontab"}})

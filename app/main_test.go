@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
+	"runtime"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,4 +112,26 @@ func Test_resolveHostname(t *testing.T) {
 	exp, err := os.Hostname()
 	require.NoError(t, err)
 	assert.Equal(t, exp, resolveHostname(""))
+}
+
+func TestSignals_TerminateAfterUnreadHup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows delivers no SIGHUP or SIGTERM to a process")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	hupCh := signals(cancel)
+	self, err := os.FindProcess(os.Getpid())
+	require.NoError(t, err)
+
+	require.NoError(t, self.Signal(syscall.SIGHUP))
+	require.Eventually(t, func() bool { return len(hupCh) == 1 }, 5*time.Second, 10*time.Millisecond, "first SIGHUP queued")
+	require.NoError(t, self.Signal(syscall.SIGHUP))
+	require.NoError(t, self.Signal(syscall.SIGTERM))
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGTERM after an unread SIGHUP did not cancel")
+	}
+	assert.Len(t, hupCh, 1, "an unread reload request is kept once")
 }

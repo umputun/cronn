@@ -18,7 +18,7 @@ Simple cron scheduling with visibility. Single binary, embedded SQLite, no exter
 - crontab and YAML formats (auto-detected by extension)
 - web dashboard with job history and manual execution
 - hot reload on config changes (+ SIGHUP support)
-- graceful shutdown waits for running jobs
+- shutdown stops running jobs (SIGTERM, then SIGKILL after 5s) and waits for them; with `--resume`, interrupted runs run again after the restart
 - auto-resume after container/process restart
 - date templates including business day support
 - conditional execution (CPU/memory/disk thresholds, custom scripts)
@@ -320,6 +320,7 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
   - Edit the command for a one-off run
   - Set a date (YYYYMMDD) for template variables; the field appears only when the command has templates
   - A rejected run (job disabled, already running, invalid date) is reported in the dialog with your edits kept
+- **Stopping a running job** from its row or from the run in progress in the inspector, after a confirmation. The stop reaches the job's whole process group: SIGTERM, then SIGKILL to whatever is left after 5 seconds. A process that moves itself to another process group (`setsid`, GNU `timeout`) gets no SIGTERM or SIGKILL from cronn and can outlive the run; output capture ends without it, and its later writes to the job's output fail. The run is recorded as failed with exit code -1, sends no failure notification and is not replayed by `--resume`. `--web.disable-manual` turns stopping off along with manual runs. On Windows only the job's own shell is killed: processes it started keep running, and output capture ends 5 seconds later even if one of them still holds the job's output
 - **Enable/disable jobs** from the table or the inspector without editing config files
 - **Persistent job history** stored in a SQLite database that survives restarts
 - **Light and dark themes** (dark by default), switched from the top bar

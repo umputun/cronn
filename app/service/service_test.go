@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -497,6 +498,128 @@ func TestScheduler_runJobWithCommandLiveOutput(t *testing.T) {
 		require.Len(t, handler.OnJobStartCalls(), 1)
 		assert.Nil(t, handler.OnJobStartCalls()[0].Req.LiveOutput)
 		assert.Empty(t, handler.OnJobCompleteCalls()[0].Req.Output)
+	})
+}
+
+func TestScheduler_StopRun(t *testing.T) {
+	saved := stopGrace
+	stopGrace = 200 * time.Millisecond
+	t.Cleanup(func() { stopGrace = saved })
+	spec := crontab.JobSpec{Spec: "* * * * *", Command: "stoppable"}
+
+	type harness struct {
+		svc      *Scheduler
+		started  chan request.OnJobStart
+		handler  *mocks.JobEventHandlerMock
+		notifier *mocks.NotifierMock
+		resumer  *mocks.ResumerMock
+	}
+	newHarness := func() harness {
+		h := harness{started: make(chan request.OnJobStart, 1)}
+		h.handler = &mocks.JobEventHandlerMock{
+			OnJobStartFunc:    func(req request.OnJobStart) { h.started <- req },
+			OnJobCompleteFunc: func(request.OnJobComplete) {},
+		}
+		h.notifier = &mocks.NotifierMock{
+			SendFunc:               func(context.Context, string, string) error { return nil },
+			IsOnErrorFunc:          func() bool { return true },
+			IsOnCompletionFunc:     func() bool { return true },
+			MakeErrorHTMLFunc:      func(string, string, string) (string, error) { return "err", nil },
+			MakeCompletionHTMLFunc: func(string, string) (string, error) { return "ok", nil },
+		}
+		h.resumer = &mocks.ResumerMock{OnStartFunc: func(string) (string, error) { return "resume.file", nil },
+			OnFinishFunc: func(string) error { return nil }}
+		h.svc = &Scheduler{Stdout: bytes.NewBuffer(nil), Resumer: h.resumer, DeDup: NewDeDup(false),
+			JobEventHandler: h.handler, Notifier: h.notifier, NotifyTimeout: time.Second, ExecMaxLogLines: 10}
+		return h
+	}
+	run := func(ctx context.Context, h harness, command string, rptr Repeater) (request.OnJobStart, chan error) {
+		done := make(chan error, 1)
+		go func() { done <- h.svc.runJobWithCommand(ctx, spec, command, nil, rptr, false) }()
+		return <-h.started, done
+	}
+
+	t.Run("stopped run is failed with -1, not retried, notified or resumed", func(t *testing.T) {
+		h := newHarness()
+		req, done := run(t.Context(), h, "echo attempt; sleep 30",
+			repeater.New(&strategy.FixedDelay{Repeats: 3, Delay: 10 * time.Millisecond}))
+		require.Eventually(t, func() bool { return req.LiveOutput() == "attempt" }, 5*time.Second, 10*time.Millisecond)
+		require.True(t, h.svc.StopRun(spec.Command, req.StartTime.UnixMicro()))
+
+		require.ErrorIs(t, <-done, errStopped)
+		require.Len(t, h.handler.OnJobCompleteCalls(), 1)
+		complete := h.handler.OnJobCompleteCalls()[0].Req
+		assert.Equal(t, -1, complete.ExitCode)
+		require.ErrorIs(t, complete.Err, errStopped)
+		assert.Equal(t, "attempt\nstopped from the dashboard", complete.Output)
+		assert.Empty(t, h.notifier.SendCalls())
+		require.Len(t, h.resumer.OnFinishCalls(), 1)
+		assert.Equal(t, "resume.file", h.resumer.OnFinishCalls()[0].Fname)
+	})
+
+	t.Run("a command trapping TERM and exiting 0 is still a stopped run", func(t *testing.T) {
+		h := newHarness()
+		req, done := run(t.Context(), h, "trap 'exit 0' TERM; echo ready; sleep 30 & wait", repeater.New(&strategy.Once{}))
+		require.Eventually(t, func() bool { return req.LiveOutput() == "ready" }, 5*time.Second, 10*time.Millisecond)
+		require.True(t, h.svc.StopRun(spec.Command, req.StartTime.UnixMicro()))
+
+		require.ErrorIs(t, <-done, errStopped)
+		assert.Equal(t, -1, h.handler.OnJobCompleteCalls()[0].Req.ExitCode)
+	})
+
+	t.Run("only the exact run in progress can be stopped", func(t *testing.T) {
+		h := newHarness()
+		req, done := run(t.Context(), h, "echo done", repeater.New(&strategy.Once{}))
+		require.NoError(t, <-done)
+		assert.False(t, h.svc.StopRun(spec.Command, req.StartTime.UnixMicro()), "a finished run")
+		assert.False(t, h.svc.StopRun(spec.Command, 1), "an unknown start")
+		assert.False(t, h.svc.StopRun("other", req.StartTime.UnixMicro()), "another command")
+	})
+
+	t.Run("shutdown keeps the marker of a command that traps TERM and exits 0", func(t *testing.T) {
+		h := newHarness()
+		ctx, cancel := context.WithCancel(t.Context())
+		req, done := run(ctx, h, "trap 'exit 0' TERM; echo ready; sleep 30 & wait", repeater.New(&strategy.Once{}))
+		require.Eventually(t, func() bool { return req.LiveOutput() == "ready" }, 5*time.Second, 10*time.Millisecond)
+		cancel()
+
+		require.ErrorIs(t, <-done, errCanceled)
+		assert.Empty(t, h.resumer.OnFinishCalls())
+		assert.Empty(t, h.notifier.SendCalls(), "an interrupted run notifies nobody")
+		assert.Equal(t, -1, h.handler.OnJobCompleteCalls()[0].Req.ExitCode)
+	})
+
+	t.Run("a stop arriving while a finished run notifies finds no run", func(t *testing.T) {
+		h := newHarness()
+		sending, release := make(chan struct{}), make(chan struct{})
+		h.notifier.SendFunc = func(context.Context, string, string) error {
+			close(sending)
+			<-release
+			return nil
+		}
+		req, done := run(t.Context(), h, "echo done", repeater.New(&strategy.Once{}))
+		<-sending
+		assert.False(t, h.svc.StopRun(spec.Command, req.StartTime.UnixMicro()), "the result is already decided")
+		close(release)
+		require.NoError(t, <-done)
+		assert.Equal(t, 0, h.handler.OnJobCompleteCalls()[0].Req.ExitCode)
+	})
+
+	t.Run("shutdown ends a run, keeps its resume marker and joins it", func(t *testing.T) {
+		h := newHarness()
+		ctx, cancel := context.WithCancel(t.Context())
+		_, done := run(ctx, h, "sleep 30", repeater.New(&strategy.Once{}))
+		cancel()
+		h.svc.waitRuns()
+		require.Len(t, h.handler.OnJobCompleteCalls(), 1, "waitRuns returned before the run ended")
+
+		err := <-done
+		require.Error(t, err)
+		require.NotErrorIs(t, err, errStopped)
+		assert.Empty(t, h.resumer.OnFinishCalls(), "an interrupted run is resumed after restart")
+		assert.False(t, h.svc.trackRun(), "no run starts once shutdown began")
+		require.ErrorContains(t, h.svc.runJobWithCommand(t.Context(), spec, "echo late", nil, repeater.New(&strategy.Once{}), false),
+			"shutting down")
 	})
 }
 
@@ -2004,7 +2127,7 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 			NotifyTimeout:     time.Second,
 		}
 
-		svc.resumeInterrupted(1)
+		svc.resumeInterrupted(t.Context(), 1)
 
 		// wait for notification to be sent
 		require.Eventually(t, func() bool {
@@ -2047,7 +2170,7 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 			NotifyTimeout:     time.Second,
 		}
 
-		svc.resumeInterrupted(1)
+		svc.resumeInterrupted(t.Context(), 1)
 
 		// wait for command to complete
 		require.Eventually(t, func() bool {
@@ -2056,6 +2179,77 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 
 		// verify no notification was sent (success case)
 		assert.Empty(t, notif.MakeErrorHTMLCalls())
+	})
+
+	t.Run("shutdown keeps the marker of a resumed run it interrupts", func(t *testing.T) {
+		saved := stopGrace
+		stopGrace = 200 * time.Millisecond
+		t.Cleanup(func() { stopGrace = saved })
+		marker := filepath.Join(t.TempDir(), "started")
+		resmr := &mocks.ResumerMock{
+			ListFunc: func() []resumer.Cmd {
+				return []resumer.Cmd{{Command: "touch " + marker + "; sleep 30", Fname: "resume.file"}}
+			},
+			OnFinishFunc: func(string) error { return nil },
+		}
+		svc := Scheduler{Stdout: bytes.NewBuffer(nil), Resumer: resmr, Repeater: repeater.New(&strategy.Once{}),
+			DeDup: NewDeDup(true), NotifyTimeout: time.Second}
+		ctx, cancel := context.WithCancel(t.Context())
+		svc.resumeInterrupted(ctx, 1)
+		require.Eventually(t, func() bool { _, err := os.Stat(marker); return err == nil }, 5*time.Second, 10*time.Millisecond)
+
+		cancel()
+		svc.waitRuns()
+		assert.Empty(t, resmr.OnFinishCalls(), "the interrupted command runs again after a restart")
+	})
+}
+
+func TestScheduler_executeCommandCanceled(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		do      func(cancel context.CancelFunc, fun func() error) error
+		wantErr error
+	}{
+		{name: "canceled before any attempt, repeater returns nil", command: "echo ok",
+			do: func(cancel context.CancelFunc, _ func() error) error { cancel(); return nil }, wantErr: errCanceled},
+		{name: "canceled while waiting to retry, repeater returns the last error", command: "exit 3",
+			do: func(cancel context.CancelFunc, fun func() error) error { err := fun(); cancel(); return err }, wantErr: errCanceled},
+		{name: "canceled after a successful attempt", command: "echo ok",
+			do: func(cancel context.CancelFunc, fun func() error) error { err := fun(); cancel(); return err }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			rptr := &mocks.RepeaterMock{DoFunc: func(_ context.Context, fun func() error, _ ...error) error { return tc.do(cancel, fun) }}
+			svc := Scheduler{}
+			_, err := svc.executeCommand(ctx, tc.command, bytes.NewBuffer(nil), rptr, nil)
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+
+	t.Run("a resumed run whose retry wait is canceled keeps its marker", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		resmr := &mocks.ResumerMock{
+			ListFunc:     func() []resumer.Cmd { return []resumer.Cmd{{Command: "exit 3", Fname: "resume.file"}} },
+			OnFinishFunc: func(string) error { return nil },
+		}
+		rptr := &mocks.RepeaterMock{DoFunc: func(_ context.Context, fun func() error, _ ...error) error {
+			err := fun()
+			cancel()
+			return err
+		}}
+		svc := Scheduler{Stdout: bytes.NewBuffer(nil), Resumer: resmr, Repeater: rptr, DeDup: NewDeDup(true),
+			NotifyTimeout: time.Second}
+		svc.resumeInterrupted(ctx, 1)
+		require.Eventually(t, func() bool { return len(rptr.DoCalls()) == 1 }, 5*time.Second, 10*time.Millisecond)
+		svc.waitRuns()
+		assert.Empty(t, resmr.OnFinishCalls())
 	})
 }
 

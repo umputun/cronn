@@ -36,6 +36,34 @@
 </dialog>
 {{end}}
 
+{{define "stop-form"}}
+<dialog class="run-dialog stop-dialog" data-job-id="{{.JobID}}" aria-labelledby="sf-title" hx-on:close="uiDialogClosed(this)">
+    <div class="runform">
+        <div class="rf-h">
+            <h4 id="sf-title">Stop “{{if .Name}}{{.Name}}{{else}}{{.Command}}{{end}}”?</h4>
+            <p>Ends the run started at {{.StartedAt.Format "15:04:05"}}. It is recorded as failed.</p>
+        </div>
+        <form id="stop-form" class="rf-b"
+              hx-post="{{url (printf "/api/jobs/%s/stop" .JobID)}}"
+              hx-target="#dialog-slot" hx-swap="innerHTML"
+              hx-on::send-error="this.querySelector('.net-error').hidden = false"
+              hx-on::timeout="this.querySelector('.net-error').hidden = false">
+            <input type="hidden" name="start" value="{{.Start}}">
+            <div class="out-cmd"><b>Command:</b> {{.Command}}</div>
+            <div class="dlg-err net-error" role="alert" hidden>Not sent: the server could not be reached.</div>
+        </form>
+        <div class="rf-f">
+            <form method="dialog"><button class="btn ghost">Cancel</button></form>
+            <button class="btn danger" type="submit" form="stop-form">■ Stop run</button>
+        </div>
+    </div>
+</dialog>
+{{end}}
+
+{{define "stop-accepted-oob"}}
+<div id="toasts" hx-swap-oob="innerHTML"><div class="t"><span class="dot fail" aria-hidden="true"></span>Stop requested: <b>{{template "job-name" .}}</b></div></div>
+{{end}}
+
 {{define "run-accepted-oob"}}
 <div id="toasts" hx-swap-oob="innerHTML"><div class="t"><span class="dot ok" aria-hidden="true"></span>Run request accepted: <b>{{template "job-name" .}}</b></div></div>
 {{end}}

@@ -135,6 +135,10 @@
         <b>Run {{.StartedAt.Format "15:04:05"}}</b>
         <span>{{if .ExecutedCommand}}manual{{else}}scheduled{{end}}</span>
         <span class="r live">running · {{humanDuration (since .StartedAt)}}</span>
+        {{if .Stoppable}}<button class="btn stop-btn sm" id="stop-run-{{.Start}}"
+                hx-get="{{url (printf "/api/jobs/%s/stop-form" .JobID)}}?start={{.Start}}"
+                hx-target="#dialog-slot" hx-swap="innerHTML"
+                aria-label="Stop this run">■ Stop</button>{{end}}
         {{template "wrap-toggle"}}
     </div>
     <div class="out-cmd"><b>{{.CommandLabel}}:</b> {{.Command}}</div>

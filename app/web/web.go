@@ -59,6 +59,7 @@ type Server struct {
 	passwordHash       string                          // bcrypt hash for basic auth
 	loginTTL           time.Duration                   // session TTL
 	manualTrigger      chan<- service.ManualJobRequest // channel to send manual trigger requests to scheduler
+	runStopper         RunStopper                      // stops runs in progress; nil disables stopping
 	csrfProtection     *http.CrossOriginProtection     // csrf protection for POST endpoints
 	sessions           map[string]session              // active user sessions
 	sessionsMu         sync.Mutex                      // protects sessions map
@@ -82,6 +83,13 @@ type JobsProvider interface {
 }
 
 //go:generate moq -out mocks/persistence.go -pkg mocks -skip-ensure -fmt goimports . Persistence
+//go:generate moq -out mocks/run_stopper.go -pkg mocks -skip-ensure -fmt goimports . RunStopper
+
+// RunStopper stops a job's run in progress, identified by the job command and the run's start time in unix
+// microseconds; it reports false when that run is not in progress
+type RunStopper interface {
+	StopRun(command string, start int64) bool
+}
 
 // Persistence defines storage operations for job management
 type Persistence interface {
@@ -134,6 +142,7 @@ type TemplateData struct {
 	Version            string                // application version (short form)
 	FullVersion        string                // full application version
 	ManualDisabled     bool                  // whether manual job execution is disabled
+	StopEnabled        bool                  // whether a running job can be stopped
 	CommandEditEnabled bool                  // whether command editing is enabled in manual run dialog
 	NeighborsEnabled   bool                  // whether neighbor instances selector is enabled
 }
@@ -146,6 +155,7 @@ func (s *Server) newTemplateData(r *http.Request) TemplateData {
 		SortMode:           s.getSortMode(r),
 		FilterMode:         s.getFilterMode(r),
 		ManualDisabled:     s.disableManual,
+		StopEnabled:        !s.disableManual && s.runStopper != nil,
 		CommandEditEnabled: !s.disableCommandEdit,
 		NeighborsEnabled:   s.neighborsURL != "",
 	}
@@ -172,6 +182,7 @@ type Config struct {
 	Hostname           string // hostname to display in UI
 	Version            string
 	ManualTrigger      chan<- service.ManualJobRequest // channel for sending manual trigger requests
+	RunStopper         RunStopper                      // stops runs in progress, nil disables stopping
 	JobsProvider       JobsProvider                    // interface for loading job specifications
 	PasswordHash       string                          // bcrypt hash for basic auth (empty to disable)
 	LoginTTL           time.Duration                   // session TTL, defaults to 24h if not set
@@ -279,6 +290,7 @@ func New(cfg Config) (*Server, error) {
 		passwordHash:       cfg.PasswordHash,
 		loginTTL:           loginTTL,
 		manualTrigger:      cfg.ManualTrigger,
+		runStopper:         cfg.RunStopper,
 		csrfProtection:     csrfProtection,
 		disableManual:      cfg.DisableManual,
 		disableCommandEdit: cfg.DisableCommandEdit,
@@ -402,6 +414,8 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("GET /jobs/{id}/run-form", s.handleRunForm)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 		api.HandleFunc("POST /jobs/{id}/toggle", s.handleToggleJob)
+		api.HandleFunc("GET /jobs/{id}/stop-form", s.handleStopForm)
+		api.HandleFunc("POST /jobs/{id}/stop", s.handleStopRun)
 		api.HandleFunc("GET /jobs/{id}/inspector", s.handleInspector)
 		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/output", s.handleRunOutput)
 		api.HandleFunc("GET /jobs/{id}/live-output", s.handleLiveOutput)

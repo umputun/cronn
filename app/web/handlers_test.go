@@ -1107,6 +1107,14 @@ func TestServer_stopButtons(t *testing.T) {
 		assert.Contains(t, inspector(s, id), `hx-get="/api/jobs/`+id+`/stop-form?start=`+strconv.FormatInt(start.UnixMicro(), 10)+`"`)
 	})
 
+	t.Run("no Stop without a stopper", func(t *testing.T) {
+		s := newHandlersTestServer(t, Config{})
+		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: start})
+		id := HashCommand("live cmd")
+		assert.NotContains(t, jobs(s), `id="stop-`)
+		assert.NotContains(t, inspector(s, id), "stop-form")
+	})
+
 	t.Run("no Stop when manual control is disabled", func(t *testing.T) {
 		s, id := newServer(t, Config{DisableManual: true})
 		assert.NotContains(t, jobs(s), `id="stop-`)

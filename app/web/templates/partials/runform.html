@@ -41,7 +41,7 @@
     <div class="runform">
         <div class="rf-h">
             <h4 id="sf-title">Stop “{{if .Name}}{{.Name}}{{else}}{{.Command}}{{end}}”?</h4>
-            <p>Ends the run started at {{.StartedAt.Format "15:04:05"}} and every process it started. It is recorded as failed.</p>
+            <p>Ends the run started at {{.StartedAt.Format "15:04:05"}}. It is recorded as failed.</p>
         </div>
         <form id="stop-form" class="rf-b"
               hx-post="{{url (printf "/api/jobs/%s/stop" .JobID)}}"

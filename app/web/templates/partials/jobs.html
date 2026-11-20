@@ -134,7 +134,7 @@
                 <div><span class="k">Next</span>{{if not .Enabled}}disabled{{else if .NextRun.IsZero}}—{{else}}in {{timeUntil .NextRun}}{{end}}</div>
             </td>
             <td class="c-act">
-                {{if and .IsRunning (not $.ManualDisabled)}}
+                {{if and .IsRunning $.StopEnabled}}
                 <button class="btn stop-btn" id="stop-{{.ID}}"
                         hx-get="{{url (printf "/api/jobs/%s/stop-form" .ID)}}"
                         hx-target="#dialog-slot" hx-swap="innerHTML"

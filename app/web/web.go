@@ -142,6 +142,7 @@ type TemplateData struct {
 	Version            string                // application version (short form)
 	FullVersion        string                // full application version
 	ManualDisabled     bool                  // whether manual job execution is disabled
+	StopEnabled        bool                  // whether a running job can be stopped
 	CommandEditEnabled bool                  // whether command editing is enabled in manual run dialog
 	NeighborsEnabled   bool                  // whether neighbor instances selector is enabled
 }
@@ -154,6 +155,7 @@ func (s *Server) newTemplateData(r *http.Request) TemplateData {
 		SortMode:           s.getSortMode(r),
 		FilterMode:         s.getFilterMode(r),
 		ManualDisabled:     s.disableManual,
+		StopEnabled:        !s.disableManual && s.runStopper != nil,
 		CommandEditEnabled: !s.disableCommandEdit,
 		NeighborsEnabled:   s.neighborsURL != "",
 	}

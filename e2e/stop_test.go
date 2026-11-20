@@ -123,7 +123,7 @@ func TestStop_StaleConfirmLeavesNoError(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := http.PostForm(baseURL+"/api/jobs/"+id+"/stop", url.Values{"start": {start}}) //nolint:noctx // test helper
 	require.NoError(t, err)
-	_ = resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 	requireStopped(t, id, started)
 

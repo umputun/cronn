@@ -79,6 +79,9 @@ type Scheduler struct {
 // errStopped is the cause of a run stopped on request, which records it as failed without a notification
 var errStopped = errors.New("stopped from the dashboard")
 
+// errCanceled marks a command cut short by cancellation, a stop or a shutdown, whatever its own exit status
+var errCanceled = errors.New("run canceled")
+
 // stopGrace is how long a stopped run's processes get after SIGTERM before SIGKILL
 var stopGrace = 5 * time.Second
 
@@ -304,7 +307,6 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	runCtx, cancelRun := context.WithCancelCause(ctx)
 	defer cancelRun(nil)
 	s.registerRun(r.Command, startTime, cancelRun)
-	defer s.unregisterRun(r.Command, startTime)
 	executedCommand := ""
 	if isManual {
 		executedCommand = cmd
@@ -324,8 +326,11 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	}
 
 	notifyOutput, err := s.executeCommand(runCtx, cmd, s.Stdout, rptr, webCapture)
-	// a stopped command may trap SIGTERM and exit 0, so the cause decides, not the exit status
+	// unregistered before the cause is read: a StopRun that reported success is then always recorded as a stop,
+	// and one arriving later finds no run. A stopped command may trap SIGTERM and exit 0, so the cause decides
+	s.unregisterRun(r.Command, startTime)
 	stopped := errors.Is(context.Cause(runCtx), errStopped)
+	interrupted := !stopped && errors.Is(err, errCanceled)
 	if stopped {
 		err = errStopped
 	}
@@ -358,6 +363,10 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 			return fmt.Errorf("failed to finish resumer for %s: %w", rfile, e)
 		}
 		return errStopped
+	}
+	if interrupted {
+		// a shutdown cut it short: its resume marker stays so --resume runs it again after a restart
+		return err
 	}
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
@@ -392,7 +401,7 @@ func (s *Scheduler) exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	if errors.Is(err, errStopped) {
+	if errors.Is(err, errStopped) || errors.Is(err, errCanceled) {
 		return -1
 	}
 	if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -475,9 +484,12 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 
 	notifyCapture := NewOutputCapture(s.NotifyMaxLogLines)
 
+	// recorded here because the repeater may hand back ctx.Err() in place of the attempt's own error
+	canceled := false
 	execErr := rptr.Do(ctx, func() error {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("failed to execute command %s: %w", command, err)
+		if ctx.Err() != nil {
+			canceled = true
+			return fmt.Errorf("failed to execute command %s: %w", command, errCanceled)
 		}
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
 		s.setProcessGroup(cmd)
@@ -497,8 +509,15 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
-		return s.runCommand(ctx, cmd, command)
+		err := s.runCommand(ctx, cmd, command)
+		if errors.Is(err, errCanceled) {
+			canceled = true
+		}
+		return err
 	})
+	if canceled || errors.Is(execErr, context.Canceled) {
+		execErr = fmt.Errorf("failed to execute command %s: %w", command, errCanceled)
+	}
 
 	notifyOutput = notifyCapture.GetOutput()
 	if execErr != nil {
@@ -514,17 +533,22 @@ func (s *Scheduler) runCommand(ctx context.Context, cmd *exec.Cmd, command strin
 		return fmt.Errorf("failed to execute command %s: %w", command, err)
 	}
 	done, watched := make(chan struct{}), make(chan struct{})
+	terminated := false
 	go func() {
 		defer close(watched)
 		select {
 		case <-done:
 		case <-ctx.Done():
+			terminated = true
 			s.terminate(cmd, stopGrace)
 		}
 	}()
 	err := cmd.Wait()
 	close(done)
 	<-watched
+	if terminated {
+		return fmt.Errorf("failed to execute command %s: %w", command, errCanceled)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to execute command %s: %w", command, err)
 	}
@@ -696,6 +720,9 @@ func (s *Scheduler) resumeInterrupted(ctx context.Context, concur int) {
 				}
 				defer s.runsWG.Done()
 				notifyOutput, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater, nil)
+				if errors.Is(err, errCanceled) {
+					return // a shutdown cut it short, so its marker stays for the next start
+				}
 				if err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}
 					ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)

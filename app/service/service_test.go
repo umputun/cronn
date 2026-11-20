@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -573,6 +574,35 @@ func TestScheduler_StopRun(t *testing.T) {
 		assert.False(t, h.svc.StopRun(spec.Command, req.StartTime.UnixMicro()), "a finished run")
 		assert.False(t, h.svc.StopRun(spec.Command, 1), "an unknown start")
 		assert.False(t, h.svc.StopRun("other", req.StartTime.UnixMicro()), "another command")
+	})
+
+	t.Run("shutdown keeps the marker of a command that traps TERM and exits 0", func(t *testing.T) {
+		h := newHarness()
+		ctx, cancel := context.WithCancel(t.Context())
+		req, done := run(ctx, h, "trap 'exit 0' TERM; echo ready; sleep 30 & wait", repeater.New(&strategy.Once{}))
+		require.Eventually(t, func() bool { return req.LiveOutput() == "ready" }, 5*time.Second, 10*time.Millisecond)
+		cancel()
+
+		require.ErrorIs(t, <-done, errCanceled)
+		assert.Empty(t, h.resumer.OnFinishCalls())
+		assert.Empty(t, h.notifier.SendCalls(), "an interrupted run notifies nobody")
+		assert.Equal(t, -1, h.handler.OnJobCompleteCalls()[0].Req.ExitCode)
+	})
+
+	t.Run("a stop arriving while a finished run notifies finds no run", func(t *testing.T) {
+		h := newHarness()
+		sending, release := make(chan struct{}), make(chan struct{})
+		h.notifier.SendFunc = func(context.Context, string, string) error {
+			close(sending)
+			<-release
+			return nil
+		}
+		req, done := run(t.Context(), h, "echo done", repeater.New(&strategy.Once{}))
+		<-sending
+		assert.False(t, h.svc.StopRun(spec.Command, req.StartTime.UnixMicro()), "the result is already decided")
+		close(release)
+		require.NoError(t, <-done)
+		assert.Equal(t, 0, h.handler.OnJobCompleteCalls()[0].Req.ExitCode)
 	})
 
 	t.Run("shutdown ends a run, keeps its resume marker and joins it", func(t *testing.T) {
@@ -2148,6 +2178,28 @@ func TestScheduler_resumeInterrupted(t *testing.T) {
 
 		// verify no notification was sent (success case)
 		assert.Empty(t, notif.MakeErrorHTMLCalls())
+	})
+
+	t.Run("shutdown keeps the marker of a resumed run it interrupts", func(t *testing.T) {
+		saved := stopGrace
+		stopGrace = 200 * time.Millisecond
+		t.Cleanup(func() { stopGrace = saved })
+		marker := filepath.Join(t.TempDir(), "started")
+		resmr := &mocks.ResumerMock{
+			ListFunc: func() []resumer.Cmd {
+				return []resumer.Cmd{{Command: "touch " + marker + "; sleep 30", Fname: "resume.file"}}
+			},
+			OnFinishFunc: func(string) error { return nil },
+		}
+		svc := Scheduler{Stdout: bytes.NewBuffer(nil), Resumer: resmr, Repeater: repeater.New(&strategy.Once{}),
+			DeDup: NewDeDup(true), NotifyTimeout: time.Second}
+		ctx, cancel := context.WithCancel(t.Context())
+		svc.resumeInterrupted(ctx, 1)
+		require.Eventually(t, func() bool { _, err := os.Stat(marker); return err == nil }, 5*time.Second, 10*time.Millisecond)
+
+		cancel()
+		svc.waitRuns()
+		assert.Empty(t, resmr.OnFinishCalls(), "the interrupted command runs again after a restart")
 	})
 }
 

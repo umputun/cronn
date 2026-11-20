@@ -177,6 +177,7 @@ func main() {
 	// initialize web server if enabled
 	var eventHandler service.JobEventHandler
 	var isJobDisabled func(string) bool
+	var webServer *web.Server
 	if opts.Web.Enabled {
 		baseURL := validateBaseURL(opts.Web.BaseURL)
 
@@ -201,21 +202,14 @@ func main() {
 			LogExecMaxHist:     opts.Log.ExecMaxHist,
 			NeighborsURL:       opts.Web.NeighborsURL,
 		}
-		webServer, err := web.New(cfg)
+		var err error
+		webServer, err = web.New(cfg)
 		if err != nil {
 			log.Printf("[ERROR] failed to create web server: %v", err)
 			os.Exit(1)
 		}
 		eventHandler = webServer // web.Server implements JobEventHandler
 		isJobDisabled = webServer.IsJobDisabled
-
-		// start web server in background
-		go func() {
-			if err := webServer.Run(ctx, opts.Web.Address); err != nil {
-				log.Printf("[ERROR] web server failed: %v", err)
-			}
-		}()
-		log.Printf("[INFO] web UI enabled on %s", opts.Web.Address)
 	}
 
 	*cronService = service.Scheduler{
@@ -246,6 +240,16 @@ func main() {
 	cronService.RepeaterDefaults.Duration = opts.Repeater.Duration
 	cronService.RepeaterDefaults.Factor = opts.Repeater.Factor
 	cronService.RepeaterDefaults.Jitter = opts.Repeater.Jitter
+
+	// served only once the scheduler is filled in, since a stop request reaches it
+	if webServer != nil {
+		go func() {
+			if err := webServer.Run(ctx, opts.Web.Address); err != nil {
+				log.Printf("[ERROR] web server failed: %v", err)
+			}
+		}()
+		log.Printf("[INFO] web UI enabled on %s", opts.Web.Address)
+	}
 
 	cronService.Do(ctx)
 }

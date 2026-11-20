@@ -12,6 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -66,7 +69,18 @@ type Scheduler struct {
 	IsJobDisabled   func(jobID string) bool // callback to check if a job is disabled via web UI
 	AltTemplate     bool                    // use alternative template format [[.YYYYMMDD]]
 	EODHour         int                     // end-of-day hour for EOD templates, 0 means midnight
+
+	runsMu     sync.Mutex
+	runs       map[string]context.CancelCauseFunc // runs in progress by command and start time
+	runsWG     sync.WaitGroup                     // scheduled, manual and resumed runs, joined at shutdown
+	runsClosed bool                               // set at shutdown, no new run starts after it
 }
+
+// errStopped is the cause of a run stopped on request, which records it as failed without a notification
+var errStopped = errors.New("stopped from the dashboard")
+
+// stopGrace is how long a stopped run's processes get after SIGTERM before SIGKILL
+var stopGrace = 5 * time.Second
 
 // ManualJobRequest represents a request to manually trigger a job
 type ManualJobRequest struct {
@@ -145,7 +159,7 @@ func (s *Scheduler) Do(ctx context.Context) {
 	if s.Stdout == nil {
 		s.Stdout = os.Stdout
 	}
-	s.resumeInterrupted(s.ResumeConcurrency)
+	s.resumeInterrupted(ctx, s.ResumeConcurrency)
 
 	if s.UpdatesEnabled {
 		log.Printf("[INFO] updater activated for %s", s.CrontabParser.String())
@@ -177,6 +191,59 @@ func (s *Scheduler) Do(ctx context.Context) {
 	<-ctx.Done()
 	log.Print("[DEBUG] terminate")
 	<-s.Stop().Done()
+	s.waitRuns()
+}
+
+// StopRun stops the run of command that started at start (unix microseconds). It reports false when no
+// such run is in progress, so a stale request never reaches a newer run of the same job.
+func (s *Scheduler) StopRun(command string, start int64) bool {
+	s.runsMu.Lock()
+	defer s.runsMu.Unlock()
+	cancel, ok := s.runs[s.runKey(command, start)]
+	if ok {
+		cancel(errStopped)
+	}
+	return ok
+}
+
+// trackRun counts a run for the shutdown join; it returns false once shutdown has begun
+func (s *Scheduler) trackRun() bool {
+	s.runsMu.Lock()
+	defer s.runsMu.Unlock()
+	if s.runsClosed {
+		return false
+	}
+	s.runsWG.Add(1)
+	return true
+}
+
+// waitRuns refuses new runs and waits for every tracked run to finish
+func (s *Scheduler) waitRuns() {
+	s.runsMu.Lock()
+	s.runsClosed = true
+	s.runsMu.Unlock()
+	s.runsWG.Wait()
+}
+
+// registerRun makes a run in progress stoppable by StopRun
+func (s *Scheduler) registerRun(command string, start time.Time, cancel context.CancelCauseFunc) {
+	s.runsMu.Lock()
+	defer s.runsMu.Unlock()
+	if s.runs == nil {
+		s.runs = make(map[string]context.CancelCauseFunc)
+	}
+	s.runs[s.runKey(command, start.UnixMicro())] = cancel
+}
+
+// unregisterRun removes a finished run from the ones StopRun can reach
+func (s *Scheduler) unregisterRun(command string, start time.Time) {
+	s.runsMu.Lock()
+	defer s.runsMu.Unlock()
+	delete(s.runs, s.runKey(command, start.UnixMicro()))
+}
+
+func (s *Scheduler) runKey(command string, start int64) string {
+	return command + "#" + strconv.FormatInt(start, 10)
 }
 
 // schedule makes new cron job from crontab.JobSpec and adds to cron
@@ -201,6 +268,11 @@ func (s *Scheduler) jobFunc(ctx context.Context, r crontab.JobSpec, sched Schedu
 // r.Command is used for job identity, commandToParse is what actually gets parsed and executed
 // isManual indicates whether this is a manual execution (from "Run Now" button)
 func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, commandToParse string, customTime *time.Time, rptr Repeater, isManual bool) error {
+	if !s.trackRun() {
+		return errors.New("scheduler is shutting down")
+	}
+	defer s.runsWG.Done()
+
 	// use custom time if provided, otherwise use current time
 	templateTime := time.Now()
 	if customTime != nil {
@@ -229,6 +301,10 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	// for manual runs: set executedCommand to the command that will be executed (after template parsing)
 	// for scheduled runs: set executedCommand to empty string
 	startTime := time.Now()
+	runCtx, cancelRun := context.WithCancelCause(ctx)
+	defer cancelRun(nil)
+	s.registerRun(r.Command, startTime, cancelRun)
+	defer s.unregisterRun(r.Command, startTime)
 	executedCommand := ""
 	if isManual {
 		executedCommand = cmd
@@ -247,33 +323,41 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 		s.JobEventHandler.OnJobStart(start)
 	}
 
-	notifyOutput, err := s.executeCommand(ctx, cmd, s.Stdout, rptr, webCapture)
+	notifyOutput, err := s.executeCommand(runCtx, cmd, s.Stdout, rptr, webCapture)
+	// a stopped command may trap SIGTERM and exit 0, so the cause decides, not the exit status
+	stopped := errors.Is(context.Cause(runCtx), errStopped)
+	if stopped {
+		err = errStopped
+	}
 	webOutput := ""
 	if webCapture != nil {
 		webOutput = webCapture.GetOutput()
+	}
+	if stopped {
+		webOutput = strings.TrimLeft(webOutput+"\n"+errStopped.Error(), "\n")
 	}
 
 	// notify job complete
 	endTime := time.Now()
 	if s.JobEventHandler != nil {
-		exitCode := 0
-		if err != nil {
-			if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
-				exitCode = exitError.ExitCode()
-			} else {
-				exitCode = 1 // generic error for non-exec errors
-			}
-		}
 		s.JobEventHandler.OnJobComplete(request.OnJobComplete{
 			Command:         r.Command,
 			ExecutedCommand: executedCommand,
 			Schedule:        r.Spec,
 			StartTime:       startTime,
 			EndTime:         endTime,
-			ExitCode:        exitCode,
+			ExitCode:        s.exitCode(err),
 			Output:          webOutput, // use web-specific output
 			Err:             err,
 		})
+	}
+
+	if stopped {
+		// a stopped run is not replayed by --resume and notifies nobody: whoever stopped it knows
+		if e := s.Resumer.OnFinish(rfile); e != nil {
+			return fmt.Errorf("failed to finish resumer for %s: %w", rfile, e)
+		}
+		return errStopped
 	}
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, s.NotifyTimeout)
@@ -300,6 +384,21 @@ func (s *Scheduler) runJobWithCommand(ctx context.Context, r crontab.JobSpec, co
 	}
 
 	return nil
+}
+
+// exitCode is the exit code recorded for a finished run: the command's own, -1 for a stopped run, 1 for a
+// failure that is not an exit status
+func (s *Scheduler) exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if errors.Is(err, errStopped) {
+		return -1
+	}
+	if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
+		return exitError.ExitCode()
+	}
+	return 1
 }
 
 // jobFuncWithEditedCommand creates job function with edited command for manual execution
@@ -367,13 +466,21 @@ func (s *Scheduler) newWebCapture() *OutputCapture {
 func (s *Scheduler) executeCommand(ctx context.Context, command string, logWriter io.Writer, rptr Repeater,
 	webCapture *OutputCapture) (notifyOutput string, err error) {
 	if s.Jitter > 0 {
-		time.Sleep(time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds())))) //nolint jitter up to jitter duration
+		jitter := time.Millisecond * time.Duration(rand.Intn(int(s.Jitter.Milliseconds()))) //nolint jitter up to jitter duration
+		select {
+		case <-time.After(jitter):
+		case <-ctx.Done():
+		}
 	}
 
 	notifyCapture := NewOutputCapture(s.NotifyMaxLogLines)
 
 	execErr := rptr.Do(ctx, func() error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("failed to execute command %s: %w", command, err)
+		}
 		cmd := exec.Command("sh", "-c", command) // nolint gosec
+		s.setProcessGroup(cmd)
 
 		// build multi-writer with both captures
 		writers := []io.Writer{notifyCapture}
@@ -390,10 +497,7 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 
 		cmd.Stdout = logWithErr
 		cmd.Stderr = logWithErr
-		if e := cmd.Run(); e != nil {
-			return fmt.Errorf("failed to execute command %s: %w", command, e)
-		}
-		return nil
+		return s.runCommand(ctx, cmd, command)
 	})
 
 	notifyOutput = notifyCapture.GetOutput()
@@ -401,6 +505,30 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 		return notifyOutput, fmt.Errorf("command execution failed: %w", execErr)
 	}
 	return notifyOutput, nil
+}
+
+// runCommand runs cmd for command and terminates its process group once ctx is canceled. The watch lasts
+// until Wait returns: a child holding the output pipes keeps Wait blocked after the shell itself has exited.
+func (s *Scheduler) runCommand(ctx context.Context, cmd *exec.Cmd, command string) error {
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to execute command %s: %w", command, err)
+	}
+	done, watched := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(watched)
+		select {
+		case <-done:
+		case <-ctx.Done():
+			s.terminate(cmd, stopGrace)
+		}
+	}()
+	err := cmd.Wait()
+	close(done)
+	<-watched
+	if err != nil {
+		return fmt.Errorf("failed to execute command %s: %w", command, err)
+	}
+	return nil
 }
 
 func (s *Scheduler) notify(ctx context.Context, r crontab.JobSpec, errMsg string) error {
@@ -552,17 +680,21 @@ func (s *Scheduler) jobIDFromCommand(cmd string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func (s *Scheduler) resumeInterrupted(concur int) {
+func (s *Scheduler) resumeInterrupted(ctx context.Context, concur int) {
 	cmds := s.Resumer.List()
 	if len(cmds) > 0 {
 		log.Printf("[INFO] interrupted commands detected - %+v", cmds)
 	}
 
 	go func() {
-		gr := syncs.NewSizedGroup(concur)
+		gr := syncs.NewSizedGroup(concur, syncs.Context(ctx))
 		for _, cmd := range cmds {
 			time.Sleep(time.Millisecond * 100) // keep some time between commands and prevent reordering if no concurrency
 			gr.Go(func(ctx context.Context) {
+				if !s.trackRun() {
+					return
+				}
+				defer s.runsWG.Done()
 				notifyOutput, err := s.executeCommand(ctx, cmd.Command, s.Stdout, s.Repeater, nil)
 				if err != nil {
 					r := crontab.JobSpec{Spec: "auto-resume", Command: cmd.Command}

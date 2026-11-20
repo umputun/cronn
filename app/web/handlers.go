@@ -52,6 +52,7 @@ type liveOutputData struct {
 	Command      string
 	CommandLabel string
 	Capture      bool // false when output capture is disabled
+	Stoppable    bool // false when manual control is disabled
 	Output       string
 }
 
@@ -72,6 +73,15 @@ type runForm struct {
 	HasTemplates    bool
 	CommandEditable bool
 	Error           string
+}
+
+// stopForm is the template data of the stop confirmation dialog, bound to one run by its start time
+type stopForm struct {
+	JobID     string
+	Name      string
+	Command   string
+	Start     int64
+	StartedAt time.Time
 }
 
 // filterTab is one filter tab of the dashboard
@@ -296,6 +306,87 @@ func (s *Server) newRunForm(job persistence.JobInfo, command, date string) runFo
 		HasTemplates:    strings.Contains(job.Command, "{{") || strings.Contains(job.Command, "[["),
 		CommandEditable: !s.disableCommandEdit,
 	}
+}
+
+// handleStopForm renders the stop confirmation for the run that started at start, or for the job's newest
+// run in progress when start is absent. A run that has already ended closes the dialog and refreshes the table.
+func (s *Server) handleStopForm(w http.ResponseWriter, r *http.Request) {
+	if s.disableManual || s.runStopper == nil {
+		http.Error(w, "Stopping runs is disabled", http.StatusForbidden)
+		return
+	}
+	job, ok := s.jobByID(r.PathValue("id"))
+	if !ok {
+		s.writeStopGone(w)
+		return
+	}
+	active := s.activeRuns(job.ID)
+	if raw := r.FormValue("start"); raw != "" {
+		start, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid run start", http.StatusBadRequest)
+			return
+		}
+		active = slices.DeleteFunc(active, func(a activeRun) bool { return a.StartedAt.UnixMicro() != start })
+	}
+	if len(active) == 0 {
+		s.writeStopGone(w)
+		return
+	}
+	run := active[0]
+	command := job.Command
+	if run.ExecutedCommand != "" {
+		command = run.ExecutedCommand
+	}
+	s.render(w, "partials/jobs.html", "stop-form", stopForm{JobID: job.ID, Name: job.Name, Command: command,
+		Start: run.StartedAt.UnixMicro(), StartedAt: run.StartedAt})
+}
+
+// handleStopRun stops the run that started at the posted start time. htmx requests get an empty dialog slot,
+// with a toast when the run was stopped; other callers get 202, or 404 when that run is not in progress
+func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
+	if s.disableManual || s.runStopper == nil {
+		http.Error(w, "Stopping runs is disabled", http.StatusForbidden)
+		return
+	}
+	start, err := strconv.ParseInt(r.FormValue("start"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid run start", http.StatusBadRequest)
+		return
+	}
+	htmx := r.Header.Get("HX-Request") == "true"
+	job, ok := s.jobByID(r.PathValue("id"))
+	stopped := ok && s.runStopper.StopRun(job.Command, start)
+	if stopped {
+		log.Printf("[INFO] stop requested for job %s, run started %s", job.ID, time.UnixMicro(start).Format(time.RFC3339))
+	}
+	if !htmx {
+		if !stopped {
+			http.Error(w, "Run not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		if _, err := w.Write([]byte("Stop requested")); err != nil {
+			log.Printf("[ERROR] failed to write response: %v", err)
+		}
+		return
+	}
+	if !stopped {
+		s.writeStopGone(w)
+		return
+	}
+	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	tmpl := s.templates["partials/jobs.html"]
+	if err := tmpl.ExecuteTemplate(w, "stop-accepted-oob", job); err != nil {
+		log.Printf("[ERROR] failed to render stop toast: %v", err)
+	}
+}
+
+// writeStopGone empties the dialog slot and refreshes the table when the run to stop is no longer in progress
+func (s *Server) writeStopGone(w http.ResponseWriter) {
+	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleRunJob handles manual job trigger requests. htmx requests get the run dialog back (with the error on
@@ -571,7 +662,7 @@ func (s *Server) handleLiveOutput(w http.ResponseWriter, r *http.Request) {
 // newLiveOutput pairs a run in progress with its command and the output it has produced so far
 func (s *Server) newLiveOutput(job persistence.JobInfo, run activeRun) liveOutputData {
 	data := liveOutputData{liveRunView: run.view(), JobID: job.ID, Command: job.Command,
-		CommandLabel: "Job command", Capture: run.Output != nil}
+		CommandLabel: "Job command", Capture: run.Output != nil, Stoppable: !s.disableManual && s.runStopper != nil}
 	if run.ExecutedCommand != "" {
 		data.Command, data.CommandLabel = run.ExecutedCommand, "Executed"
 	}

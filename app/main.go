@@ -137,7 +137,7 @@ func main() {
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	hupCh := signals(cancel) // handle SIGQUIT and SIGTERM
+	hupCh := signals(cancel) // handle SIGQUIT, SIGTERM and SIGINT
 
 	updateInterval := time.Duration(math.MaxInt64) // very long interval, effectively disabling automatic refresh
 	if opts.UpdateEnable && opts.UpdateInterval > 0 {
@@ -171,6 +171,9 @@ func main() {
 		opts.Log.ExecMaxHist = 0
 	}
 
+	// created ahead of the web server, which stops runs through it, and filled in once that server exists
+	cronService := &service.Scheduler{}
+
 	// initialize web server if enabled
 	var eventHandler service.JobEventHandler
 	var isJobDisabled func(string) bool
@@ -187,6 +190,7 @@ func main() {
 			Hostname:           hostname,
 			Version:            revision,
 			ManualTrigger:      manualTrigger,
+			RunStopper:         cronService,
 			JobsProvider:       crontabParser,
 			PasswordHash:       opts.Web.PasswordHash,
 			LoginTTL:           opts.Web.LoginTTL,
@@ -214,7 +218,7 @@ func main() {
 		log.Printf("[INFO] web UI enabled on %s", opts.Web.Address)
 	}
 
-	cronService := service.Scheduler{
+	*cronService = service.Scheduler{
 		Cron:              cron.New(),
 		Resumer:           resumer.New(opts.Resume, opts.Resume != ""),
 		ResumeConcurrency: opts.ResumeConcur,
@@ -371,12 +375,13 @@ func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
 				fmt.Println(string(stacktrace[:length]))
 			case syscall.SIGHUP: // reload crontab file on SIGHUP
 				hupCh <- struct{}{}
-			case syscall.SIGTERM: // terminate on SIGTERM
+			case syscall.SIGTERM, syscall.SIGINT: // terminate; jobs run in their own process groups, so a terminal's
+				// SIGINT does not reach them and the scheduler stops them instead
 				cancel()
 			}
 		}
 	}()
-	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(sigChan, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 	return hupCh
 }
 

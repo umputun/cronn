@@ -145,6 +145,9 @@ table.jobs { width: 100%; border-collapse: collapse; }
 .btn.ghost { background: transparent; color: var(--muted); }
 .btn:disabled { opacity: .4; }
 .btn.icon { padding: 5px 8px; color: var(--muted); background: transparent; }
+.btn.danger { background: var(--fail); color: #fff; border-color: var(--fail); }
+.btn.stop-btn { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 45%, transparent); }
+.btn.sm { padding: 2px 8px; font-size: 11.5px; }
 
 .zero { padding: 44px 20px; text-align: center; color: var(--muted); }
 .zero b { display: block; color: var(--text); font-size: 15px; margin-bottom: 6px; }

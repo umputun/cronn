@@ -506,11 +506,7 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 		} else {
 			writers = append(writers, logWriter)
 		}
-		logWithErr := io.MultiWriter(writers...)
-
-		cmd.Stdout = logWithErr
-		cmd.Stderr = logWithErr
-		err := s.runCommand(ctx, cmd, command)
+		err := s.runCommand(ctx, cmd, io.MultiWriter(writers...), command)
 		succeeded = err == nil
 		return err
 	})
@@ -525,24 +521,49 @@ func (s *Scheduler) executeCommand(ctx context.Context, command string, logWrite
 	return notifyOutput, nil
 }
 
-// runCommand runs cmd for command and terminates its process group once ctx is canceled. The watch lasts
-// until Wait returns: a child holding the output pipes keeps Wait blocked after the shell itself has exited.
-func (s *Scheduler) runCommand(ctx context.Context, cmd *exec.Cmd, command string) error {
-	if err := cmd.Start(); err != nil {
+// runCommand runs cmd for command with its output copied to out, and terminates its process group once ctx
+// is canceled. Like exec's own pipes, the run lasts until the shell exits and every holder of the output closes
+// it. A canceled run stops reading stopGrace after the group is gone: a process that left the group (setsid,
+// GNU timeout) gets no signal and can hold the output open indefinitely.
+func (s *Scheduler) runCommand(ctx context.Context, cmd *exec.Cmd, out io.Writer, command string) error {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("failed to create output pipe for %s: %w", command, err)
+	}
+	cmd.Stdout, cmd.Stderr = pw, pw
+	err = cmd.Start()
+	_ = pw.Close() // the command holds its own copy, so the read end reaches EOF once all holders close it
+	if err != nil {
+		_ = pr.Close()
 		return fmt.Errorf("failed to execute command %s: %w", command, err)
 	}
+	var copyErr error
+	copied := make(chan struct{})
+	go func() {
+		defer close(copied)
+		_, copyErr = io.Copy(out, pr)
+		_ = pr.Close() // a writer gets EPIPE instead of blocking on a full pipe once copying stopped
+	}()
+
 	done, watched := make(chan struct{}), make(chan struct{})
 	terminated := false
 	go func() {
 		defer close(watched)
 		select {
 		case <-done:
+			return
 		case <-ctx.Done():
-			terminated = true
-			s.terminate(cmd, stopGrace)
+		}
+		terminated = true
+		s.terminate(cmd, stopGrace)
+		select {
+		case <-copied:
+		case <-time.After(stopGrace):
+			_ = pr.Close()
 		}
 	}()
-	err := cmd.Wait()
+	err = cmd.Wait()
+	<-copied
 	close(done)
 	<-watched
 	if terminated {
@@ -550,6 +571,9 @@ func (s *Scheduler) runCommand(ctx context.Context, cmd *exec.Cmd, command strin
 	}
 	if err != nil {
 		return fmt.Errorf("failed to execute command %s: %w", command, err)
+	}
+	if copyErr != nil {
+		return fmt.Errorf("failed to copy output of %s: %w", command, copyErr)
 	}
 	return nil
 }

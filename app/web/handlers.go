@@ -321,19 +321,22 @@ func (s *Server) handleStopForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active := s.activeRuns(job.ID)
+	run, found := activeRun{}, len(active) > 0
+	if found {
+		run = active[0]
+	}
 	if raw := r.FormValue("start"); raw != "" {
 		start, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			http.Error(w, "Invalid run start", http.StatusBadRequest)
 			return
 		}
-		active = slices.DeleteFunc(active, func(a activeRun) bool { return a.StartedAt.UnixMicro() != start })
+		run, found = s.activeRunAt(job.ID, start)
 	}
-	if len(active) == 0 {
+	if !found {
 		s.writeStopGone(w)
 		return
 	}
-	run := active[0]
 	command := job.Command
 	if run.ExecutedCommand != "" {
 		command = run.ExecutedCommand

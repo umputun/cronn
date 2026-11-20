@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"os"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,4 +111,19 @@ func Test_resolveHostname(t *testing.T) {
 	exp, err := os.Hostname()
 	require.NoError(t, err)
 	assert.Equal(t, exp, resolveHostname(""))
+}
+
+func TestSignals_TerminateAfterUnreadHup(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	signals(cancel)
+	for range 2 {
+		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGHUP))
+	}
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGTERM))
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGTERM after an unread SIGHUP did not cancel")
+	}
 }

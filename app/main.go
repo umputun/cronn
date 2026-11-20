@@ -369,7 +369,7 @@ func setupLogs() io.Writer {
 
 func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
 	sigChan := make(chan os.Signal, 1)
-	hupCh = make(chan struct{})
+	hupCh = make(chan struct{}, 1)
 	go func() {
 		stacktrace := make([]byte, 8192)
 		for sig := range sigChan {
@@ -378,7 +378,11 @@ func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
 				length := runtime.Stack(stacktrace, true)
 				fmt.Println(string(stacktrace[:length]))
 			case syscall.SIGHUP: // reload crontab file on SIGHUP
-				hupCh <- struct{}{}
+				// nothing reads hupCh without --update, and a blocked send would leave SIGTERM and SIGINT unhandled
+				select {
+				case hupCh <- struct{}{}:
+				default:
+				}
 			case syscall.SIGTERM, syscall.SIGINT: // terminate; jobs run in their own process groups, so a terminal's
 				// SIGINT does not reach them and the scheduler stops them instead
 				cancel()

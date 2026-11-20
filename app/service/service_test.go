@@ -611,6 +611,7 @@ func TestScheduler_StopRun(t *testing.T) {
 		_, done := run(ctx, h, "sleep 30", repeater.New(&strategy.Once{}))
 		cancel()
 		h.svc.waitRuns()
+		require.Len(t, h.handler.OnJobCompleteCalls(), 1, "waitRuns returned before the run ended")
 
 		err := <-done
 		require.Error(t, err)

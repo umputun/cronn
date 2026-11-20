@@ -368,7 +368,7 @@ func setupLogs() io.Writer {
 }
 
 func signals(cancel context.CancelFunc) (hupCh chan struct{}) {
-	sigChan := make(chan os.Signal, 1)
+	sigChan := make(chan os.Signal, 4) // one slot per notified signal, so a pending one never drops another
 	hupCh = make(chan struct{}, 1)
 	go func() {
 		stacktrace := make([]byte, 8192)

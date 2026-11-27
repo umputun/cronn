@@ -490,6 +490,16 @@ func TestServer_handleJump(t *testing.T) {
 		assert.Less(t, strings.Index(body, `data-job-id="ok"`), strings.Index(body, `data-job-id="fail"`))
 	})
 
+	t.Run("only a job that can start carries its run confirmation", func(t *testing.T) {
+		body := jump("q=")
+		assert.Contains(t, body, `data-job-id="ok"
+   data-confirm="/api/jobs/ok/run-confirm"`)
+		for _, id := range []string{"off", "run"} {
+			assert.Contains(t, body, `data-job-id="`+id+`"
+   >`, id)
+		}
+	})
+
 	t.Run("links carry the list state", func(t *testing.T) {
 		body := jump("q=sync&filter=failed&sort=lastrun&rev=1&search=a")
 		assert.Contains(t, body, `href="/jobs/ok?filter=failed&amp;rev=1&amp;search=a&amp;sort=lastrun"`)

@@ -214,6 +214,34 @@ func TestJobPage_BarSelectionSurvivesPollAndKeepsEditedCommand(t *testing.T) {
 	assert.Equal(t, "Run edited", pageText(t, page, "#run-now .lbl"), "the re-rendered button keeps the edited label")
 }
 
+func TestJobPage_RunClickDuringRunsReloadShowsThatRun(t *testing.T) {
+	// the runs list reload replaced the clicked row in flight, and htmx dropped the row's output
+	page := newPageSized(t, 1440, 900)
+	var thrown []string
+	page.OnPageError(func(e error) { thrown = append(thrown, e.Error()) })
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobFailing)
+	setEnabled(t, id, true)
+	runJob(t, id)
+	runJob(t, id)
+	gotoJob(t, page, id, "")
+
+	rows := page.Locator("#jruns .jr")
+	newer, err := rows.Nth(0).GetAttribute("data-run")
+	require.NoError(t, err)
+	older, err := rows.Nth(1).GetAttribute("data-run")
+	require.NoError(t, err)
+	delayRoute(t, page, regexp.MustCompile(`/api/jobs/[^/]+/runs\?`), 300*time.Millisecond)
+	clickAndAwait(t, page, rows.Nth(1), outputRe)
+	require.Eventually(t, func() bool { return selectedRun(page) == older }, 5*time.Second, 50*time.Millisecond)
+
+	delayRoute(t, page, outputRe, 1500*time.Millisecond)
+	require.NoError(t, rows.Nth(0).Click())
+	require.Eventually(t, func() bool { return selectedRun(page) == newer }, 5*time.Second, 50*time.Millisecond)
+	waitVisible(t, page.Locator(`#jruns .jr.sel[data-run="`+newer+`"]`))
+	assert.Empty(t, thrown, "htmx threw on the answer to a replaced row")
+}
+
 func TestJobPage_HeldBarClickActsAfterPoll(t *testing.T) {
 	// a poll that replaced the bar between press and release swallowed the click
 	page := newPageSized(t, 1440, 900)

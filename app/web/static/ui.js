@@ -1,6 +1,6 @@
 // browser behaviour htmx has no attribute for: holding polls while a button is pressed, the shared blink
-// phase, dialogs and focus, live log scrolling, tooltips, the clipboard, edited-command marking, menus, and
-// marking a failed poll
+// phase, dialogs and focus, live log scrolling, tooltips, the clipboard, edited-command marking, menus,
+// marking a failed poll, and the keyboard map
 
 // a click needs press and release on the same element, and htmx cannot defer a swap, so every poll filter
 // reads uiHeld and skips its tick while the primary button is down. htmx looks filter symbols up on window
@@ -28,16 +28,20 @@ document.addEventListener('pointerdown', function () {
 
 // uiDialogSwapped opens a dialog swapped into the slot and remembers what opened it. It runs after settle
 // because htmx binds the dialog's hx-on:close only then, and a dialog closed before that stays in the slot.
-// A response that empties the slot (stop accepted, run gone) returns focus to the opener
-function uiDialogSwapped(slot) {
+// A response that empties the slot (stop accepted, run gone) returns focus to the opener. The opener is
+// the request's own element (a form's submit button), since Safari does not focus a clicked button
+function uiDialogSwapped(slot, evt) {
     const dlg = slot.querySelector('dialog');
     if (!dlg) {
         uiRestoreFocus(slot.dataset.opener);
         slot.dataset.opener = '';
         return;
     }
-    if (!slot.dataset.opener && document.activeElement && document.activeElement.id) {
-        slot.dataset.opener = document.activeElement.id;
+    if (!slot.dataset.opener) {
+        const cfg = evt && evt.detail && evt.detail.requestConfig;
+        const src = cfg && ((cfg.triggeringEvent && cfg.triggeringEvent.submitter) || cfg.elt);
+        const opener = src && src.id ? src : document.activeElement;
+        if (opener && opener.id) slot.dataset.opener = opener.id;
     }
     if (!dlg.open) dlg.showModal();
 }
@@ -170,3 +174,155 @@ function uiPollDone(container, evt) {
     const app = container.closest('.app');
     if (app) app.classList.toggle('poll-failed', !evt.detail.successful);
 }
+
+// the keyboard map: each key focuses and clicks the element the mouse would use, so a key sends the same
+// request a click does. The index cursor row is kept by job id because polls replace the rows
+let uiCursor = '';
+let uiOpenFirst = false;
+
+function uiClick(el) {
+    if (!el) return;
+    el.focus();
+    el.click();
+}
+
+function uiRows() {
+    return Array.from(document.querySelectorAll('#rows .it'));
+}
+
+function uiCursorRow() {
+    return uiRows().find(function (row) { return row.dataset.jobId === uiCursor; });
+}
+
+function uiMarkCursor() {
+    uiRows().forEach(function (row) { row.classList.toggle('cur', row.dataset.jobId === uiCursor); });
+}
+
+// uiMoveCursor moves the index cursor by step rows, starting at either end
+function uiMoveCursor(step) {
+    const rows = uiRows();
+    if (!rows.length) return;
+    const at = rows.findIndex(function (row) { return row.dataset.jobId === uiCursor; });
+    const next = at < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, at + step));
+    uiCursor = rows[next].dataset.jobId;
+    uiMarkCursor();
+    rows[next].scrollIntoView({block: 'nearest'});
+}
+
+// uiRunStep selects the newer (-1) or older (1) run next to the one the output shows; the output carries the
+// selection, the runs list highlight follows it a request later
+function uiRunStep(step) {
+    const runs = Array.from(document.querySelectorAll('#jruns .jr'));
+    const shown = document.querySelector('#joutput [name="selected-run"]');
+    let at = shown ? runs.findIndex(function (run) { return run.dataset.run === shown.value; }) : -1;
+    if (at < 0) at = step > 0 ? -1 : runs.length;
+    uiClick(runs[at + step]);
+}
+
+// uiJumpMove moves the jump list cursor by step and returns the item under it
+function uiJumpMove(step) {
+    const items = Array.from(document.querySelectorAll('#jdrop a.ji'));
+    if (!items.length) return null;
+    let at = items.findIndex(function (item) { return item.classList.contains('cur'); });
+    at = at < 0 ? 0 : Math.max(0, Math.min(items.length - 1, at + step));
+    items.forEach(function (item, n) { item.classList.toggle('cur', n === at); });
+    items[at].scrollIntoView({block: 'nearest'});
+    return items[at];
+}
+
+// uiJumpConfirm opens the run confirmation of a jump list job, carrying the list state like a Run click
+function uiJumpConfirm(item) {
+    if (!item.dataset.confirm) return;
+    const values = {};
+    ['filter-mode', 'sort-mode', 'sort-rev', 'list-search'].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) values[el.name] = el.value;
+    });
+    htmx.ajax('POST', item.dataset.confirm, {target: '#dialog-slot', swap: 'innerHTML', values: values});
+}
+
+function uiShowKeys() {
+    document.getElementById('keys-dialog').showModal();
+}
+
+document.addEventListener('htmx:afterSettle', function (evt) {
+    const id = evt.detail.target.id;
+    if (id === 'jdrop') uiJumpMove(0);
+    if (id !== 'rows') return;
+    uiMarkCursor();
+    if (!uiOpenFirst) return;
+    uiOpenFirst = false;
+    const first = document.querySelector('#rows .it .nm');
+    if (first) first.click();
+});
+
+// uiFieldKey handles the keys a text field gives the map: Esc leaves the field, Enter in the index search
+// opens the first match once the filtered rows arrive, and the jump field drives its list
+function uiFieldKey(evt) {
+    const field = evt.target;
+    const jump = field.id === 'search' && document.getElementById('jdrop');
+    if (jump && (evt.key === 'ArrowDown' || evt.key === 'ArrowUp')) {
+        evt.preventDefault();
+        uiJumpMove(evt.key === 'ArrowDown' ? 1 : -1);
+        return;
+    }
+    if (jump && evt.key === 'Enter') {
+        evt.preventDefault();
+        const item = document.querySelector('#jdrop a.ji.cur') || document.querySelector('#jdrop a.ji');
+        if (!item) return;
+        if (evt.shiftKey) uiJumpConfirm(item);
+        else item.click();
+        return;
+    }
+    if (field.id === 'search' && evt.key === 'Enter') {
+        evt.preventDefault();
+        uiOpenFirst = true;
+        htmx.trigger(field, 'search');
+        return;
+    }
+    // a filled index search keeps the browser's own Esc, which clears it; Esc on an empty one leaves it
+    if (evt.key === 'Escape' && (jump || field.id !== 'search' || !field.value)) field.blur();
+}
+
+const uiKeys = {
+    '/': function () { uiClick(document.getElementById('search')); },
+    j: function (onJob) { if (onJob) uiClick(document.getElementById('next-job')); else uiMoveCursor(1); },
+    k: function (onJob) { if (onJob) uiClick(document.getElementById('prev-job')); else uiMoveCursor(-1); },
+    Enter: function (onJob) {
+        const row = !onJob && uiCursorRow();
+        if (row) row.querySelector('.nm').click();
+    },
+    r: function (onJob) {
+        if (onJob) uiClick(document.getElementById('run-now'));
+        else if (uiCursorRow()) uiClick(document.getElementById('run-' + uiCursor));
+    },
+    '[': function (onJob) { if (onJob) uiRunStep(-1); },
+    ']': function (onJob) { if (onJob) uiRunStep(1); },
+    E: function (onJob) { if (onJob) uiClick(document.querySelector('#facts .sw')); },
+    Escape: function (onJob) { if (onJob) document.getElementById('back-link').click(); },
+    t: function () { uiClick(document.getElementById('theme-toggle')); },
+    '?': uiShowKeys,
+};
+
+// capture phase, so Esc with a menu open is left to the menu listener alone
+document.addEventListener('keydown', function (evt) {
+    if (document.querySelector('dialog[open]')) return;
+    if ((evt.metaKey || evt.ctrlKey) && !evt.altKey && evt.key.toLowerCase() === 'k') {
+        evt.preventDefault();
+        uiKeys['/']();
+        return;
+    }
+    if (evt.metaKey || evt.ctrlKey || evt.altKey) return;
+    const target = evt.target;
+    if (target.matches('input:not([type="checkbox"]), textarea, select')) {
+        uiFieldKey(evt);
+        return;
+    }
+    if (evt.key === 'Escape' && document.querySelector('details.menu[open]')) return;
+    if (evt.key === 'Enter' && target.closest('a, button, summary')) return;
+    const key = evt.key === 'E' && !evt.shiftKey ? '' : evt.key;
+    const act = uiKeys[key];
+    if (!act) return;
+    evt.preventDefault();
+    act(!!document.getElementById('jp'));
+}, true);

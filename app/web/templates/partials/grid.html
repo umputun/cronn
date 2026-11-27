@@ -40,7 +40,8 @@
 
 {{define "jump-list"}}
 {{range .}}
-<a class="ji" href="{{.Link}}" tabindex="0" data-job-id="{{.Job.ID}}">
+<a class="ji" href="{{.Link}}" tabindex="0" data-job-id="{{.Job.ID}}"
+   {{if and .Job.Enabled (not .Job.IsRunning)}}data-confirm="{{url (printf "/api/jobs/%s/run-confirm" .Job.ID)}}"{{end}}>
     <span class="dot {{template "job-dot" .Job}}" aria-hidden="true"></span>
     <span class="t">{{template "job-name" .Job}}</span>
     <span class="k">{{template "last-line" .Job}}</span>

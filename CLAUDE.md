@@ -57,46 +57,55 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 
 ## Web UI Architecture
 
-### Template System
+### Pages and Templates
+- Two pages, no hx-boost: the index (`GET /{$}`, `index.html`) and a job page (`GET /jobs/{id}`, `job.html`, 404 page for an unknown id). Each is its own template set: `layout.html` + the page + `partials/*.html`; `s.templates` keys are `index`, `job`, `partials` (fragments for htmx answers) and `login`
 - Uses `html/template` with `embed` for static files
 - **CRITICAL**: Templates and static files embedded at compile time - **must rebuild after any changes**
-- Template helper functions are pure (no dependencies): `humanDuration`, `timeUntil`, `since`, `ago`, `runDuration`, `clock`, `deref`; `describeSchedule` renders cron specs in plain words via `lnquy/cron` (`app/web/schedule.go`)
-- Partials: `jobs.html` (table, tabs, search, alert), `inspector.html` (job inspector and run output), `runform.html` (run dialog and acceptance toast), `settings.html`, `neighbors.html`; all parse from one glob into one template set
+- Template helper functions are pure (no dependencies): `humanDuration`, `timeUntil`, `since`, `ago`, `runDuration`, `clock`, `when`, `deref`; `describeSchedule` renders cron specs in plain words via `lnquy/cron` (`app/web/schedule.go`)
+- Partials: `grid.html` (index rows, header sort buttons, pills, filter/sort menu, search, jump list, list-state fields), `jobparts.html` (job title, facts, history strip, runs list, output pane, toggle toast), `runform.html` (run confirmation, stop confirmation), `icons.html`, `settings.html`, `neighbors.html`
+- The job page code lives in `app/web/jobpage.go`: page, facts, runs list, strip bars, previous/next position, jump list, recorded and live output, and the wait for a started run
+
+### List State in the URL
+- The index's filter, sort, sort direction and search travel in the page URL (`filter`, `sort`, `rev`, `search`) and in hidden inputs `#filter-mode`, `#sort-mode`, `#sort-rev` (plus `#list-search` on the job page). `listQuery` reads them, falling back to the cookies, and `jobsQuery.values()` writes them into every link: rows, history bars, previous/next, the back link, the jump list and the run redirect
+- Each tab sends its own state with every request, so a change in one tab never leaks into another; the theme, sort-mode and filter-mode cookies (HTTPOnly, 1 year) only seed a fresh page
+- **Sort**: header buttons (`#sort-default`, `#sort-lastrun`, `#sort-nextrun`) post `sort` and `rev`. The first click on a column sorts nearest to now first, a second click on the sorted column flips it; crontab order flips to reversed file order. Jobs without a value (never ran; disabled or no next run) stay last in both directions
 
 ### HTMX Integration Patterns
-- **Out-of-band updates**: `hx-swap-oob="innerHTML"` for updating multiple elements in single response
-- **Auto-refresh polling**: the table polls with `hx-trigger="load, every 5s, refresh-jobs from:body"` and `hx-include="#search, #selected-job"`; the inspector's live part polls itself with `hx-include="#insp-output"`; a recorded run's output does not poll, a run in progress (`#live-out`, `GET /api/jobs/{id}/live-output?start=<unix micro>`) polls itself every 5s until it is recorded, then that response is the recorded run's output, matched by start time
-- **Request ordering in the inspector**: every request that fills `#inspector` or `#insp-output` syncs on `#inspector` - clicks with `:replace`, the live-output poll with `:abort` - so a click always wins over a poll; `uiCloseInspector` fires `htmx:abort` on `#inspector` before emptying it. The status poll (`#insp-live`) is not synced
-- **OOB from a replaceable element is lost**: htmx 2 resolves OOB targets from the requesting element's root node, so a response to a button the status poll has since replaced drops its OOB updates (the main swap still lands). State that must follow a click goes inside the swapped fragment, not out of band
-- **Inspector header dot**: the header (`.insp-h`) holds the focused heading and is rendered once per open, so its status dot (`#insp-dot`) is refreshed by the status poll: the `part=live` response is `inspector-live-poll`, the live part plus the dot as an OOB fragment. The full `inspector` render includes plain `inspector-live`, without the OOB copy
-- **Response coordination**: `HX-Refresh: true` header triggers full page refresh when needed
-- **Event coordination**: Custom events like `refresh-jobs` coordinate updates between components (used by toggle, sort, filter)
-- **Lazy-load dropdowns**: Native `<details>/<summary>` with `hx-trigger="toggle once"` for dropdowns that fetch content on first open (used in neighbors selector)
+- **Pollers are stable wrappers swapping `innerHTML`**: index `#rows` (`GET /api/jobs`, also answers `counts-oob`), job page `#facts` (`GET /api/jobs/{id}/facts`, with `job-title-oob`, `job-runact-oob` and pill counts out of band), and the live output `#live-out`. Each poll trigger is `every 5s [!uiHeld], refresh-jobs from:body` (the facts poll also on `run-selected`); `#jruns` reloads on `runs-changed` and `run-selected`
+- **Poll hold**: `window.uiHeld` is set on a primary-button `pointerdown` and cleared on `pointerup`, `pointercancel`, `blur`, `contextmenu`. Every `every 5s` filter reads it, so a poll never replaces a button between press and release (a click needs both on the same element, and htmx cannot defer a swap)
+- **Selected run**: the run on screen is carried by the hidden `selected-run` input inside the output fragment (a recorded run's id, or `live:<start>` for a run in progress). Output answers send `HX-Trigger-After-Swap: run-selected`, so the facts and the runs list re-render with that selection; the facts and runs requests include it
+- **Newest run**: the runs list carries a hidden `newest` input; the facts response sends `HX-Trigger: runs-changed` when the newest run differs, so the list reloads only when a run was added
+- **Ending a poll**: an answer that turns a live or wait poll into something else (the recorded run, a found run) uses `HX-Retarget: #joutput` with `HX-Reswap: innerHTML`, replacing the polling wrapper. 286 (htmx stop-polling) is used only for the wait timeout and for the facts of a removed job
+- **Request ordering in the output pane**: clicks that fill `#joutput` sync with `hx-sync="#joutput:replace"`, the live poll with `#joutput:abort`, so a click always wins over a poll in flight. The runs list reload syncs with `#joutput:queue last`: htmx 2.0.3 throws on the answer to a request whose element was replaced in flight, so a run click aborts a pending list reload instead of being replaced by it. Not `drop`: `run-selected` fires inside the output answer's own swap, while that request still counts as in flight, and `drop` would discard the reload. htmx logs every aborted request as a console error
+- **OOB from a replaceable element is lost**: htmx 2 resolves OOB targets from the requesting element's root node, so a response to a button a poll has since replaced drops its OOB updates (the main swap still lands). State that must follow a click goes inside the swapped fragment, not out of band
+- **Event coordination**: `refresh-jobs` (toggle, stop, a run that opens nothing) refreshes every poller on the page
+- **Lazy-load dropdowns**: Native `<details>/<summary>` with `hx-trigger="toggle once"` for dropdowns that fetch content on first open (used in the host menu)
 
 ### Event-Driven Architecture
 - Server implements `JobEventHandler` interface to receive job events
 - Events processed asynchronously via channel with goroutine
 - Job state updated in memory immediately, persisted separately during sync cycles
-- **Runs in progress**: `OnJobStart` carries `LiveOutput func() string` (nil when `--log.exec-max-lines=0`), a reader of the run's web capture, which spans all repeater attempts. The server keeps each run in progress in `Server.active` by job and start time, since one job can overlap itself (no `--dedup`, or a manual run with an edited command). `IsRunning` is derived from what is left there, and a finished run is recorded before it leaves the active set, so a poll finds it in one or the other
-
-### Cookie-Based Preferences
-Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration. The cookies only set a fresh page's modes: each tab sends its own `filter` (hidden `#filter-mode`) and `sort` (`#sort-mode`) with every list request, and `getSortMode`/`getFilterMode` prefer those, so a change in one tab never leaks into another.
+- **Runs in progress**: `OnJobStart` carries `LiveOutput func() string` (nil when `--log.exec-max-lines=0`), a reader of the run's web capture, which spans all repeater attempts. The server keeps each run in progress in `Server.active` by job and start time, since one job can overlap itself (no `--dedup`, or a manual run with an edited command). `IsRunning` is derived from what is left there, and a finished run is recorded before it leaves the active set, so a poll finds it in one or the other. The job page reads the active snapshot before the history, so a run that finishes between the two reads still shows its output
 
 ### CSS Architecture
 - **CSS Custom Properties**: light tokens in `:root`, dark under `[data-theme="dark"]`; the login page keeps its own `--color-*` tokens
-- **Container queries on `.app`**: at 1180px and up the inspector docks beside the table; below that it is a fixed overlay drawer, full screen under 600px; 44px touch targets below 1180px; phone rows become two-line blocks under 720px
-- The run dialog becomes a bottom sheet under 600px (media query, since a modal dialog sits outside the container)
-- **Focus ring**: the global `:focus-visible` outline is drawn in the dashboard only after a Tab press and until the next pointer press. `ui.js` keeps that state in `data-keynav` on `<html>`, and `:where([data-keynav="false"]) :focus-visible` removes the outline. A browser treats Esc as keyboard use too, so without the gate a mouse user who closes the inspector or run dialog with Esc gets a ring on the row, and again after each poll re-focuses it. The login page loads no `ui.js` and keeps the ring
+- `.app` fills the viewport (`100dvh`, overflow hidden); the index list and the job page's runs list and log scroll inside it. Grid items that hold scrolling content need `min-width: 0`, or a `1fr` track grows with the content instead of scrolling
+- Breakpoints (media queries): 1180px narrows the grid columns; under 1040px the pills fold into the `#fdd` filter/sort menu; under 900px the schedule column hides; under 760px the job page stacks the runs above the log; under 720px rows become two-line blocks and the grid header hides; under 600px the top bar compacts. `pointer: coarse` raises buttons to 36px and rows to 48px
+- The wrap toggle is a checkbox outside the swapped output; `.jlog:has(#wrap:not(:checked))` unwraps the log, so the setting survives run changes
+- **Focus ring**: the global `:focus-visible` outline is drawn only after a Tab press and until the next pointer press. `ui.js` keeps that state in `data-keynav` on `<html>`, and `:where([data-keynav="false"]) :focus-visible` removes the outline. A browser treats Esc as keyboard use too, so without the gate a mouse user who closes a dialog with Esc gets a ring on the opener, and again after each poll re-focuses it. The login page loads no `ui.js` and keeps the ring
 
-### Dashboard: Table, Inspector, Run Dialog
-- One job table (`jobs-table`) with no alternative views. Rows carry `data-job-id`; the `.job-open` name button opens the inspector
-- **Selection state**: the selected job lives in the hidden input `#selected-job` outside every polled target, set by OOB fragments and sent with each table poll. The selected run travels inside the output it selected: each `.out` fragment carries a hidden `selected-run` input (a recorded run's id, or `live:<start>` for a run in progress), so the runs list highlight always matches the output on screen
-- **Minimal JS** in `static/ui.js`, only where htmx has no attribute: focus restore on the re-rendered row, opening/removing dialogs, focus into the inspector and marking the covered page `inert` while it overlays (re-checked on resize, since the CSS decides by width), closing the inspector without a request, keeping the reader's scroll position across live-output polls (following new lines only when already at the end), and the poll-failure notice (`uiPollDone`, scoped to the table's own poll)
-- `#dialog-slot` opens a swapped `<dialog>` on `hx-on::after-settle`, not after-swap: htmx binds the dialog's `hx-on:close` only at settle, and a dialog closed before that stays in the slot
-- **Stop endpoint contract**: `GET /api/jobs/{id}/stop-form[?start=<unix micro>]` renders a confirmation bound to one run (the given start, else the newest run in progress); `POST /api/jobs/{id}/stop` with form `start` calls `RunStopper.StopRun(job command, start)`. htmx callers get an empty dialog slot plus `HX-Trigger-After-Swap: refresh-jobs`, with a toast only when the run was stopped, so a stale confirmation never errors and never reaches a newer run; other callers get 202 or 404. Both are 403 under `--web.disable-manual` or without a stopper
-- **Run endpoint contract**: `POST /api/jobs/{id}/run` with `HX-Request` answers a rejection with 200 and the re-rendered form (message, edits kept) and an acceptance with 202, an OOB toast and `HX-Trigger-After-Swap: refresh-jobs`; callers without `HX-Request` (curl, scripts) keep 202 "Job triggered" and 4xx/5xx text
-- **Expired session**: `authMiddleware` answers htmx requests with 401 and `HX-Redirect` to the login page, so a poll never swaps the login form into the table
-- **Removed job**: when a crontab sync drops the job open in the inspector, its htmx request gets 200 with `HX-Retarget: #inspector` and `HX-Reswap: innerHTML` (the live part swaps `outerHTML` and would delete the slot) plus an OOB-cleared `#selected-job`, so the panel closes; a run posted for a removed job re-renders the dialog with the submitted values. Non-htmx callers keep the 404
+### Minimal JS (`static/ui.js`)
+- Only where htmx has no attribute: the poll hold (`window.uiHeld`), the shared blink phase for running dots, dialog open/close with focus restored to the opener by id (`uiDialogSwapped`, `uiDialogClosed`), live log scroll keeping (follow new lines only when at the end, keep the sideways position), the `[data-tip]` tooltip, copying the command (`uiCopyCommand`, toast), edited-command marking (`uiMarkEdited`, relabels Run), closing `<details>` menus on an outside click or Esc, scrolling the selected run into view, the live indicator (`uiPollDone`, scoped to each poller's own request) and the keyboard map
+- **Keyboard map**: one capture-phase `keydown` listener; nothing while a dialog is open or in fields (except Esc, Enter in the search field, and the jump list's arrows). Keys focus and click the existing elements, so they send the same requests as the mouse: `/` and Cmd/Ctrl+K search; on the index `j`/`k` move a `.cur` row cursor kept by job id across row swaps, Enter opens it (in the search field: the first match, after the filtered rows arrive), `r` opens its run confirmation; on a job page `j`/`k` next/previous job, `[`/`]` newer/older run, `r` Run now, Shift+E the schedule switch, Esc back to the list; `t` theme; `?` the static `#keys-dialog`. In the jump list ↑↓ move, Enter opens, Shift+Enter opens that job's run confirmation
+- `#dialog-slot` opens a swapped `<dialog>` on `hx-on::after-settle`, not after-swap: htmx binds the dialog's `hx-on:close` only at settle, and a dialog closed before that stays in the slot. The opener focus returns to is the request's own element (a form's submitter), not `document.activeElement`: Safari does not focus a clicked button
+
+### Endpoint Contracts
+- **Run**: `POST /api/jobs/{id}/run-confirm` renders the confirmation with the exact command (an edited one is marked) and the template date; a disabled or running job answers 204 with `HX-Trigger: refresh-jobs`, since Enter in the command field submits the run bar of such a job too. `POST /api/jobs/{id}/run` from htmx answers an acceptance with 202 and `HX-Redirect` to `/jobs/{id}?after=<unix micro>&<list state>`, a rejection with 200 and the re-rendered confirmation carrying the message; callers without `HX-Request` (curl, scripts) keep 202 "Job triggered" and 4xx/5xx text
+- **Landing on a started run**: the job page with `after` polls `GET /api/jobs/{id}/live-output?after=` every second and takes the earliest manual run (`ExecutedCommand` set) of the job started at or after that time, in progress or recorded, so an overlapping scheduled run is never taken for it. Once found it answers with `HX-Replace-Url` (the page URL without `after`); none within 10 seconds ends the wait with 286
+- **Run links**: a history bar carries `run=<exec id>`, or `run=live:<start>` for a run in progress, which finds the run recorded once it ended
+- **Stop**: `GET /api/jobs/{id}/stop-form[?start=<unix micro>]` renders a confirmation bound to one run (the given start, else the newest run in progress); `POST /api/jobs/{id}/stop` with form `start` calls `RunStopper.StopRun(job command, start)`. htmx callers get an empty dialog slot plus `HX-Trigger-After-Swap: refresh-jobs`, with a toast only when the run was stopped, so a stale confirmation never errors and never reaches a newer run; other callers get 202 or 404. Both are 403 under `--web.disable-manual` or without a stopper
+- **Expired session**: `authMiddleware` answers htmx requests with 401 and `HX-Redirect` to the login page, so a poll never swaps the login form into a page
+- **Removed job**: the facts poll of a job a crontab sync dropped answers 286 with a removed notice, a Removed badge and no Run, so the job page stops polling; a run posted for a removed job re-renders the confirmation with the submitted values
 
 ## Authentication Architecture
 
@@ -113,7 +122,7 @@ Theme, sort-mode, filter-mode stored in HTTPOnly cookies with 1-year expiration.
 ## Manual Job Execution Architecture
 
 ### Trigger Mechanism
-- The run dialog (row Run button or inspector "Run now") sends a request to the `ManualJobRequest` channel
+- The run confirmation (row Run button, the job page's Run now, `r`, or Shift+Enter in the jump list) sends a request to the `ManualJobRequest` channel
 - Channel wired to scheduler's `ManualTrigger` channel
 - Background listener in scheduler processes triggers immediately
 - No persistence of manual executions (runs on-demand only)
@@ -131,7 +140,7 @@ manualJobChan <- jobID
 ```
 
 ### Custom Date and EOD Interaction
-- The run dialog (`run-form` in `partials/runform.html`, served by `GET /api/jobs/{id}/run-form`) lets the user edit the command and enter an optional date (YYYYMMDD); the date field is shown only when the command contains `{{...}}` or `[[...]]` templates
+- The job page's command bar lets the user edit the command and enter an optional date (YYYYMMDD); the date field is shown only when the command contains `{{...}}` or `[[...]]` templates. The confirmation (`run-confirm` in `partials/runform.html`) shows both before the run starts
 - Empty date → `time.Now()` used for template resolution; custom date → that date is parsed at midnight via `ParseInLocation("20060102", ..., time.Local)` (hour 0)
 - With a positive `--eod-hour` (default: 17), midnight is before the cutoff, so a custom date of D resolves both EOD templates to the business day before D. With `--eod-hour=0`, they use D if it is a business day, otherwise the most recent business day before D
 
@@ -144,11 +153,11 @@ manualJobChan <- jobID
 ## Job Enable/Disable Toggle
 
 ### Toggle Mechanism
-- Web UI toggle button (`POST /api/jobs/{id}/toggle`) flips `job.Enabled` in memory
+- The job page's schedule switch (`POST /api/jobs/{id}/toggle`, or Shift+E) flips `job.Enabled` in memory
 - State persisted immediately via `persistJobs()` after toggle
-- HTMX `HX-Trigger: refresh-jobs` header triggers UI refresh after toggle
-- Disabled rows get `data-state="off"`, a `disabled` tag, no next run, and an Enable button in place of Run
-- All lists every job, Disabled only disabled ones; Failed, Running, Succeeded and Never ran list enabled jobs only
+- An htmx toggle answers with a toast swapped into `#toasts` and `HX-Trigger-After-Swap: refresh-jobs`, which refreshes the page
+- Disabled rows get `data-state="off"`, no next run and no Run button; the job page shows a note in place of Run and keeps the command editable
+- All lists every job, Disabled only disabled ones; Failing, Running, OK and Never list enabled jobs only
 
 ## Type-Safe Enum Pattern
 
@@ -313,7 +322,7 @@ require.Eventually(t, func() bool {
 - Run with `make e2e` (headless) or `make e2e-ui` (visible browser for debugging)
 - `TestMain` builds the binary once and starts a **single shared server + DB** for the whole run; tests share state and run in file/definition order
 - **Shared-state pattern**: because other tests mutate job state, assert invariants rather than fixed numbers to avoid order-dependent flakiness. Example: verify `total == running + success + failed + idle` instead of hardcoding each count
-- The e2e crontab (`createTestCrontab` in `e2e_test.go`) includes a `*/5` job, so a job may flip to `success` if a run crosses a 5-minute boundary — assert invariants, never an all-idle baseline. Its manual-only "Live tail" job prints six lines a second for 30s, long enough for the four live-output polls its scroll checks need; tests that start it wait for its previous run to end, and job counts in assertions come from `totalJobs`
+- The e2e crontab (`createTestCrontab` in `e2e_test.go`) includes a `*/5` job, so a job may flip to `success` if a run crosses a 5-minute boundary — assert invariants, never an all-idle baseline. Its manual-only "Live tail" job prints six lines a second for 30s, long enough for the four live-output polls its scroll checks need; tests that start it wait for its previous run to end, and job counts in assertions come from `totalJobs`. "Templated job" must stay never-ran (the never-ran assertions use it); runs that need a templated command use "Dated run"
 - **Bound every test run by scope and time**: the full e2e suite is slow (~50s per run). Target specific tests with `-run 'TestName'` and always pass `-timeout`; never loop the full suite repeatedly to chase a flake. To confirm a flake fix, run the single affected test, not the whole suite
 
 ## Testing and Development Workflow

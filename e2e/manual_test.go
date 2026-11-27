@@ -123,6 +123,31 @@ func TestManualRun_EscAfterMouseLeavesNoFocusRing(t *testing.T) {
 	assert.False(t, focusRingShown(t, page), "the re-rendered button shows no ring either")
 }
 
+func TestManualRun_EscReturnsFocusToAnUnfocusedOpener(t *testing.T) {
+	// safari does not focus a clicked button, so focus fell back to the jump field and opened its list
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	gotoJob(t, page, jobID(t, page, jobHourly), "")
+	blurFocus(t, page)
+
+	clicked := make(chan error, 1)
+	_, err := page.ExpectResponse(runConfirmRe, func() error {
+		_, e := page.Evaluate(`() => document.getElementById('run-now').click()`)
+		clicked <- e
+		return nil
+	})
+	require.NoError(t, err)
+	require.NoError(t, <-clicked)
+	waitVisible(t, page.Locator("#run-dialog[open]"))
+	require.False(t, focusOn(t, page, "run-now"))
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#run-dialog"))
+	require.Eventually(t, func() bool { return focusOn(t, page, "run-now") }, 3*time.Second, 50*time.Millisecond)
+	visible, err := page.Locator("#jdrop").IsVisible()
+	require.NoError(t, err)
+	assert.False(t, visible, "the jump list stays closed")
+}
+
 func TestManualRun_BackdropClickKeepsDialogOpen(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

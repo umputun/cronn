@@ -273,12 +273,16 @@ dialog.cf { border: 1px solid var(--line2); border-radius: 6px; background: var(
 .cf .f form { display: contents; }
 .dlg-err { font-size: 12.5px; color: var(--fail); background: var(--fail-soft); border: 1px solid color-mix(in srgb, var(--fail) 30%, transparent); padding: 7px 10px; border-radius: 4px; margin-bottom: 12px; }
 .dlg-err[hidden] { display: none; }
-.settings-modal { width: 900px; max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); background: var(--panel); border: 1px solid var(--line2); border-radius: 6px; padding: 0; overflow-y: auto; box-shadow: var(--shadow); }
+.settings-modal, .keys-modal { width: 900px; max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); background: var(--panel); border: 1px solid var(--line2); border-radius: 6px; padding: 0; overflow-y: auto; box-shadow: var(--shadow); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
 .modal-header h2 { margin: 0; font-size: 15px; }
 .modal-close { width: 36px; height: 36px; display: grid; place-items: center; color: var(--mut); border-radius: 4px; }
 .modal-close:hover { background: var(--hover); color: var(--text); }
 .modal-body { padding: 14px 18px 18px; }
+.keys-modal { width: 520px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 10px 18px; margin: 0; padding: 14px 18px 18px; align-items: baseline; }
+.keys dt { white-space: nowrap; }
+.keys dd { margin: 0; color: var(--mut); }
 .modal-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
 .modal-section { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .modal-label { font-size: 11px; color: var(--faint); }

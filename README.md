@@ -311,23 +311,23 @@ Cronn includes a modern web dashboard for monitoring and managing cron jobs. The
 
 ### Features
 
-- **One job table** with live updates every 5 seconds: job name (the YAML `name`, or the command when unnamed), command, schedule in plain words next to the raw cron spec, last run with its exit code and duration, and next run
-- **Failing jobs alert** at the top, naming the most recent failure with a direct link to its details
-- **Filter tabs with counts**: All, Failed, Running, Succeeded, Never ran and Disabled; search matches job names and commands
-- **Sorting**: crontab order, next run or last run
-- **Job inspector**: click a job to see its full command, state, last and next run, and its latest 50 runs; pick a run to see its output, exit code, duration and, for manual runs, the command actually executed. Failures without output still show their exit code. A running job shows its output as it is produced, refreshed every 5 seconds, and the run turns into its recorded entry when it finishes
-- **Manual runs** from a run dialog:
-  - Edit the command for a one-off run
+- **Job list** with live updates every 5 seconds: job name (the YAML `name`, or the command when unnamed), a strip of the last 20 runs, schedule in plain words with the raw cron spec on hover, last run with its exit code, and next run. A history bar opens the job page on that run
+- **Filter pills with counts**: All, Failing, Running, OK, Never and Disabled; search matches job names and commands. Below 1040px the pills and the sort move into one menu
+- **Sorting** by clicking a column header: crontab order, last run or next run, nearest first, and a second click reverses it. Jobs that never ran, or have no next run, stay at the end either way. The filter, sort and search live in the page address, so a link or a reload keeps them
+- **Job page** for each job: state, schedule, an enable switch, last and next run, the last 30 runs as bars, the latest 50 runs, and the selected run's output with numbered lines and error lines marked. A running job shows its output as it is produced, refreshed every 5 seconds, and the run turns into its recorded entry when it finishes. Previous and next links walk the list you came from, and a jump field opens any other job
+- **Manual runs** from a row or the job page's command bar, always after a confirmation that shows the exact command:
+  - Edit the command for a one-off run; the confirmation marks it as edited
   - Set a date (YYYYMMDD) for template variables; the field appears only when the command has templates
-  - A rejected run (job disabled, already running, invalid date) is reported in the dialog with your edits kept
-- **Stopping a running job** from its row or from the run in progress in the inspector, after a confirmation. The stop reaches the job's whole process group: SIGTERM, then SIGKILL to whatever is left after 5 seconds. A process that moves itself to another process group (`setsid`, GNU `timeout`) gets no SIGTERM or SIGKILL from cronn and can outlive the run; output capture ends without it, and its later writes to the job's output fail. The run is recorded as failed with exit code -1, sends no failure notification and is not replayed by `--resume`. `--web.disable-manual` turns stopping off along with manual runs. On Windows only the job's own shell is killed: processes it started keep running, and output capture ends 5 seconds later even if one of them still holds the job's output
-- **Enable/disable jobs** from the table or the inspector without editing config files
+  - A confirmed run opens the job page on that run's output, live while it runs
+  - A rejected run (job disabled, already running, invalid date) is reported in the confirmation
+- **Stopping a running job** from its row or from the job page, after a confirmation. The stop reaches the job's whole process group: SIGTERM, then SIGKILL to whatever is left after 5 seconds. A process that moves itself to another process group (`setsid`, GNU `timeout`) gets no SIGTERM or SIGKILL from cronn and can outlive the run; output capture ends without it, and its later writes to the job's output fail. The run is recorded as failed with exit code -1, sends no failure notification and is not replayed by `--resume`. `--web.disable-manual` turns stopping off along with manual runs. On Windows only the job's own shell is killed: processes it started keep running, and output capture ends 5 seconds later even if one of them still holds the job's output
+- **Enable/disable jobs** from the job page without editing config files
+- **Keyboard shortcuts**: `/` or ⌘K search, `j`/`k` move in the list or to the next and previous job, Enter opens, `r` runs, `[`/`]` newer and older run, ⇧E schedule on or off, Esc back to all jobs, `t` theme; `?` lists them
 - **Persistent job history** stored in a SQLite database that survives restarts
 - **Light and dark themes** (dark by default), switched from the top bar
-- **Cookie-based preferences** for theme, sort order and filter
-- **Responsive layout**: the inspector sits beside the table on wide screens, slides over it on tablets and takes the full screen on phones; touch-sized controls below 1180px and no sideways scrolling on phones
-- **Update failure notice** when the dashboard cannot reach the server, clearing on the next successful update
-- **HTMX-driven**: server-rendered fragments and HTMX v2 attributes, with a small script only for focus handling and dialogs
+- **Responsive layout** down to phones, with no sideways scrolling; larger controls on touch screens
+- **Live indicator** in the top bar that turns into "updates failed" when the dashboard cannot reach the server, and back on the next successful update
+- **HTMX-driven**: server-rendered fragments and HTMX v2 attributes, with one small script for focus, dialogs, the log scroll position, the clipboard and keyboard shortcuts
 
 ### Usage
 To enable the web dashboard:
@@ -589,15 +589,15 @@ curl -s localhost:8080/api/v1/jobs/JOB_ID/executions/EXEC_ID/logs | jq '.output'
 <details markdown>
   <summary>Screenshots</summary>
 
-### Desktop - Dark Theme, Job Inspector Open
+### Desktop - Dark Theme, Job List
 
 ![Dashboard Dark Desktop](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-dark-desktop.png)
 
-### Desktop - Light Theme
+### Desktop - Light Theme, Job Page
 
 ![Dashboard Light Desktop](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-light-desktop.png)
 
-### Run Dialog
+### Run Confirmation
 
 ![Dashboard Run Dialog](https://raw.githubusercontent.com/umputun/cronn/master/site/docs/screenshots/dashboard-run-dialog.png)
 
@@ -644,7 +644,7 @@ The web dashboard supports optional password authentication. When enabled, users
 - Cookie-based authentication with configurable session TTL (default: 24 hours)
   - Configure with `--web.login-ttl` flag (e.g., `--web.login-ttl=12h` for 12 hours)
   - Or via environment variable: `CRONN_WEB_LOGIN_TTL=48h`
-- Logout link available in the dashboard footer when authentication is enabled
+- Log out from the settings menu in the top bar when authentication is enabled
 - Fallback to HTTP Basic Auth for API clients
 - Username is fixed as "cronn"
 - No authentication required for static resources

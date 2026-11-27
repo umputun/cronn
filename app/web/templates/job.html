@@ -43,7 +43,7 @@
              hx-get="{{url (printf "/api/jobs/%s/runs" .Job.ID)}}"
              hx-trigger="runs-changed from:body, run-selected from:body"
              hx-include="#joutput [name='selected-run']"
-             hx-swap="innerHTML">{{template "job-runs" .}}</div>
+             hx-swap="innerHTML" hx-sync="#joutput:queue last">{{template "job-runs" .}}</div>
         <div class="jlog">
             <label class="wraptg" title="Wrap lines">
                 <input type="checkbox" id="wrap" checked><span class="sr-only">Wrap lines</span>{{template "icon-wrap"}}

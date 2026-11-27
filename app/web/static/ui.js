@@ -1,13 +1,20 @@
-// browser behaviour htmx has no attribute for: focus and inert state around overlays, closing the inspector
-// without a request, browser-only inspector view preferences, and marking a failed poll
+// browser behaviour htmx has no attribute for: holding polls while a button is pressed, the shared blink
+// phase, dialogs and focus, live log scrolling, tooltips, the clipboard, edited-command marking, menus, and
+// marking a failed poll
 
-const uiInspector = document.getElementById('inspector');
-try {
-    uiInspector.classList.toggle('wide', localStorage.getItem('cronn-inspector-wide') === 'true');
-    uiInspector.classList.toggle('wrap', localStorage.getItem('cronn-inspector-wrap') !== 'false');
-} catch {
-    uiInspector.classList.add('wrap');
-}
+// a click needs press and release on the same element, and htmx cannot defer a swap, so every poll filter
+// reads uiHeld and skips its tick while the primary button is down. htmx looks filter symbols up on window
+window.uiHeld = false;
+document.addEventListener('pointerdown', function (evt) {
+    if (evt.button === 0) window.uiHeld = true;
+}, true);
+// a release outside the window or after a context menu never reaches the page
+['pointerup', 'pointercancel', 'blur', 'contextmenu'].forEach(function (name) {
+    window.addEventListener(name, function () { window.uiHeld = false; }, true);
+});
+
+// a CSS animation restarts on every swap, so running dots in freshly polled rows would blink out of phase
+setInterval(function () { document.documentElement.classList.toggle('blink-off'); }, 600);
 
 // Tab enables keyboard focus rings until pointer input. Esc alone must not give mouse-opened controls a ring
 // when focus is restored or polling replaces them
@@ -19,147 +26,145 @@ document.addEventListener('pointerdown', function () {
     document.documentElement.dataset.keynav = 'false';
 }, true);
 
-function uiSyncInspectorButtons() {
-    for (const mode of ['wide', 'wrap']) {
-        const button = uiInspector.querySelector('.' + mode + '-toggle');
-        if (button) button.setAttribute('aria-pressed', String(uiInspector.classList.contains(mode)));
-    }
-}
-
-function uiToggleInspectorMode(mode) {
-    const enabled = uiInspector.classList.toggle(mode);
-    try { localStorage.setItem('cronn-inspector-' + mode, String(enabled)); } catch {}
-    uiSyncInspectorButtons();
-    if (mode === 'wide') uiSyncCovered();
-}
-
-// uiRestoreFocus focuses the job's row button, re-found by id because polling replaces the opener. A row that
-// is gone (filtered out, removed) or covered by the inspector falls back to the inspector heading, then search
-function uiRestoreFocus(jobID) {
-    const row = jobID && document.querySelector('[data-job-id="' + CSS.escape(jobID) + '"] .job-open');
-    const usable = row && !row.closest('[inert]') ? row : null;
-    const target = usable || document.querySelector('#inspector [data-focus]') || document.getElementById('search');
-    if (target) target.focus();
-}
-
-// uiDialogSwapped opens a dialog swapped into the slot, or restores focus when an accepted run emptied it;
-// emptying the slot removes an open dialog without firing its close event. It runs after settle because
-// htmx binds the dialog's hx-on:close only then, and a dialog closed before that stays in the slot
+// uiDialogSwapped opens a dialog swapped into the slot and remembers what opened it. It runs after settle
+// because htmx binds the dialog's hx-on:close only then, and a dialog closed before that stays in the slot.
+// A response that empties the slot (stop accepted, run gone) returns focus to the opener
 function uiDialogSwapped(slot) {
     const dlg = slot.querySelector('dialog');
     if (!dlg) {
-        uiRestoreFocus(slot.dataset.jobId);
-        slot.dataset.jobId = '';
+        uiRestoreFocus(slot.dataset.opener);
+        slot.dataset.opener = '';
         return;
     }
-    slot.dataset.jobId = dlg.dataset.jobId || '';
+    if (!slot.dataset.opener && document.activeElement && document.activeElement.id) {
+        slot.dataset.opener = document.activeElement.id;
+    }
     if (!dlg.open) dlg.showModal();
 }
 
-// uiDialogClosed removes a dialog closed by Esc or Cancel and returns focus to its job
+// uiDialogClosed removes a dialog closed by Esc or Cancel and returns focus to its opener
 function uiDialogClosed(dlg) {
     const slot = dlg.parentElement;
-    const jobID = dlg.dataset.jobId;
     dlg.remove();
-    if (slot) slot.dataset.jobId = '';
-    uiRestoreFocus(jobID);
+    if (!slot) return;
+    uiRestoreFocus(slot.dataset.opener);
+    slot.dataset.opener = '';
 }
 
-// the page behind the inspector when it overlays (tablet drawer, phone full screen)
-const uiCovered = ['.top', '#failing-alert', '#jobs-controls', '#jobs-container', '.footer'];
-
-function uiSetCovered(covered) {
-    uiCovered.forEach(function (sel) {
-        const el = document.querySelector(sel);
-        if (el) el.inert = covered;
-    });
+// uiRestoreFocus focuses the opener, re-found by id because polling replaces it, else the search field
+function uiRestoreFocus(id) {
+    const target = (id && document.getElementById(id)) || document.getElementById('search');
+    if (target) target.focus();
 }
 
-// uiSyncCovered marks the page inert while the inspector overlays it; focus left behind moves to its heading
-function uiSyncCovered() {
-    const insp = document.querySelector('#inspector .insp');
-    const covered = !!insp && getComputedStyle(insp).position === 'fixed';
-    const active = document.activeElement;
-    uiSetCovered(covered);
-    if (!covered || !active || active === document.body || insp.contains(active) || active.closest('dialog')) return;
-    const heading = insp.querySelector('[data-focus]');
-    if (heading) heading.focus();
-}
-
-let uiResizePending = false;
-window.addEventListener('resize', function () {
-    if (uiResizePending) return;
-    uiResizePending = true;
-    requestAnimationFrame(function () {
-        uiResizePending = false;
-        uiSyncCovered();
-    });
-});
-
-// uiInspectorSwapped restores view buttons after swaps and moves focus only when the whole panel changes
-function uiInspectorSwapped(panel, evt) {
-    if (evt.detail.target !== panel) {
-        if (evt.detail.target.id === 'insp-output') uiSyncInspectorButtons();
-        return;
-    }
-    uiSyncInspectorButtons();
-    uiSyncCovered();
-    const heading = panel.querySelector('[data-focus]');
-    if (heading) {
-        heading.focus();
-        return;
-    }
-    if (!document.activeElement || document.activeElement === document.body) uiRestoreFocus('');
-}
-
-// the live log keeps the reader's place across its polls and follows new lines only when it was already at its
-// end; a fresh live log starts at its end. A swap cannot make scrolling conditional, so the position is carried here
-let uiLiveScroll = null;
-uiInspector.addEventListener('htmx:beforeSwap', function (evt) {
+// the live log keeps the reader's place across its polls and follows new lines only when it was already at
+// its end; a log opened fresh starts at its end when the run is in progress
+let uiLogScroll = null;
+const uiLogTargets = ['live-out', 'joutput'];
+document.addEventListener('htmx:beforeSwap', function (evt) {
     const target = evt.detail.target;
-    if (target.id === 'live-out') {
-        const pre = target.querySelector('pre');
-        uiLiveScroll = pre ? {top: pre.scrollTop, left: pre.scrollLeft, fromLive: true,
-            pinned: pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4} : {pinned: true, fromLive: true};
-    } else if (target === uiInspector || target.id === 'insp-output') {
-        uiLiveScroll = {pinned: true, fromLive: false};
-    }
+    if (!evt.detail.shouldSwap || !uiLogTargets.includes(target.id)) return;
+    const log = target.querySelector('.log');
+    uiLogScroll = target.id === 'live-out' && log
+        ? {top: log.scrollTop, left: log.scrollLeft, pinned: log.scrollHeight - log.scrollTop - log.clientHeight < 4}
+        : {pinned: true, fresh: true};
 });
-uiInspector.addEventListener('htmx:afterSettle', function () {
-    if (!uiLiveScroll) return;
-    const pre = uiInspector.querySelector('#insp-output pre');
-    if (pre && uiLiveScroll.pinned && (uiLiveScroll.fromLive || uiInspector.querySelector('#live-out'))) {
-        pre.scrollTop = pre.scrollHeight;
-        if (uiLiveScroll.fromLive) pre.scrollLeft = uiLiveScroll.left || 0;
-    } else if (pre && !uiLiveScroll.pinned) {
-        pre.scrollTop = uiLiveScroll.top;
-        pre.scrollLeft = uiLiveScroll.left;
+document.addEventListener('htmx:afterSettle', function (evt) {
+    if (!uiLogScroll || !uiLogTargets.includes(evt.detail.target.id)) return;
+    const log = document.querySelector('#joutput .log');
+    const live = !!document.getElementById('live-out');
+    if (log && uiLogScroll.pinned && (live || !uiLogScroll.fresh)) {
+        log.scrollTop = log.scrollHeight;
+    } else if (log && !uiLogScroll.pinned) {
+        log.scrollTop = uiLogScroll.top;
     }
-    uiLiveScroll = null;
-    uiSyncInspectorButtons();
+    if (log && !uiLogScroll.fresh) log.scrollLeft = uiLogScroll.left;
+    uiLogScroll = null;
+});
+document.addEventListener('DOMContentLoaded', function () {
+    const log = document.querySelector('#live-out .log');
+    if (log) log.scrollTop = log.scrollHeight;
 });
 
-// uiCloseInspector empties the inspector, which drops the run selection with it, and clears the selected job;
-// the next table poll sends the cleared id.
-// An inspector request still in flight is aborted first, or its response would bring back the selection
-function uiCloseInspector() {
-    const selected = document.getElementById('selected-job');
-    const jobID = selected ? selected.value : '';
-    htmx.trigger(uiInspector, 'htmx:abort');
-    uiInspector.innerHTML = '';
-    uiSetCovered(false);
-    if (selected) selected.value = '';
-    document.querySelectorAll('tr.row.sel').forEach(function (row) { row.classList.remove('sel'); });
-    uiRestoreFocus(jobID);
+// one tooltip under the hovered [data-tip], flipped above near the bottom edge; the native title delay is
+// too slow for scanning history bars
+const uiTip = document.getElementById('tip');
+document.addEventListener('mouseover', function (evt) {
+    const el = evt.target.closest && evt.target.closest('[data-tip]');
+    if (!el) {
+        uiTip.style.display = 'none';
+        return;
+    }
+    uiTip.textContent = el.dataset.tip;
+    uiTip.style.display = 'block';
+    const r = el.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - uiTip.offsetWidth / 2, innerWidth - uiTip.offsetWidth - 8));
+    const below = r.bottom + 8 + uiTip.offsetHeight <= innerHeight - 8;
+    uiTip.style.left = left + 'px';
+    uiTip.style.top = (below ? r.bottom + 8 : r.top - uiTip.offsetHeight - 8) + 'px';
+});
+document.addEventListener('htmx:beforeSwap', function () { uiTip.style.display = 'none'; });
+
+// uiToast shows a short note in the toast region
+function uiToast(text) {
+    const toasts = document.getElementById('toasts');
+    const t = document.createElement('div');
+    t.className = 't';
+    t.textContent = text;
+    toasts.replaceChildren(t);
 }
 
-document.addEventListener('keydown', function (evt) {
-    if (evt.key !== 'Escape' || document.querySelector('dialog[open]') || !uiInspector.querySelector('.insp')) return;
-    evt.preventDefault();
-    uiCloseInspector();
+// uiCopyCommand copies the command field's value; there is no htmx attribute for the clipboard
+function uiCopyCommand() {
+    const field = document.getElementById('cmdin');
+    if (!field || !navigator.clipboard) {
+        uiToast('Copy is not available here');
+        return;
+    }
+    navigator.clipboard.writeText(field.value).then(
+        function () { uiToast('Command copied'); },
+        function () { uiToast('Copy failed'); });
+}
+
+// uiMarkEdited marks the command and date fields that differ from the job's own and relabels Run, which
+// polls re-render
+function uiMarkEdited() {
+    const cmd = document.getElementById('cmdin');
+    const date = document.getElementById('datein');
+    if (!cmd) return;
+    const edited = cmd.value !== cmd.dataset.orig;
+    cmd.classList.toggle('edited', edited);
+    if (date) date.classList.toggle('edited', date.value.trim() !== '');
+    const label = document.querySelector('#run-now .lbl');
+    if (label) label.textContent = edited ? 'Run edited' : 'Run now';
+}
+document.addEventListener('htmx:oobAfterSwap', function (evt) {
+    if (evt.detail.target && evt.detail.target.id === 'runact') uiMarkEdited();
 });
 
-// uiPollDone marks the page when the table poll itself failed; requests from controls inside bubble here too
+// menus are <details>: an outside click, a choice inside, or Esc closes the open one
+document.addEventListener('click', function (evt) {
+    document.querySelectorAll('details.menu[open]').forEach(function (menu) {
+        const inside = menu.contains(evt.target);
+        if (!inside || evt.target.closest('.tb-menu button, .tb-menu a')) menu.open = false;
+    });
+});
+document.addEventListener('keydown', function (evt) {
+    if (evt.key !== 'Escape') return;
+    document.querySelectorAll('details.menu[open]').forEach(function (menu) {
+        menu.open = false;
+        menu.querySelector('summary').focus();
+    });
+});
+
+// the selected run stays in view in the runs list after a bar, a row or a key selected it
+document.body.addEventListener('htmx:afterSettle', function (evt) {
+    if (evt.detail.target.id !== 'jruns') return;
+    const sel = document.querySelector('#jruns .jr.sel');
+    if (sel) sel.scrollIntoView({block: 'nearest', inline: 'nearest'});
+});
+
+// uiPollDone marks the page when a poll itself failed; requests from controls inside bubble here too
 function uiPollDone(container, evt) {
     if (evt.detail.requestConfig.elt !== container) return;
     const app = container.closest('.app');

@@ -1,0 +1,221 @@
+{{define "job-name"}}{{if .Name}}{{.Name}}{{else}}{{.Command}}{{end}}{{end}}
+
+{{define "job-dot"}}{{if not .Enabled}}off{{else if .IsRunning}}running{{else if eq .LastStatus.String "success"}}ok{{else if eq .LastStatus.String "failed"}}fail{{else}}never{{end}}{{end}}
+
+{{define "job-state"}}{{if not .Enabled}}Disabled{{else if .IsRunning}}Running{{else if eq .LastStatus.String "success"}}Succeeded{{else if eq .LastStatus.String "failed"}}Failed{{else}}Never ran{{end}}{{end}}
+
+{{define "filter-label"}}{{if eq . "failed"}}failing {{else if eq . "running"}}running {{else if eq . "success"}}succeeded {{else if eq . "idle"}}never-run {{else if eq . "disabled"}}disabled {{end}}{{end}}
+
+{{define "search-field"}}
+{{template "icon-search"}}
+<input type="search" id="search" name="search" value="{{.Search}}"
+       placeholder="Filter jobs" aria-label="Filter jobs by name or command"
+       autocomplete="off" spellcheck="false"
+       hx-get="{{url "/api/jobs"}}"
+       hx-trigger="input changed delay:300ms, search"
+       hx-target="#rows" hx-swap="innerHTML"
+       hx-include="#filter-mode, #sort-mode, #sort-rev">
+<kbd>/</kbd>
+{{end}}
+
+{{define "search-input"}}<label id="search-box" class="search">{{template "search-field" .}}</label>{{end}}
+
+{{define "search-oob"}}<label id="search-box" class="search" hx-swap-oob="true">{{template "search-field" .}}</label>{{end}}
+
+{{/* the jump list stays open while the field or the list has focus; its links take focus on click (tabindex),
+     which Safari does not give a plain link, so the list does not close under the pointer */}}
+{{define "jump-search"}}
+<label class="search">
+    {{template "icon-search"}}
+    <input type="search" id="search" name="q" placeholder="Jump to job…" aria-label="Jump to job"
+           autocomplete="off" spellcheck="false"
+           hx-get="{{url "/api/jobs/jump"}}"
+           hx-trigger="input changed delay:150ms, focus"
+           hx-target="#jdrop" hx-swap="innerHTML"
+           hx-include="#filter-mode, #sort-mode, #sort-rev, #list-search">
+    <kbd>/</kbd>
+</label>
+<div class="jdrop" id="jdrop"></div>
+{{end}}
+
+{{define "jump-list"}}
+{{range .}}
+<a class="ji" href="{{.Link}}" tabindex="0" data-job-id="{{.Job.ID}}">
+    <span class="dot {{template "job-dot" .Job}}" aria-hidden="true"></span>
+    <span class="t">{{template "job-name" .Job}}</span>
+    <span class="k">{{template "last-line" .Job}}</span>
+</a>
+{{else}}
+<div class="ji faint">No job matches</div>
+{{end}}
+{{end}}
+
+{{define "pill"}}{{if .Dot}}<span class="dot {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}} <em id="count-{{.Mode}}">{{.Count}}</em>{{end}}
+
+{{define "pills"}}
+{{range .Tabs}}
+{{if $.OnJob}}
+<a class="off" id="pill-{{.Mode}}" href="{{.Href}}">{{template "pill" .}}</a>
+{{else}}
+<button type="button" class="{{if .Active}}on{{else}}off{{end}}" id="pill-{{.Mode}}"
+        aria-pressed="{{if .Active}}true{{else}}false{{end}}"
+        hx-post="{{url "/api/filter-mode"}}" hx-vals='{"filter": "{{.Mode}}"}'
+        hx-target="#rows" hx-swap="innerHTML"
+        hx-include="#search, #sort-mode, #sort-rev">{{template "pill" .}}</button>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "pills-oob"}}<nav class="seg" id="pills" aria-label="Filter jobs by state" hx-swap-oob="true">{{template "pills" .}}</nav>{{end}}
+
+{{/* the filter and sort menu that replaces the pills when the bar is too narrow for them */}}
+{{define "fdd"}}<details class="fdd tb-pop menu" id="fdd">{{template "fdd-body" .}}</details>{{end}}
+
+{{define "fdd-oob"}}<details class="fdd tb-pop menu" id="fdd" hx-swap-oob="true">{{template "fdd-body" .}}</details>{{end}}
+
+{{define "fdd-body"}}
+    <summary class="btn sm" aria-label="Filter and sort">
+        {{if .OnJob}}Jobs{{else}}{{range .Tabs}}{{if .Active}}{{.Label}} <span class="faint" id="fdd-count">{{.Count}}</span>{{end}}{{end}}{{end}}
+        {{template "icon-chev"}}
+    </summary>
+    <div class="tb-menu right">
+        <h6>Show</h6>
+        {{range .Tabs}}
+        {{if $.OnJob}}
+        <a href="{{.Href}}" id="menu-filter-{{.Mode}}">{{if .Dot}}<span class="dot {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}}<em id="mcount-{{.Mode}}">{{.Count}}</em></a>
+        {{else}}
+        <button type="button" class="{{if .Active}}on{{end}}" id="menu-filter-{{.Mode}}"
+                hx-post="{{url "/api/filter-mode"}}" hx-vals='{"filter": "{{.Mode}}"}'
+                hx-target="#rows" hx-swap="innerHTML"
+                hx-include="#search, #sort-mode, #sort-rev">{{if .Dot}}<span class="dot {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}}<em id="mcount-{{.Mode}}">{{.Count}}</em></button>
+        {{end}}
+        {{end}}
+        <hr>
+        <h6>Sort</h6>
+        {{range .SortCols}}
+        {{if $.OnJob}}
+        <a href="{{.Href}}" id="menu-sort-{{.Mode.String}}">{{.Menu}}</a>
+        {{else}}
+        <button type="button" class="{{if .On}}on{{end}}" id="menu-sort-{{.Mode.String}}"
+                hx-post="{{url "/api/sort-mode"}}" hx-vals='{"sort": "{{.Mode.String}}", "rev": "{{.NextRev}}"}'
+                hx-target="#rows" hx-swap="innerHTML"
+                hx-include="#search, #filter-mode">{{.Menu}}{{if .On}}<em data-dir="{{if .Reverse}}up{{else}}down{{end}}">{{template "sort-arrow" .Reverse}}</em>{{end}}</button>
+        {{end}}
+        {{end}}
+    </div>
+{{end}}
+
+{{define "list-state-fields"}}
+<input type="hidden" id="filter-mode" name="filter" value="{{.FilterMode}}">
+<input type="hidden" id="sort-mode" name="sort" value="{{.SortMode}}">
+<input type="hidden" id="sort-rev" name="rev" value="{{if .Reverse}}1{{else}}0{{end}}">
+{{if .OnJob}}<input type="hidden" id="list-search" name="search" value="{{.Search}}">{{end}}
+{{end}}
+
+{{define "list-state"}}<span id="list-state" hidden>{{template "list-state-fields" .}}</span>{{end}}
+
+{{define "list-state-oob"}}<span id="list-state" hidden hx-swap-oob="true">{{template "list-state-fields" .}}</span>{{end}}
+
+{{define "sort-btn"}}
+<button type="button" class="hsort{{if .On}} on{{end}}" id="sort-{{.Mode.String}}"
+        title="Sort by {{.Menu}}; click again to reverse"
+        {{if .On}}data-dir="{{if .Reverse}}up{{else}}down{{end}}"{{end}}
+        hx-post="{{url "/api/sort-mode"}}" hx-vals='{"sort": "{{.Mode.String}}", "rev": "{{.NextRev}}"}'
+        hx-target="#rows" hx-swap="innerHTML"
+        hx-include="#search, #filter-mode">{{.Label}}{{if .On}}{{template "sort-arrow" .Reverse}}{{end}}</button>
+{{end}}
+
+{{define "grid-head"}}
+<span></span>
+<span class="hjob">{{template "sort-btn" index .SortCols 0}}<span class="mcount" id="match-count">{{template "match-count" .}}</span></span>
+<span>History</span>
+<span>Schedule</span>
+{{template "sort-btn" index .SortCols 1}}
+{{template "sort-btn" index .SortCols 2}}
+<span></span>
+{{end}}
+
+{{define "grid-head-oob"}}<div class="grid ihead" id="ihead" hx-swap-oob="true">{{template "grid-head" .}}</div>{{end}}
+
+{{define "match-count"}}{{if eq .MatchCount .TotalCount}}{{.TotalCount}} {{if eq .TotalCount 1}}job{{else}}jobs{{end}}{{else}}{{.MatchCount}} of {{.TotalCount}}{{end}}{{end}}
+
+{{define "pill-counts-oob"}}
+{{range .Tabs}}
+<em id="count-{{.Mode}}" hx-swap-oob="innerHTML">{{.Count}}</em>
+<em id="mcount-{{.Mode}}" hx-swap-oob="innerHTML">{{.Count}}</em>
+{{if and .Active (not $.OnJob)}}<span id="fdd-count" hx-swap-oob="innerHTML">{{.Count}}</span>{{end}}
+{{end}}
+{{end}}
+
+{{define "counts-oob"}}
+{{template "pill-counts-oob" .}}
+<span id="match-count" hx-swap-oob="innerHTML">{{template "match-count" .}}</span>
+{{end}}
+
+{{define "last-line"}}{{if .IsRunning}}<span class="elapsed">running {{humanDuration (since .LastRun)}}</span>{{else if .LastRun.IsZero}}never ran{{else}}{{ago .LastRun}}{{with .LastExitCode}}{{if ne (deref .) 0}} · <span class="bad">exit {{deref .}}</span>{{end}}{{end}}{{end}}{{end}}
+
+{{define "next-line"}}{{if not .Enabled}}<span class="faint">disabled</span>{{else if .NextRun.IsZero}}—{{else}}in {{timeUntil .NextRun}}{{end}}{{end}}
+
+{{/* history bars link to the job page with that run open; empty bars pad the strip to its full width */}}
+{{define "index-strip"}}<span class="strip">{{range .}}{{if .Href}}<a class="{{.Class}}" href="{{.Href}}" data-tip="{{.Tip}}" aria-label="{{.Tip}}" style="height: {{.Height}}%"></a>{{else}}<i class="e"></i>{{end}}{{end}}</span>{{end}}
+
+{{define "grid-rows"}}
+{{range .Rows}}
+<div class="grid it{{if not .Job.Enabled}} off{{end}}" data-job-id="{{.Job.ID}}" data-state="{{template "job-dot" .Job}}">
+    <span class="st"><span class="dot {{template "job-dot" .Job}}" aria-hidden="true"></span><span class="sr-only">{{template "job-state" .Job}}</span></span>
+    <a class="nm{{if not .Job.Name}} cmd{{end}}" id="open-{{.Job.ID}}" href="{{.Link}}" title="{{.Job.Command}}">{{template "job-name" .Job}}</a>
+    <span class="hist">{{template "index-strip" .Strip}}</span>
+    <span class="s sched" title="{{.Job.Schedule}}">{{describeSchedule .Job.Schedule}}</span>
+    <span class="s last">{{template "last-line" .Job}}</span>
+    <span class="s next">{{template "next-line" .Job}}</span>
+    <span class="act">
+        {{if .Job.IsRunning}}
+        {{if $.StopEnabled}}
+        <button type="button" class="ibtn halt" id="stop-{{.Job.ID}}"
+                hx-get="{{url (printf "/api/jobs/%s/stop-form" .Job.ID)}}"
+                hx-target="#dialog-slot" hx-swap="innerHTML"
+                data-tip="Stop this run" aria-label="Stop {{template "job-name" .Job}}">{{template "icon-stop"}}</button>
+        {{end}}
+        {{else if and .Job.Enabled (not $.ManualDisabled)}}
+        <button type="button" class="ibtn go" id="run-{{.Job.ID}}"
+                hx-post="{{url (printf "/api/jobs/%s/run-confirm" .Job.ID)}}"
+                hx-target="#dialog-slot" hx-swap="innerHTML"
+                hx-include="#search, #filter-mode, #sort-mode, #sort-rev"
+                data-tip="Run now" aria-label="Run {{template "job-name" .Job}} now">{{template "icon-play"}}</button>
+        {{end}}
+    </span>
+</div>
+{{else}}
+{{template "jobs-empty" $}}
+{{end}}
+{{end}}
+
+{{define "jobs-empty"}}
+<div class="empty">
+    {{if eq .TotalCount 0}}
+    <b>No jobs configured</b>
+    <p>Add jobs to the crontab file and they will show up here.</p>
+    {{else if .Search}}
+    <b>No {{template "filter-label" .FilterMode.String}}jobs match “{{.Search}}”</b>
+    {{if .HiddenBySearch}}<p>{{.HiddenBySearch}} {{template "filter-label" .FilterMode.String}}{{if eq .HiddenBySearch 1}}job is{{else}}jobs are{{end}} hidden by the search.</p>{{end}}
+    <div class="acts">
+        <button type="button" class="btn" id="clear-search"
+                hx-get="{{url "/api/jobs"}}" hx-vals='{"search": "", "reset-search": "1"}'
+                hx-target="#rows" hx-swap="innerHTML"
+                hx-include="#filter-mode, #sort-mode, #sort-rev">Clear search</button>
+        <button type="button" class="btn" id="show-all"
+                hx-post="{{url "/api/filter-mode"}}" hx-vals='{"filter": "all", "search": "", "reset-search": "1"}'
+                hx-target="#rows" hx-swap="innerHTML"
+                hx-include="#sort-mode, #sort-rev">Show all jobs</button>
+    </div>
+    {{else}}
+    <b>No {{template "filter-label" .FilterMode.String}}jobs</b>
+    <div class="acts">
+        <button type="button" class="btn" id="show-all"
+                hx-post="{{url "/api/filter-mode"}}" hx-vals='{"filter": "all"}'
+                hx-target="#rows" hx-swap="innerHTML"
+                hx-include="#search, #sort-mode, #sort-rev">Show all jobs</button>
+    </div>
+    {{end}}
+</div>
+{{end}}

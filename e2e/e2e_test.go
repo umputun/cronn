@@ -5,13 +5,14 @@
 // Test organization:
 // - e2e_test.go: TestMain, shared helpers, constants, core dashboard tests
 // - auth_test.go: authentication tests (login/logout)
-// - controls_test.go: theme, sort select and filter tabs
-// - search_test.go: search and the empty state
+// - controls_test.go: theme, header sort, filter pills and the narrow filter menu
+// - search_test.go: index search, the empty state and the job page jump list
 // - modals_test.go: settings dialog
-// - manual_test.go: run form (dialog and bottom sheet)
-// - inspector_test.go: job inspector (runs, output, selection, focus)
-// - layout_test.go: table structure, footer, polling, responsive layouts
-// - toggle_test.go: enable/disable jobs
+// - manual_test.go: run confirmation and landing on the run
+// - jobpage_test.go: job page (facts, history bars, runs, output, previous/next)
+// - layout_test.go: grid structure, polling, held clicks, responsive layouts
+// - stop_test.go: stopping runs from a row and from the command bar
+// - toggle_test.go: enable/disable the schedule
 package e2e
 
 import (
@@ -62,8 +63,9 @@ const (
 	jobSilent    = "Silent failure"
 	jobSlow      = "Slow report"
 	jobLive      = "Live tail"
+	jobDated     = "Dated run"
 	jobTemplated = "Templated job"
-	totalJobs    = 9
+	totalJobs    = 10
 )
 
 var (
@@ -194,8 +196,11 @@ func createTestCrontab() error {
     command: "sleep 3"
     name: "Slow report"
   - spec: "0 0 1 1 *"
-    command: 'sh -c "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do for j in 1 2 3 4 5 6; do echo tick \$i line \$j of a line long enough to scroll sideways when log lines are not wrapped in the inspector output pane; done; sleep 1; done"'
+    command: 'sh -c "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do for j in 1 2 3 4 5 6; do echo tick \$i line \$j of a line long enough to scroll sideways when log lines are not wrapped in the output pane; done; sleep 1; done"'
     name: "Live tail"
+  - spec: "0 0 1 1 *"
+    command: "echo dated {{.YYYYMMDD}}"
+    name: "Dated run"
   - spec: "0 0 1 1 *"
     command: "echo run {{.YYYYMMDD}}"
     name: "Templated job"
@@ -287,13 +292,13 @@ func navigateToDashboard(t *testing.T, page playwright.Page) {
 	t.Helper()
 	_, err := page.Goto(baseURL)
 	require.NoError(t, err)
-	waitVisible(t, page.Locator(".top"))
+	waitVisible(t, page.Locator(".tb"))
 	waitForJobsLoaded(t, page)
 }
 
 func waitForJobsLoaded(t *testing.T, page playwright.Page) {
 	t.Helper()
-	err := page.Locator("tr.row").First().WaitFor(playwright.LocatorWaitForOptions{
+	err := page.Locator(".it").First().WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: new(5000.0),
 	})
@@ -301,8 +306,8 @@ func waitForJobsLoaded(t *testing.T, page playwright.Page) {
 }
 
 func row(page playwright.Page, name string) playwright.Locator {
-	return page.Locator("tr.row").Filter(playwright.LocatorFilterOptions{
-		Has: page.Locator(".job-open", playwright.PageLocatorOptions{HasText: name}),
+	return page.Locator(".it").Filter(playwright.LocatorFilterOptions{
+		Has: page.Locator(".nm", playwright.PageLocatorOptions{HasText: name}),
 	})
 }
 
@@ -319,8 +324,57 @@ type apiJob struct {
 	Command    string    `json:"command"`
 	LastRun    time.Time `json:"last_run"`
 	LastStatus string    `json:"last_status"`
+	NextRun    time.Time `json:"next_run"`
 	IsRunning  bool      `json:"is_running"`
 	Enabled    bool      `json:"enabled"`
+}
+
+// allJobs reads every job's state from the status API, by id
+func allJobs(t *testing.T) map[string]apiJob {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/v1/status") //nolint:noctx // test helper
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var status struct {
+		Jobs []apiJob `json:"jobs"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&status))
+	res := make(map[string]apiJob, len(status.Jobs))
+	for _, j := range status.Jobs {
+		res[j.ID] = j
+	}
+	return res
+}
+
+// waitForPoll waits for the next poll of the index rows
+func waitForPoll(t *testing.T, page playwright.Page) {
+	t.Helper()
+	_, err := page.ExpectResponse(jobsRe, func() error { return nil }, playwright.PageExpectResponseOptions{Timeout: new(8000.0)})
+	require.NoError(t, err)
+}
+
+// rowIDs lists the job ids of the grid rows in order
+func rowIDs(t *testing.T, page playwright.Page) []string {
+	t.Helper()
+	res, err := page.Evaluate(`() => [...document.querySelectorAll('.it')].map(r => r.dataset.jobId)`)
+	require.NoError(t, err)
+	list := res.([]any)
+	ids := make([]string, 0, len(list))
+	for _, v := range list {
+		ids = append(ids, v.(string))
+	}
+	return ids
+}
+
+// rowNames lists the names shown in the grid rows in order
+func rowNames(t *testing.T, page playwright.Page) []string {
+	t.Helper()
+	names, err := page.Locator(".it .nm").AllTextContents()
+	require.NoError(t, err)
+	for i := range names {
+		names[i] = strings.TrimSpace(names[i])
+	}
+	return names
 }
 
 func jobStatus(t *testing.T, id string) apiJob {
@@ -378,11 +432,6 @@ func evalBool(t *testing.T, page playwright.Page, expr string, args ...any) bool
 	return b
 }
 
-func activeElementIn(t *testing.T, page playwright.Page, selector string) bool {
-	t.Helper()
-	return evalBool(t, page, `(sel) => { const el = document.querySelector(sel); return !!el && el.contains(document.activeElement); }`, selector)
-}
-
 func noHorizontalScroll(t *testing.T, page playwright.Page) bool {
 	t.Helper()
 	return evalBool(t, page, `() => document.documentElement.scrollWidth <= document.documentElement.clientWidth`)
@@ -405,11 +454,11 @@ func waitHidden(t *testing.T, loc playwright.Locator) {
 }
 
 var (
-	inspectorRe = regexp.MustCompile(`/api/jobs/[^/]+/inspector(\?.*)?$`)
-	outputRe    = regexp.MustCompile(`/api/jobs/[^/]+/executions/\d+/output`)
-	runFormRe   = regexp.MustCompile(`/api/jobs/[^/]+/run-form`)
-	settingsRe  = regexp.MustCompile(`/api/settings/modal`)
-	jobsRe      = regexp.MustCompile(`/api/jobs(\?.*)?$`)
+	outputRe     = regexp.MustCompile(`/api/jobs/[^/]+/executions/\d+/output`)
+	runConfirmRe = regexp.MustCompile(`/api/jobs/[^/]+/run-confirm`)
+	settingsRe   = regexp.MustCompile(`/api/settings/modal`)
+	jobsRe       = regexp.MustCompile(`/api/jobs(\?.*)?$`)
+	factsRe      = regexp.MustCompile(`/api/jobs/[^/]+/facts(\?.*)?$`)
 )
 
 func clickAndAwait(t *testing.T, page playwright.Page, loc playwright.Locator, urlRe *regexp.Regexp) {
@@ -426,27 +475,35 @@ func clickAndAwait(t *testing.T, page playwright.Page, loc playwright.Locator, u
 	require.NoError(t, lastErr)
 }
 
-func openInspector(t *testing.T, page playwright.Page, name string) playwright.Locator {
+// openJob opens a job's page from its grid row and returns the job id
+func openJob(t *testing.T, page playwright.Page, name string) string {
 	t.Helper()
-	// one click, and only this job's open response: a retry or the live poll would hide a dropped click
 	id := jobID(t, page, name)
-	openRe := regexp.MustCompile(`/api/jobs/` + id + `/inspector\?.*selected-job=`)
-	_, err := page.ExpectResponse(openRe, func() error {
-		return row(page, name).Locator(".job-open").Click(playwright.LocatorClickOptions{Timeout: new(3000.0)})
-	}, playwright.PageExpectResponseOptions{Timeout: new(4000.0)})
+	require.NoError(t, row(page, name).Locator(".nm").Click())
+	waitJobPage(t, page, id)
+	return id
+}
+
+// gotoJob loads a job's page directly; query is appended as is ("" or "?...")
+func gotoJob(t *testing.T, page playwright.Page, id, query string) {
+	t.Helper()
+	_, err := page.Goto(baseURL + "/jobs/" + id + query)
 	require.NoError(t, err)
-	insp := page.Locator("#inspector .insp")
-	waitVisible(t, insp)
-	require.Eventually(t, func() bool {
-		got, e := insp.GetAttribute("data-job-id")
-		return e == nil && got == id
-	}, 3*time.Second, 50*time.Millisecond, "the inspector shows the job that was clicked")
-	return insp
+	waitJobPage(t, page, id)
+}
+
+func waitJobPage(t *testing.T, page playwright.Page, id string) {
+	t.Helper()
+	require.NoError(t, page.WaitForURL(regexp.MustCompile(`/jobs/`+id)))
+	waitVisible(t, page.Locator("#jp"))
+	got, err := page.Locator("#jp").GetAttribute("data-job-id")
+	require.NoError(t, err)
+	require.Equal(t, id, got)
 }
 
 func clickThemeToggle(t *testing.T, page playwright.Page, prev string) string {
 	t.Helper()
-	require.NoError(t, page.Locator(".iconbtn.theme").Click())
+	require.NoError(t, page.Locator("#theme-toggle").Click())
 	var cur string
 	require.Eventually(t, func() bool {
 		v, e := page.Locator("html").GetAttribute("data-theme")
@@ -468,26 +525,39 @@ func countOf(t *testing.T, page playwright.Page, mode string) int {
 	return n
 }
 
+// consoleErrors collects the page's console errors from now on
+func consoleErrors(page playwright.Page) *[]string {
+	errs := &[]string{}
+	page.OnConsole(func(msg playwright.ConsoleMessage) {
+		if msg.Type() == "error" {
+			*errs = append(*errs, msg.Text())
+		}
+	})
+	return errs
+}
+
 // --- dashboard tests ---
 
 func TestDashboard_PageLoads(t *testing.T) {
 	page := newPage(t)
+	errs := consoleErrors(page)
 	navigateToDashboard(t, page)
 
 	title, err := page.Title()
 	require.NoError(t, err)
-	assert.Equal(t, "Cronn Dashboard", title)
+	assert.Equal(t, "cronn", title)
 
-	text, err := page.Locator(".host").TextContent()
+	text, err := page.Locator(".tb-host").TextContent()
 	require.NoError(t, err)
 	assert.Contains(t, text, "e2e-test")
+	assert.Empty(t, *errs)
 }
 
 func TestDashboard_ShowsJobsByName(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	count, err := page.Locator("tr.row").Count()
+	count, err := page.Locator(".it").Count()
 	require.NoError(t, err)
 	assert.Equal(t, totalJobs, count)
 
@@ -497,25 +567,29 @@ func TestDashboard_ShowsJobsByName(t *testing.T) {
 		assert.True(t, rowVisible, "row for %q should be visible", name)
 	}
 
-	cmd, err := row(page, jobHourly).Locator(".cmd").TextContent()
+	cmd, err := row(page, jobHourly).Locator(".nm").GetAttribute("title")
 	require.NoError(t, err)
-	assert.Equal(t, `echo "job2: hourly"`, cmd)
+	assert.Equal(t, `echo "job2: hourly"`, cmd, "the command shows on hover")
 
-	unnamed, err := row(page, jobUnnamed).Locator(".job-open").TextContent()
+	unnamed := row(page, jobUnnamed).Locator(".nm.cmd")
+	text, err := unnamed.TextContent()
 	require.NoError(t, err)
-	assert.Equal(t, jobUnnamed, unnamed, "an unnamed job shows its command as its name")
+	assert.Equal(t, jobUnnamed, text, "an unnamed job shows its command as its name")
 }
 
 func TestDashboard_ShowsReadableSchedule(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	text, err := row(page, jobHourly).Locator("td.c-sched").TextContent()
+	sched := row(page, jobHourly).Locator(".sched")
+	text, err := sched.TextContent()
 	require.NoError(t, err)
-	assert.Contains(t, text, "Every hour")
-	assert.Contains(t, text, "0 * * * *")
+	assert.Equal(t, "Every hour", text)
+	spec, err := sched.GetAttribute("title")
+	require.NoError(t, err)
+	assert.Equal(t, "0 * * * *", spec)
 
-	text, err = row(page, jobWeekday).Locator("td.c-sched").TextContent()
+	text, err = row(page, jobWeekday).Locator(".sched").TextContent()
 	require.NoError(t, err)
 	assert.Contains(t, text, "At 08:30, Monday through Friday")
 }
@@ -528,27 +602,7 @@ func TestDashboard_FilterTabCountsAddUp(t *testing.T) {
 	sum := countOf(t, page, "failed") + countOf(t, page, "running") + countOf(t, page, "success") +
 		countOf(t, page, "idle") + countOf(t, page, "disabled")
 	assert.Equal(t, totalJobs, all)
-	assert.Equal(t, all, sum, "tab counts should add up to all jobs")
-}
-
-func TestDashboard_FailingAlertOpensInspector(t *testing.T) {
-	page := newPage(t)
-	navigateToDashboard(t, page)
-	id := jobID(t, page, jobFailing)
-	setEnabled(t, id, true)
-	runJob(t, id)
-
-	alert := page.Locator("#failing-alert .alert")
-	require.Eventually(t, func() bool {
-		txt, err := alert.TextContent()
-		return err == nil && strings.Contains(txt, "failing")
-	}, 10*time.Second, 200*time.Millisecond, "alert should appear after the failed run")
-
-	clickAndAwait(t, page, alert.Locator("button.go"), inspectorRe)
-	waitVisible(t, page.Locator("#inspector .insp"))
-	heading, err := page.Locator("#inspector h3").TextContent()
-	require.NoError(t, err)
-	assert.NotEmpty(t, heading)
+	assert.Equal(t, all, sum, "pill counts should add up to all jobs")
 }
 
 func TestDashboard_HasSearchBox(t *testing.T) {
@@ -561,5 +615,5 @@ func TestDashboard_HasSearchBox(t *testing.T) {
 
 	placeholder, err := page.Locator("#search").GetAttribute("placeholder")
 	require.NoError(t, err)
-	assert.Equal(t, "Filter by name or command", placeholder)
+	assert.Equal(t, "Filter jobs", placeholder)
 }

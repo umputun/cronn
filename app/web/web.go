@@ -11,7 +11,6 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -119,34 +118,34 @@ type JobEvent struct {
 	LiveOutput      func() string // started events only; nil when output capture is disabled
 }
 
-// TemplateData holds data for templates
+// TemplateData holds the data every page and the top bar render
 type TemplateData struct {
-	Jobs               []persistence.JobInfo
-	CurrentYear        int
-	BaseURL            string // base URL path for reverse proxy (e.g., /cronn)
-	Hostname           string // hostname to display in UI
+	Rows               []indexRow // index rows, in list order
+	BaseURL            string     // base URL path for reverse proxy (e.g., /cronn)
+	Hostname           string     // hostname to display in UI
+	PageTitle          string     // job name on a job page, empty on the index
 	Theme              enums.Theme
 	SortMode           enums.SortMode
 	FilterMode         enums.FilterMode
-	Search             string                // search term applied to the job list
-	SelectedJob        string                // id of the job open in the inspector, marks its row
-	Failing            []persistence.JobInfo // enabled jobs whose last run failed, most recent first
-	TotalCount         int                   // all jobs, disabled included
-	RunningCount       int                   // enabled jobs running now
-	SuccessCount       int                   // enabled jobs whose last run succeeded
-	FailedCount        int                   // enabled jobs whose last run failed
-	IdleCount          int                   // enabled jobs that have not run yet
-	DisabledCount      int                   // disabled jobs
-	MatchCount         int                   // jobs shown after search and filter
-	HiddenBySearch     int                   // jobs the filter would show that the search hides, set when none match
-	Tabs               []filterTab           // filter tabs with their counts, in display order
-	AuthEnabled        bool                  // whether authentication is enabled
-	Version            string                // application version (short form)
-	FullVersion        string                // full application version
-	ManualDisabled     bool                  // whether manual job execution is disabled
-	StopEnabled        bool                  // whether a running job can be stopped
-	CommandEditEnabled bool                  // whether command editing is enabled in manual run dialog
-	NeighborsEnabled   bool                  // whether neighbor instances selector is enabled
+	Reverse            bool        // sort flipped
+	Search             string      // search term applied to the job list
+	IndexLink          string      // index URL with the list state
+	OnJob              bool        // rendering a job page: pills and menu entries link back to the index
+	TotalCount         int         // all jobs, disabled included
+	RunningCount       int         // enabled jobs running now
+	SuccessCount       int         // enabled jobs whose last run succeeded
+	FailedCount        int         // enabled jobs whose last run failed
+	IdleCount          int         // enabled jobs that have not run yet
+	DisabledCount      int         // disabled jobs
+	MatchCount         int         // jobs shown after search and filter
+	HiddenBySearch     int         // jobs the filter would show that the search hides, set when none match
+	Tabs               []filterTab // filter pills with their counts, in display order
+	SortCols           []sortCol   // sortable columns: crontab order, last run, next run
+	AuthEnabled        bool        // whether authentication is enabled
+	ManualDisabled     bool        // whether manual job execution is disabled
+	StopEnabled        bool        // whether a running job can be stopped
+	CommandEditEnabled bool        // whether the command can be edited for a manual run
+	NeighborsEnabled   bool        // whether neighbor instances selector is enabled
 }
 
 // newTemplateData creates a TemplateData with common fields populated from request
@@ -166,7 +165,6 @@ func (s *Server) newTemplateData(r *http.Request) TemplateData {
 // jobsStats holds statistics about jobs
 type jobsStats struct {
 	jobs           []persistence.JobInfo
-	failing        []persistence.JobInfo
 	totalCount     int
 	runningCount   int
 	successCount   int
@@ -399,8 +397,9 @@ func (s *Server) routes() http.Handler {
 		router.HandleFunc("GET /logout", s.handleLogout)
 	}
 
-	// dashboard route; exact match so unknown paths get 404 instead of the dashboard
-	router.HandleFunc("GET /{$}", s.handleDashboard)
+	// pages; the index route is an exact match so unknown paths get 404 instead of the index
+	router.HandleFunc("GET /{$}", s.handleIndex)
+	router.HandleFunc("GET /jobs/{id}", s.handleJobPage)
 
 	// api routes with grouping (HTMX endpoints)
 	router.Mount("/api").Route(func(api *routegroup.Bundle) {
@@ -413,12 +412,14 @@ func (s *Server) routes() http.Handler {
 		api.HandleFunc("POST /theme", s.handleThemeToggle)
 		api.HandleFunc("POST /sort-mode", s.handleSortModeChange)
 		api.HandleFunc("POST /filter-mode", s.handleFilterModeChange)
-		api.HandleFunc("GET /jobs/{id}/run-form", s.handleRunForm)
+		api.HandleFunc("GET /jobs/jump", s.handleJump)
+		api.HandleFunc("POST /jobs/{id}/run-confirm", s.handleRunConfirm)
 		api.HandleFunc("POST /jobs/{id}/run", s.handleRunJob)
 		api.HandleFunc("POST /jobs/{id}/toggle", s.handleToggleJob)
 		api.HandleFunc("GET /jobs/{id}/stop-form", s.handleStopForm)
 		api.HandleFunc("POST /jobs/{id}/stop", s.handleStopRun)
-		api.HandleFunc("GET /jobs/{id}/inspector", s.handleInspector)
+		api.HandleFunc("GET /jobs/{id}/facts", s.handleJobFacts)
+		api.HandleFunc("GET /jobs/{id}/runs", s.handleJobRuns)
 		api.HandleFunc("GET /jobs/{id}/executions/{exec_id}/output", s.handleRunOutput)
 		api.HandleFunc("GET /jobs/{id}/live-output", s.handleLiveOutput)
 		api.HandleFunc("GET /settings/modal", s.handleSettingsModal)
@@ -482,24 +483,26 @@ func (s *Server) parseTemplates() (map[string]*template.Template, error) {
 		"ago":              s.ago,
 		"runDuration":      s.runDuration,
 		"clock":            s.clock,
+		"when":             s.when,
 		"deref":            s.deref,
 	}
 
-	// parse base template with all partials
-	base, err := template.New("base.html").Funcs(funcMap).ParseFS(templatesFS,
-		"templates/base.html", "templates/dashboard.html", "templates/partials/*.html")
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse base template: %w", err)
+	// each page is its own set, so each defines "main" once; partials alone serve the htmx fragments
+	pages := map[string]string{"index": "templates/index.html", "job": "templates/job.html"}
+	for name, file := range pages {
+		set, err := template.New("layout.html").Funcs(funcMap).ParseFS(templatesFS,
+			"templates/layout.html", file, "templates/partials/*.html")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s template: %w", name, err)
+		}
+		templates[name] = set
 	}
-	templates["base.html"] = base
 
-	// parse partials separately for HTMX requests
-	partials, err := template.New("jobs.html").Funcs(funcMap).ParseFS(templatesFS,
-		"templates/partials/*.html")
+	partials, err := template.New("partials").Funcs(funcMap).ParseFS(templatesFS, "templates/partials/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse partials: %w", err)
 	}
-	templates["partials/jobs.html"] = partials
+	templates["partials"] = partials
 
 	// parse login template (standalone, doesn't use base)
 	login, err := template.New("login.html").Funcs(funcMap).ParseFS(templatesFS, "templates/login.html")
@@ -658,6 +661,15 @@ func (s *Server) clock(t time.Time) string {
 	return t.Format("Jan 2 15:04")
 }
 
+// when labels a run by its start: the time with seconds today, the date and time otherwise
+func (s *Server) when(t time.Time) string {
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return t.Format("15:04:05")
+	}
+	return t.Format("Jan 2 15:04")
+}
+
 // deref returns the value of a nullable exit code; templates call it only after a nil check
 func (s *Server) deref(p *int) int {
 	if p == nil {
@@ -708,18 +720,4 @@ func (s *Server) IsJobDisabled(jobID string) bool {
 func HashCommand(cmd string) string {
 	h := sha256.Sum256([]byte(cmd))
 	return hex.EncodeToString(h[:])
-}
-
-// shortVersion extracts a short version string from full version
-// for version like "v1.7.0-abc1234-20241225", returns "v1.7.0"
-// for version like "v1.7.0", returns "v1.7.0"
-func shortVersion(fullVer string) string {
-	if fullVer == "" || fullVer == "unknown" {
-		return fullVer
-	}
-	// extract version before first dash
-	if idx := strings.Index(fullVer, "-"); idx > 0 {
-		return fullVer[:idx]
-	}
-	return fullVer
 }

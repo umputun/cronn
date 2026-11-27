@@ -254,66 +254,51 @@ func TestServer_Templates(t *testing.T) {
 	require.NoError(t, err)
 	defer server.store.Close()
 
-	// test that templates are parsed correctly
-	// all templates are parsed into the base template
-	t.Run("base template exists", func(t *testing.T) {
-		tmpl := server.templates["base.html"]
-		assert.NotNil(t, tmpl, "base template should be parsed")
+	t.Run("each page is its own set with the partials", func(t *testing.T) {
+		for _, name := range []string{"index", "job", "partials", "login"} {
+			assert.NotNil(t, server.templates[name], name)
+		}
+		assert.Nil(t, server.templates["base.html"])
+		for _, page := range []string{"index", "job"} {
+			tmpl := server.templates[page]
+			for _, name := range []string{"layout", "main", "grid-rows", "job-facts", "job-output", "run-confirm",
+				"stop-form", "settings-modal", "jump-list"} {
+				assert.NotNil(t, tmpl.Lookup(name), "%s: %s template should be defined", page, name)
+			}
+			for _, name := range []string{"inspector", "jobs-table", "failing-alert", "run-form"} {
+				assert.Nil(t, tmpl.Lookup(name), "%s: %s template is gone", page, name)
+			}
+		}
+		assert.Nil(t, server.templates["partials"].Lookup("layout"), "partials hold no page shell")
 	})
 
-	// check that important templates are defined in the base template
-	t.Run("check defined templates", func(t *testing.T) {
-		tmpl := server.templates["base.html"]
-		require.NotNil(t, tmpl)
-
-		// check for key templates
-		main := tmpl.Lookup("main")
-		assert.NotNil(t, main, "main template should be defined")
-
-		for _, name := range []string{"jobs-table", "jobs-controls", "failing-alert", "inspector", "inspector-live", "inspector-live-poll",
-			"run-output", "run-form", "settings-modal"} {
-			assert.NotNil(t, tmpl.Lookup(name), "%s template should be defined", name)
-		}
-		assert.Nil(t, tmpl.Lookup("jobs-cards"))
-		assert.Nil(t, tmpl.Lookup("jobs-list"))
-	})
-
-	t.Run("execute jobs-table template", func(t *testing.T) {
-		tmpl := server.templates["base.html"]
-		require.NotNil(t, tmpl)
-		jobsTable := tmpl.Lookup("jobs-table")
-		require.NotNil(t, jobsTable)
-
-		data := TemplateData{
-			Jobs: []persistence.JobInfo{
-				{
-					ID:         "test123",
-					Command:    "echo test",
-					Schedule:   "* * * * *",
-					LastStatus: enums.JobStatusSuccess,
-					LastRun:    time.Now(),
-					NextRun:    time.Now().Add(time.Minute),
-					IsRunning:  false,
-					Enabled:    true,
-				},
-			},
-		}
+	t.Run("execute grid-rows template", func(t *testing.T) {
+		job := persistence.JobInfo{ID: "test123", Command: "echo test", Schedule: "* * * * *",
+			LastStatus: enums.JobStatusSuccess, LastRun: time.Now(), NextRun: time.Now().Add(time.Minute), Enabled: true}
+		data := TemplateData{Rows: []indexRow{{Job: job, Link: "/jobs/test123?filter=all",
+			Strip: []stripBar{{Class: "e"}, {Key: "7", Class: "ok", Height: 60, Tip: "ok run", Href: "/jobs/test123?run=7"}}}}}
 
 		var buf strings.Builder
-		err := jobsTable.Execute(&buf, data)
-		require.NoError(t, err)
-
+		require.NoError(t, server.templates["partials"].ExecuteTemplate(&buf, "grid-rows", data))
 		output := buf.String()
 		assert.Contains(t, output, "echo test")
-		assert.Contains(t, output, "* * * * *")
 		assert.Contains(t, output, "Every minute")
 		assert.Contains(t, output, `<span class="dot ok"`)
+		assert.Contains(t, output, `href="/jobs/test123?filter=all"`)
+		assert.Contains(t, output, `<i class="e"></i><a class="ok" href="/jobs/test123?run=7" data-tip="ok run"`)
+		assert.Contains(t, output, `style="height: 60%"`)
 	})
 }
 
 func TestTemplateHelpers(t *testing.T) {
 	// create a minimal server instance for testing
 	s := &Server{}
+
+	t.Run("when", func(t *testing.T) {
+		today := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 9, 5, 7, 0, time.Local)
+		assert.Equal(t, "09:05:07", s.when(today))
+		assert.Equal(t, "Jan 2 09:05", s.when(time.Date(2001, 1, 2, 9, 5, 7, 0, time.Local)))
+	})
 
 	t.Run("ago", func(t *testing.T) {
 		assert.Equal(t, "never", s.ago(time.Time{}))
@@ -643,52 +628,6 @@ func TestServer_Run(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not stop in time")
-	}
-}
-
-func Test_shortVersion(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "full version with commit and date",
-			input:    "v1.7.0-abc1234-20241225",
-			expected: "v1.7.0",
-		},
-		{
-			name:     "full version with dev and date",
-			input:    "v1.7.0-dev-20251111",
-			expected: "v1.7.0",
-		},
-		{
-			name:     "simple version without extras",
-			input:    "v1.7.0",
-			expected: "v1.7.0",
-		},
-		{
-			name:     "unknown version",
-			input:    "unknown",
-			expected: "unknown",
-		},
-		{
-			name:     "empty version",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "version with single dash",
-			input:    "v2.0.0-beta",
-			expected: "v2.0.0",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := shortVersion(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
 	}
 }
 

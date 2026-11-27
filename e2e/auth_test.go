@@ -89,7 +89,7 @@ func ensureAuthLoggedIn(t *testing.T, page playwright.Page) {
 		require.NoError(t, page.Locator("button[type='submit']").Click())
 	}
 
-	waitVisible(t, page.Locator(".top"))
+	waitVisible(t, page.Locator(".tb"))
 }
 
 func TestAuth_LoginPageDisplays(t *testing.T) {
@@ -129,8 +129,9 @@ func TestAuth_LoginValid(t *testing.T) {
 	url := page.URL()
 	assert.Equal(t, authBaseURL+"/", url, "should be redirected to dashboard")
 
-	// verify logout link is visible (indicates logged in)
-	visible, err := page.Locator("a[href='/logout']").IsVisible()
+	// verify logout link is in the settings menu (indicates logged in)
+	require.NoError(t, page.Locator("#gear-menu summary").Click())
+	visible, err := page.Locator("#logout").IsVisible()
 	require.NoError(t, err)
 	assert.True(t, visible, "logout link should be visible after login")
 }
@@ -167,8 +168,8 @@ func TestAuth_Logout(t *testing.T) {
 	page := newPage(t)
 	ensureAuthLoggedIn(t, page)
 
-	// click logout link
-	require.NoError(t, page.Locator("a[href='/logout']").Click())
+	require.NoError(t, page.Locator("#gear-menu summary").Click())
+	require.NoError(t, page.Locator("#logout").Click())
 	require.NoError(t, page.WaitForURL("**/login"))
 
 	// verify we're redirected to login page
@@ -188,7 +189,7 @@ func TestAuth_ExpiredSessionPollRedirectsToLogin(t *testing.T) {
 	visible, err := page.Locator("input[name='password']").IsVisible()
 	require.NoError(t, err)
 	assert.True(t, visible, "the whole page should be the login form, not a fragment inside the dashboard")
-	count, err := page.Locator("#jobs-container").Count()
+	count, err := page.Locator("#rows").Count()
 	require.NoError(t, err)
 	assert.Zero(t, count)
 }

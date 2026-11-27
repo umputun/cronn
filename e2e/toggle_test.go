@@ -12,52 +12,80 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func waitWeekdayDisabled(t *testing.T, page playwright.Page) {
+func waitWeekdayState(t *testing.T, page playwright.Page, off bool) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		s, err := row(page, jobWeekday).GetAttribute("data-state")
-		return err == nil && s == "off"
-	}, 8*time.Second, 100*time.Millisecond, "row %q should be disabled", jobWeekday)
+		return err == nil && s != "" && (s == "off") == off
+	}, 8*time.Second, 100*time.Millisecond, "row %q disabled=%v", jobWeekday, off)
 }
 
-func waitRowEnabled(t *testing.T, page playwright.Page, name string) {
-	t.Helper()
-	require.Eventually(t, func() bool {
-		s, err := row(page, name).GetAttribute("data-state")
-		return err == nil && s != "" && s != "off"
-	}, 8*time.Second, 100*time.Millisecond, "row %q should be enabled", name)
-}
-
-func TestToggle_DisableFromRowAndEnableBack(t *testing.T) {
+func TestToggle_DisableFromJobPageAndEnableBack(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 	id := jobID(t, page, jobWeekday)
 	setEnabled(t, id, true)
-	waitRowEnabled(t, page, jobWeekday)
+	t.Cleanup(func() { setEnabled(t, id, true) })
 	disabledBefore := countOf(t, page, "disabled")
+	gotoJob(t, page, id, "")
 
-	require.NoError(t, row(page, jobWeekday).Locator(".toggle-btn").Click())
-	waitWeekdayDisabled(t, page)
-	assert.False(t, jobStatus(t, id).Enabled)
-
-	r := row(page, jobWeekday)
-	tag, err := r.Locator(".tag.off").TextContent()
+	sw := page.Locator("#toggle-" + id)
+	require.NoError(t, sw.Click())
+	waitVisible(t, page.Locator(`#toggle-`+id+`[aria-checked="false"]`))
+	toast, err := page.Locator("#toasts .t").TextContent()
 	require.NoError(t, err)
-	assert.Equal(t, "disabled", tag)
-	next, err := r.Locator("td.c-next").TextContent()
+	assert.Contains(t, toast, "Schedule disabled: "+jobWeekday)
+	assert.False(t, jobStatus(t, id).Enabled)
+	waitHidden(t, page.Locator("#run-now"))
+	note, err := page.Locator("#runact").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, note, "Enable the schedule to run this job")
+	next, err := page.Locator("#fact-next").TextContent()
+	require.NoError(t, err)
+	assert.Equal(t, "—", strings.TrimSpace(next))
+	badge, err := page.Locator("#job-badge").TextContent()
+	require.NoError(t, err)
+	assert.Equal(t, "Disabled", strings.TrimSpace(badge))
+	assert.Equal(t, disabledBefore+1, countOf(t, page, "disabled"), "the pill count follows")
+	require.NoError(t, page.Locator("#cmdin").Press("Enter"))
+	assert.Never(t, func() bool {
+		count, e := page.Locator("#run-dialog").Count()
+		return e != nil || count > 0
+	}, 1*time.Second, 100*time.Millisecond, "Enter in the command of a disabled job opens no confirmation")
+	assert.True(t, focusOn(t, page, "cmdin"), "focus stays in the command field")
+
+	require.NoError(t, page.Locator("#toggle-"+id).Click())
+	waitVisible(t, page.Locator(`#toggle-`+id+`[aria-checked="true"]`))
+	waitVisible(t, page.Locator("#run-now"))
+	assert.True(t, jobStatus(t, id).Enabled)
+	readonly, err := page.Locator("#cmdin").GetAttribute("readonly")
+	require.NoError(t, err)
+	assert.Empty(t, readonly, "the command stays editable")
+	require.NoError(t, page.Locator("#cmdin").Fill(`echo "edited after enable"`))
+	val, err := page.Locator("#cmdin").InputValue()
+	require.NoError(t, err)
+	assert.Equal(t, `echo "edited after enable"`, val)
+}
+
+func TestToggle_DisabledRowHasNoRunButton(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobWeekday)
+	setEnabled(t, id, false)
+	t.Cleanup(func() { setEnabled(t, id, true) })
+
+	waitWeekdayState(t, page, true)
+	r := row(page, jobWeekday)
+	next, err := r.Locator(".next").TextContent()
 	require.NoError(t, err)
 	assert.Contains(t, next, "disabled", "a disabled job shows no next run")
-	count, err := r.Locator(".run-btn").Count()
+	count, err := r.Locator("#run-" + id).Count()
 	require.NoError(t, err)
-	assert.Zero(t, count, "a disabled job offers Enable instead of Run")
-	assert.Equal(t, disabledBefore+1, countOf(t, page, "disabled"))
+	assert.Zero(t, count, "a disabled job offers no Run")
 
-	require.NoError(t, r.Locator("button", playwright.LocatorLocatorOptions{HasText: "Enable"}).Click())
-	waitRowEnabled(t, page, jobWeekday)
-	assert.True(t, jobStatus(t, id).Enabled)
-	next, err = row(page, jobWeekday).Locator("td.c-next").TextContent()
-	require.NoError(t, err)
-	assert.Contains(t, next, "in ")
+	setEnabled(t, id, true)
+	waitWeekdayState(t, page, false)
+	waitVisible(t, row(page, jobWeekday).Locator("#run-"+id))
 }
 
 func TestToggle_DisabledTabListsOnlyDisabledJobs(t *testing.T) {
@@ -67,12 +95,11 @@ func TestToggle_DisabledTabListsOnlyDisabledJobs(t *testing.T) {
 	setEnabled(t, id, false)
 	t.Cleanup(func() { setEnabled(t, id, true) })
 
-	waitWeekdayDisabled(t, page)
-	clickTab(t, page, "Disabled")
-	names := rowNames(t, page)
-	assert.Contains(t, names, jobWeekday)
-	assert.True(t, evalBool(t, page, `() => [...document.querySelectorAll('tr.row')].every(r => r.dataset.state === 'off')`))
-	clickTab(t, page, "All")
+	waitWeekdayState(t, page, true)
+	clickPill(t, page, "disabled")
+	assert.Contains(t, rowNames(t, page), jobWeekday)
+	assert.True(t, evalBool(t, page, `() => [...document.querySelectorAll('.it')].every(r => r.dataset.state === 'off')`))
+	clickPill(t, page, "all")
 }
 
 func TestToggle_PersistsAcrossReload(t *testing.T) {
@@ -85,27 +112,5 @@ func TestToggle_PersistsAcrossReload(t *testing.T) {
 	_, err := page.Reload()
 	require.NoError(t, err)
 	waitForJobsLoaded(t, page)
-	waitWeekdayDisabled(t, page)
-}
-
-func TestToggle_FromInspector(t *testing.T) {
-	page := newPage(t)
-	navigateToDashboard(t, page)
-	id := jobID(t, page, jobWeekday)
-	setEnabled(t, id, true)
-
-	openInspector(t, page, jobWeekday)
-	require.NoError(t, page.Locator("#insp-toggle").Click())
-	require.Eventually(t, func() bool {
-		txt, err := page.Locator("#insp-toggle").TextContent()
-		return err == nil && strings.TrimSpace(txt) == "Enable"
-	}, 8*time.Second, 100*time.Millisecond, "the inspector refreshes after the toggle")
-	assert.Contains(t, inspectorText(t, page, ".chips"), "Disabled")
-	count, err := page.Locator("#insp-run").Count()
-	require.NoError(t, err)
-	assert.Zero(t, count, "a disabled job has no Run now button")
-	waitWeekdayDisabled(t, page)
-
-	require.NoError(t, page.Locator("#insp-toggle").Click())
-	waitRowEnabled(t, page, jobWeekday)
+	waitWeekdayState(t, page, true)
 }

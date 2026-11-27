@@ -20,7 +20,7 @@ func TestServer_handleNeighbors(t *testing.T) {
 		{{define "neighbors-list"}}{{if .Neighbors}}<div class="neighbors-list">{{range .Neighbors}}<a href="{{.URL}}" class="neighbor-item">{{.Name}}</a>{{end}}</div>{{else}}<div class="neighbors-error">No neighbors configured</div>{{end}}{{end}}
 		{{define "neighbors-error"}}<div class="neighbors-error">{{.Error}}</div>{{end}}
 	`))
-	templates := map[string]*template.Template{"partials/jobs.html": tmpl}
+	templates := map[string]*template.Template{"partials": tmpl}
 
 	t.Run("returns error message when neighbors not configured", func(t *testing.T) {
 		srv := &Server{neighborsURL: "", templates: templates}

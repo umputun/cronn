@@ -77,14 +77,14 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", http.NoBody)
 		w := httptest.NewRecorder()
 
-		server.handleDashboard(w, req)
+		server.handleIndex(w, req)
 
 		resp := w.Result()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
 
 		body := w.Body.String()
-		assert.Contains(t, body, "Cronn Dashboard")
+		assert.Contains(t, body, "<title>cronn</title>")
 		assert.Contains(t, body, "htmx")
 		assert.Contains(t, body, "hx-get=\"/api/jobs\"")
 	})
@@ -99,8 +99,7 @@ func TestServer_IntegrationHandlers(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		body := w.Body.String()
-		assert.Contains(t, body, `<table class="jobs">`)
-		assert.Equal(t, 3, strings.Count(body, `<tr class="row`))
+		assert.Equal(t, 3, strings.Count(body, `<div class="grid it`))
 		assert.Contains(t, body, "echo hourly")
 		assert.Contains(t, body, "echo five-minutes")
 		assert.Contains(t, body, "echo daily")
@@ -1319,12 +1318,12 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// read body and check for neighbors-selector class (only present when NeighborsEnabled)
+		// the host menu is present only when NeighborsEnabled
 		buf := make([]byte, 64*1024)
 		n, _ := resp.Body.Read(buf)
 		body := string(buf[:n])
 
-		assert.Contains(t, body, "neighbors-selector", "dashboard should contain neighbors-selector when configured")
+		assert.Contains(t, body, `id="host-menu"`, "dashboard should contain the host menu when configured")
 		assert.Contains(t, body, "<details", "dashboard should use details element for dropdown")
 	})
 
@@ -1366,7 +1365,7 @@ func TestServer_NeighborsIntegration(t *testing.T) {
 		n, _ := resp.Body.Read(buf)
 		body := string(buf[:n])
 
-		assert.NotContains(t, body, "neighbors-selector", "dashboard should not contain neighbors-selector when not configured")
+		assert.NotContains(t, body, `id="host-menu"`, "dashboard should not contain neighbors-selector when not configured")
 		assert.NotContains(t, body, "hx-get=\"/api/neighbors\"", "dashboard should not have neighbors HTMX call when not configured")
 	})
 }

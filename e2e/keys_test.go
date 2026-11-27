@@ -115,8 +115,26 @@ func TestKeys_ArrowDownFromSearchEntersTheList(t *testing.T) {
 	require.Eventually(t, func() bool { ids := rowIDs(t, page); return len(ids) == 1 && ids[0] == hourly },
 		5*time.Second, 50*time.Millisecond)
 	press(t, page, "ArrowDown")
+	require.Eventually(t, func() bool { return cursorID(t, page) == hourly }, 5*time.Second, 50*time.Millisecond)
 	assert.False(t, focusOn(t, page, "search"))
-	assert.Equal(t, hourly, cursorID(t, page))
+	press(t, page, "Enter")
+	waitJobPage(t, page, hourly)
+}
+
+func TestKeys_ArrowDownFromSearchWaitsForRowsOfItsQuery(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	hourly := jobID(t, page, jobHourly)
+	require.NotEqual(t, hourly, rowIDs(t, page)[0])
+	blurFocus(t, page)
+
+	delayRoute(t, page, jobsRe, time.Second)
+	press(t, page, "/")
+	require.NoError(t, page.Keyboard().Type("hourly"))
+	press(t, page, "ArrowDown")
+	require.Eventually(t, func() bool { return cursorID(t, page) == hourly }, 5*time.Second, 50*time.Millisecond,
+		"the cursor lands on the first row of the query in the field")
+	assert.False(t, focusOn(t, page, "search"))
 	press(t, page, "Enter")
 	waitJobPage(t, page, hourly)
 }

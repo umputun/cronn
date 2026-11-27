@@ -184,7 +184,7 @@ function uiPollDone(container, evt) {
 // the keyboard map: each key focuses and clicks the element the mouse would use, so a key sends the same
 // request a click does. The index cursor row is kept by job id because polls replace the rows
 let uiCursor = '';
-let uiOpenFirst = false;
+let uiAfterRows = ''; // what the index search waits for its rows to do: '', 'open' or 'cursor'
 
 function uiClick(el) {
     if (!el) return;
@@ -260,22 +260,30 @@ document.addEventListener('htmx:afterSettle', function (evt) {
     if (id !== 'rows') return;
     uiMarkCursor();
     const search = document.getElementById('search');
-    if (!uiOpenFirst || !search) return;
-    // rows of an older query, from a poll or a search already in flight, are not the match Enter asked for
+    if (!uiAfterRows || !search) return;
+    // rows of an older query, from a poll or a search already in flight, are not the ones Enter or the down
+    // arrow asked for
     const sent = new URL(evt.detail.xhr.responseURL, location.href).searchParams.get('search') || '';
     if (sent !== search.value) return;
-    uiOpenFirst = false;
+    const after = uiAfterRows;
+    uiAfterRows = '';
+    if (after === 'cursor') {
+        uiCursor = '';
+        uiMoveCursor(1);
+        return;
+    }
     const first = document.querySelector('#rows .it .nm');
     if (first) first.click();
 });
 ['htmx:responseError', 'htmx:sendError'].forEach(function (name) {
     document.addEventListener(name, function (evt) {
-        if (evt.target.id === 'search') uiOpenFirst = false;
+        if (evt.target.id === 'search') uiAfterRows = '';
     });
 });
 
 // uiFieldKey handles the keys a text field gives the map: Esc leaves the field, Enter in the index search
-// opens the first match once the filtered rows arrive, and the jump field drives its list
+// opens the first match and the down arrow moves the cursor onto it, both once the filtered rows arrive, and
+// the jump field drives its list
 function uiFieldKey(evt) {
     const field = evt.target;
     const jump = field.id === 'search' && document.getElementById('jdrop');
@@ -294,18 +302,13 @@ function uiFieldKey(evt) {
         else item.click();
         return;
     }
-    if (field.id === 'search' && !jump && evt.key === 'ArrowDown') {
+    if (field.id === 'search' && (evt.key === 'Enter' || evt.key === 'ArrowDown')) {
         evt.preventDefault();
-        uiCursor = '';
-        uiMoveCursor(1);
-        return;
-    }
-    if (field.id === 'search' && evt.key === 'Enter') {
-        evt.preventDefault();
-        uiOpenFirst = true;
+        uiAfterRows = evt.key === 'Enter' ? 'open' : 'cursor';
         htmx.trigger(field, 'search');
         return;
     }
+    if (evt.key === 'Escape') uiAfterRows = '';
     // a filled index search keeps the browser's own Esc, which clears it; Esc on an empty one leaves it
     if (evt.key === 'Escape' && (jump || field.id !== 'search' || !field.value)) field.blur();
 }

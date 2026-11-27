@@ -62,8 +62,9 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line2); 
 .dot.ok { background: var(--ok); }
 .dot.fail { background: var(--fail); box-shadow: 0 0 0 3px var(--fail-soft); }
 /* blink is driven by a page-level class, so a dot re-rendered by a poll keeps the same phase */
-.dot.running { background: var(--run); transition: opacity .45s ease-in-out; }
-html.blink-off .dot.running { opacity: .25; }
+.dot.running { background: var(--run); }
+.dot.running:not(.key) { transition: opacity .45s ease-in-out; }
+html.blink-off .dot.running:not(.key) { opacity: .25; }
 .dot.never { background: transparent; border: 1.5px solid var(--off); }
 .dot.off { background: transparent; border: 1.5px dashed var(--off); }
 .dot.big { width: 10px; height: 10px; }

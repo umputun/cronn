@@ -72,6 +72,73 @@ func TestKeys_IndexCursorMovesOpensAndRuns(t *testing.T) {
 	waitJobPage(t, page, ids[0])
 }
 
+func TestKeys_IndexArrowsHomeEndMoveCursor(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	ids := rowIDs(t, page)
+	require.GreaterOrEqual(t, len(ids), 3)
+	blurFocus(t, page)
+
+	press(t, page, "ArrowDown")
+	assert.Equal(t, ids[0], cursorID(t, page), "the first press lands on the first row")
+	press(t, page, "ArrowDown")
+	assert.Equal(t, ids[1], cursorID(t, page))
+	press(t, page, "ArrowUp")
+	assert.Equal(t, ids[0], cursorID(t, page))
+	press(t, page, "End")
+	assert.Equal(t, ids[len(ids)-1], cursorID(t, page))
+	press(t, page, "ArrowDown")
+	assert.Equal(t, ids[len(ids)-1], cursorID(t, page), "the cursor stops at the last row")
+	press(t, page, "Home")
+	assert.Equal(t, ids[0], cursorID(t, page))
+	require.NoError(t, page.Locator("#sort-lastrun").Focus())
+	press(t, page, "ArrowDown")
+	assert.False(t, focusOn(t, page, "sort-lastrun"), "moving the cursor takes focus off a control")
+	press(t, page, "Enter")
+	waitJobPage(t, page, ids[1])
+
+	assert.False(t, evalBool(t, page, `() => {
+		const evt = new KeyboardEvent('keydown', {key: 'ArrowDown', bubbles: true, cancelable: true});
+		document.body.dispatchEvent(evt);
+		return evt.defaultPrevented;
+	}`), "on a job page the arrows keep scrolling")
+}
+
+func TestKeys_ArrowDownFromSearchEntersTheList(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	hourly := jobID(t, page, jobHourly)
+	blurFocus(t, page)
+
+	press(t, page, "/")
+	require.NoError(t, page.Keyboard().Type("hourly"))
+	require.Eventually(t, func() bool { ids := rowIDs(t, page); return len(ids) == 1 && ids[0] == hourly },
+		5*time.Second, 50*time.Millisecond)
+	press(t, page, "ArrowDown")
+	require.Eventually(t, func() bool { return cursorID(t, page) == hourly }, 5*time.Second, 50*time.Millisecond)
+	assert.False(t, focusOn(t, page, "search"))
+	press(t, page, "Enter")
+	waitJobPage(t, page, hourly)
+}
+
+func TestKeys_ArrowDownFromSearchWaitsForRowsOfItsQuery(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	hourly := jobID(t, page, jobHourly)
+	require.NotEqual(t, hourly, rowIDs(t, page)[0])
+	blurFocus(t, page)
+
+	delayRoute(t, page, jobsRe, time.Second)
+	press(t, page, "/")
+	require.NoError(t, page.Keyboard().Type("hourly"))
+	press(t, page, "ArrowDown")
+	require.Eventually(t, func() bool { return cursorID(t, page) == hourly }, 5*time.Second, 50*time.Millisecond,
+		"the cursor lands on the first row of the query in the field")
+	assert.False(t, focusOn(t, page, "search"))
+	press(t, page, "Enter")
+	waitJobPage(t, page, hourly)
+}
+
 func TestKeys_SearchFocusAndEnterOpensFirstMatch(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
@@ -266,6 +333,7 @@ func TestKeys_WorkAfterWrapToggle(t *testing.T) {
 	gotoJob(t, page, jobID(t, page, jobHourly), "")
 
 	require.NoError(t, page.Locator(".wraptg").Click())
+	require.NoError(t, page.Locator("#wrap").Focus())
 	require.True(t, focusOn(t, page, "wrap"))
 	press(t, page, "?")
 	waitVisible(t, page.Locator("#keys-dialog[open]"))

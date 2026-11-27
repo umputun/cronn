@@ -184,7 +184,7 @@ function uiPollDone(container, evt) {
 // the keyboard map: each key focuses and clicks the element the mouse would use, so a key sends the same
 // request a click does. The index cursor row is kept by job id because polls replace the rows
 let uiCursor = '';
-let uiOpenFirst = false;
+let uiAfterRows = ''; // what the index search waits for its rows to do: '', 'open' or 'cursor'
 
 function uiClick(el) {
     if (!el) return;
@@ -204,12 +204,15 @@ function uiMarkCursor() {
     uiRows().forEach(function (row) { row.classList.toggle('cur', row.dataset.jobId === uiCursor); });
 }
 
-// uiMoveCursor moves the index cursor by step rows, starting at either end
+// uiMoveCursor moves the index cursor by step rows, starting at either end; Infinity steps to an end. A
+// focused control keeps Enter for itself, so the move takes focus off it and Enter opens the cursor row
 function uiMoveCursor(step) {
     const rows = uiRows();
     if (!rows.length) return;
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     const at = rows.findIndex(function (row) { return row.dataset.jobId === uiCursor; });
-    const next = at < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, at + step));
+    const from = at < 0 && Number.isFinite(step) ? (step > 0 ? -1 : rows.length) : at;
+    const next = Math.max(0, Math.min(rows.length - 1, from + step));
     uiCursor = rows[next].dataset.jobId;
     uiMarkCursor();
     rows[next].scrollIntoView({block: 'nearest'});
@@ -257,22 +260,30 @@ document.addEventListener('htmx:afterSettle', function (evt) {
     if (id !== 'rows') return;
     uiMarkCursor();
     const search = document.getElementById('search');
-    if (!uiOpenFirst || !search) return;
-    // rows of an older query, from a poll or a search already in flight, are not the match Enter asked for
+    if (!uiAfterRows || !search) return;
+    // rows of an older query, from a poll or a search already in flight, are not the ones Enter or the down
+    // arrow asked for
     const sent = new URL(evt.detail.xhr.responseURL, location.href).searchParams.get('search') || '';
     if (sent !== search.value) return;
-    uiOpenFirst = false;
+    const after = uiAfterRows;
+    uiAfterRows = '';
+    if (after === 'cursor') {
+        uiCursor = '';
+        uiMoveCursor(1);
+        return;
+    }
     const first = document.querySelector('#rows .it .nm');
     if (first) first.click();
 });
 ['htmx:responseError', 'htmx:sendError'].forEach(function (name) {
     document.addEventListener(name, function (evt) {
-        if (evt.target.id === 'search') uiOpenFirst = false;
+        if (evt.target.id === 'search') uiAfterRows = '';
     });
 });
 
 // uiFieldKey handles the keys a text field gives the map: Esc leaves the field, Enter in the index search
-// opens the first match once the filtered rows arrive, and the jump field drives its list
+// opens the first match and the down arrow moves the cursor onto it, both once the filtered rows arrive, and
+// the jump field drives its list
 function uiFieldKey(evt) {
     const field = evt.target;
     const jump = field.id === 'search' && document.getElementById('jdrop');
@@ -291,20 +302,26 @@ function uiFieldKey(evt) {
         else item.click();
         return;
     }
-    if (field.id === 'search' && evt.key === 'Enter') {
+    if (field.id === 'search' && (evt.key === 'Enter' || evt.key === 'ArrowDown')) {
         evt.preventDefault();
-        uiOpenFirst = true;
+        uiAfterRows = evt.key === 'Enter' ? 'open' : 'cursor';
         htmx.trigger(field, 'search');
         return;
     }
+    if (evt.key === 'Escape') uiAfterRows = '';
     // a filled index search keeps the browser's own Esc, which clears it; Esc on an empty one leaves it
     if (evt.key === 'Escape' && (jump || field.id !== 'search' || !field.value)) field.blur();
 }
 
+// a handler returning false leaves the key to the browser, so the arrows still scroll a job page
 const uiKeys = {
     '/': function () { uiClick(document.getElementById('search')); },
     j: function (onJob) { if (onJob) uiClick(document.getElementById('next-job')); else uiMoveCursor(1); },
     k: function (onJob) { if (onJob) uiClick(document.getElementById('prev-job')); else uiMoveCursor(-1); },
+    ArrowDown: function (onJob) { if (onJob) return false; uiMoveCursor(1); },
+    ArrowUp: function (onJob) { if (onJob) return false; uiMoveCursor(-1); },
+    Home: function (onJob) { if (onJob) return false; uiMoveCursor(-Infinity); },
+    End: function (onJob) { if (onJob) return false; uiMoveCursor(Infinity); },
     Enter: function (onJob) {
         const row = !onJob && uiCursorRow();
         if (row) row.querySelector('.nm').click();
@@ -344,6 +361,6 @@ document.addEventListener('keydown', function (evt) {
     const key = evt.key === 'E' && !evt.shiftKey ? '' : evt.key;
     const act = uiKeys[key];
     if (!act) return;
-    evt.preventDefault();
-    act(!!document.getElementById('jp'));
+    const onJob = !!document.getElementById('jp');
+    if (act(onJob) !== false) evt.preventDefault();
 }, true);

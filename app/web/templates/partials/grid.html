@@ -52,7 +52,7 @@
 {{end}}
 {{end}}
 
-{{define "pill"}}{{if .Dot}}<span class="dot {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}} <em id="count-{{.Mode}}">{{.Count}}</em>{{end}}
+{{define "pill"}}{{if .Dot}}<span class="dot key {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}} <em id="count-{{.Mode}}">{{.Count}}</em>{{end}}
 
 {{define "pills"}}
 {{range .Tabs}}
@@ -84,12 +84,12 @@
         <h6>Show</h6>
         {{range .Tabs}}
         {{if $.OnJob}}
-        <a href="{{.Href}}" id="menu-filter-{{.Mode}}">{{if .Dot}}<span class="dot {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}}<em id="mcount-{{.Mode}}">{{.Count}}</em></a>
+        <a href="{{.Href}}" id="menu-filter-{{.Mode}}">{{if .Dot}}<span class="dot key {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}}<em id="mcount-{{.Mode}}">{{.Count}}</em></a>
         {{else}}
         <button type="button" class="{{if .Active}}on{{end}}" id="menu-filter-{{.Mode}}"
                 hx-post="{{url "/api/filter-mode"}}" hx-vals='{"filter": "{{.Mode}}"}'
                 hx-target="#rows" hx-swap="innerHTML"
-                hx-include="#search, #sort-mode, #sort-rev">{{if .Dot}}<span class="dot {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}}<em id="mcount-{{.Mode}}">{{.Count}}</em></button>
+                hx-include="#search, #sort-mode, #sort-rev">{{if .Dot}}<span class="dot key {{.Dot}}" aria-hidden="true"></span>{{end}}{{.Label}}<em id="mcount-{{.Mode}}">{{.Count}}</em></button>
         {{end}}
         {{end}}
         <hr>

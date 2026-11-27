@@ -3,9 +3,11 @@ package web
 import (
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -317,7 +319,7 @@ func TestServer_stripBars(t *testing.T) {
 	job := persistence.JobInfo{ID: "j1", Command: "cmd"}
 
 	t.Run("padding, order, heights, tips and links", func(t *testing.T) {
-		bars := server.stripBars(stripReq{Job: job, Runs: runs, Size: 5, Selected: "2"}, q)
+		bars := server.stripBars(stripReq{job: job, runs: runs, size: 5, selected: "2"}, q)
 		require.Len(t, bars, 5)
 		assert.Equal(t, stripBar{Class: "e", Height: 25}, bars[0])
 		assert.Equal(t, stripBar{Class: "e", Height: 25}, bars[1])
@@ -335,7 +337,7 @@ func TestServer_stripBars(t *testing.T) {
 	})
 
 	t.Run("size limits the runs shown", func(t *testing.T) {
-		bars := server.stripBars(stripReq{Job: job, Runs: runs, Size: 2}, q)
+		bars := server.stripBars(stripReq{job: job, runs: runs, size: 2}, q)
 		require.Len(t, bars, 2)
 		assert.Equal(t, "2", bars[0].Key)
 		assert.Equal(t, "3", bars[1].Key)
@@ -351,7 +353,7 @@ func TestServer_stripBars(t *testing.T) {
 		require.True(t, ok)
 		require.True(t, liveJob.IsRunning)
 		token := "live:" + strconv.FormatInt(live.UnixMicro(), 10)
-		bars := server.stripBars(stripReq{Job: liveJob, Runs: runs, Size: 5, Selected: token}, q)
+		bars := server.stripBars(stripReq{job: liveJob, runs: runs, size: 5, selected: token}, q)
 		require.Len(t, bars, 5)
 		last := bars[4]
 		assert.Equal(t, token, last.Key)
@@ -364,7 +366,7 @@ func TestServer_stripBars(t *testing.T) {
 	})
 
 	t.Run("no runs at all", func(t *testing.T) {
-		bars := server.stripBars(stripReq{Job: job, Size: 3}, q)
+		bars := server.stripBars(stripReq{job: job, size: 3}, q)
 		assert.Equal(t, []stripBar{{Class: "e", Height: 25}, {Class: "e", Height: 25}, {Class: "e", Height: 25}}, bars)
 	})
 }
@@ -402,6 +404,24 @@ func TestServer_handleJobFacts(t *testing.T) {
 		w := facts(s, "ok", "newest="+strconv.Itoa(run-1))
 		assert.Equal(t, "runs-changed", w.Header().Get("HX-Trigger"))
 		assert.NotContains(t, w.Body.String(), `class="ok sel"`, "nothing selected, nothing marked")
+	})
+
+	t.Run("an older overlapping run that ends asks the runs list to reload", func(t *testing.T) {
+		s := newServer(t, Config{})
+		id := HashCommand("echo sync")
+		older, newer := time.Now().Add(-time.Minute), time.Now().Add(-30*time.Second)
+		for _, start := range []time.Time{older, newer} {
+			s.handleJobEvent(JobEvent{Command: "echo sync", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: start})
+		}
+		m := regexp.MustCompile(`name="newest" value="([^"]*)"`).FindStringSubmatch(getJob(id, "", s.handleJobRuns).Body.String())
+		require.Len(t, m, 2)
+		both := url.QueryEscape(html.UnescapeString(m[1]))
+		assert.Empty(t, facts(s, id, "newest="+both).Header().Get("HX-Trigger"), "the list shows both runs")
+
+		s.handleJobEvent(JobEvent{Command: "echo sync", Schedule: "* * * * *", EventType: enums.EventTypeCompleted,
+			StartedAt: older, FinishedAt: older.Add(time.Second)})
+		assert.Equal(t, "runs-changed", facts(s, id, "newest="+both).Header().Get("HX-Trigger"),
+			"the newest run is unchanged, but the older one is recorded now")
 	})
 
 	t.Run("run action by state", func(t *testing.T) {

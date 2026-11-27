@@ -3,9 +3,11 @@
 package e2e
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -568,4 +570,71 @@ func TestJobPage_RunsBesideOutputOnWideScreens(t *testing.T) {
 	require.NoError(t, err)
 	assert.LessOrEqual(t, runs.Y+runs.Height, out.Y+1, "a phone stacks the runs above the output")
 	assert.True(t, noHorizontalScroll(t, page))
+}
+
+func TestJobPage_LogKeepsPlaceWhenRunEnds(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	gotoJob(t, page, jobID(t, page, jobHourly), "")
+
+	require.NoError(t, page.Locator("#cmdin").Fill(`for i in $(seq 1 150); do echo "line $i"; done; sleep 3`))
+	openConfirm(t, page, page.Locator("#run-now"))
+	require.NoError(t, page.Locator("#cf-run").Click())
+	require.Eventually(t, func() bool {
+		return evalBool(t, page, `() => { const l = document.querySelector('#live-out .log'); return !!l && l.textContent.includes('line 150') }`)
+	}, 10*time.Second, 100*time.Millisecond)
+	_, err := page.Evaluate(`() => { document.querySelector('#live-out .log').scrollTop = 120 }`)
+	require.NoError(t, err)
+
+	waitHidden(t, page.Locator("#live-out"))
+	waitVisible(t, page.Locator("#joutput .log"))
+	top, err := page.Evaluate(`() => document.querySelector('#joutput .log').scrollTop`)
+	require.NoError(t, err)
+	assert.InDelta(t, 120, top, 2, "the recorded output opens where the reader was")
+}
+
+func TestJobPage_WaitForRunTimesOutAndStopsPolling(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobWeekday)
+	var polls atomic.Int32
+	page.OnRequest(func(r playwright.Request) {
+		if liveOutRe.MatchString(r.URL()) {
+			polls.Add(1)
+		}
+	})
+	gotoJob(t, page, id, fmt.Sprintf("?after=%d", time.Now().Add(-11*time.Second).UnixMicro()))
+
+	waitVisible(t, page.Locator("#joutput .empty-out.bad"))
+	assert.Contains(t, pageText(t, page, "#joutput"), "did not start within 10 seconds")
+	seen := polls.Load()
+	assert.Never(t, func() bool { return polls.Load() != seen }, 2500*time.Millisecond, 100*time.Millisecond,
+		"the wait stops polling once it timed out")
+}
+
+func TestJobPage_IndexBarOfRunInProgressOpensLiveOutput(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := startLive(t, page)
+	waitForPoll(t, page)
+
+	bar := row(page, jobLive).Locator(`.strip a[href*="run=live%3A"], .strip a[href*="run=live:"]`).Last()
+	waitVisible(t, bar)
+	require.NoError(t, bar.Click())
+	waitJobPage(t, page, id)
+	waitVisible(t, page.Locator("#live-out"))
+	assert.True(t, strings.HasPrefix(selectedRun(page), "live:"), "the page opens the run in progress")
+}
+
+func TestJobPage_RunActionFitsShortLandscape(t *testing.T) {
+	page := newPageSized(t, 568, 320)
+	navigateToDashboard(t, page)
+	gotoJob(t, page, jobID(t, page, jobTwoStep), "")
+
+	require.NoError(t, page.Mouse().Move(280, 120))
+	require.NoError(t, page.Mouse().Wheel(0, 400))
+	require.Eventually(t, func() bool {
+		box, err := page.Locator("#run-now").BoundingBox()
+		return err == nil && box != nil && box.Y >= 0 && box.Y+box.Height <= 320
+	}, 3*time.Second, 50*time.Millisecond, "scrolling the page brings Run now on screen above a multi-line command")
 }

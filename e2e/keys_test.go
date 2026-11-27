@@ -5,6 +5,7 @@ package e2e
 import (
 	"net/url"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func TestKeys_IndexCursorMovesOpensAndRuns(t *testing.T) {
 	assert.Equal(t, ids[0], cursorID(t, page), "the cursor survives a poll that replaces the rows")
 
 	press(t, page, "r")
-	waitVisible(t, page.Locator(`#run-dialog[open][data-job-id="` + ids[0] + `"]`))
+	waitVisible(t, page.Locator(`#run-dialog[open][data-job-id="`+ids[0]+`"]`))
 	press(t, page, "Escape")
 	waitHidden(t, page.Locator("#run-dialog"))
 	require.Eventually(t, func() bool { return focusOn(t, page, "run-"+ids[0]) }, 3*time.Second, 50*time.Millisecond,
@@ -182,7 +183,7 @@ func TestKeys_JobPage(t *testing.T) {
 
 	blurFocus(t, page)
 	press(t, page, "r")
-	waitVisible(t, page.Locator(`#run-dialog[open][data-job-id="` + id + `"]`))
+	waitVisible(t, page.Locator(`#run-dialog[open][data-job-id="`+id+`"]`))
 	press(t, page, "Escape")
 	waitHidden(t, page.Locator("#run-dialog"))
 	require.Eventually(t, func() bool { return focusOn(t, page, "run-now") }, 3*time.Second, 50*time.Millisecond)
@@ -251,7 +252,7 @@ func TestKeys_JumpListArrowsEnterAndShiftEnter(t *testing.T) {
 	require.NotEqual(t, weekday, list[1])
 	typeJump(t, page, "weekday")
 	press(t, page, "Shift+Enter")
-	waitVisible(t, page.Locator(`#run-dialog[open][data-job-id="` + weekday + `"]`))
+	waitVisible(t, page.Locator(`#run-dialog[open][data-job-id="`+weekday+`"]`))
 	assert.Contains(t, pageText(t, page, "#run-dialog h4"), jobWeekday)
 	assert.Contains(t, page.URL(), list[1].(string), "Shift+Enter stays on this page")
 	press(t, page, "Escape")
@@ -270,4 +271,55 @@ func TestKeys_WorkAfterWrapToggle(t *testing.T) {
 	waitVisible(t, page.Locator("#keys-dialog[open]"))
 	press(t, page, "Escape")
 	waitHidden(t, page.Locator("#keys-dialog"))
+}
+
+func TestKeys_SearchEnterWaitsForRowsOfItsQuery(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	hourly := jobID(t, page, jobHourly)
+	blurFocus(t, page)
+
+	delayRoute(t, page, jobsRe, time.Second)
+	_, err := page.Evaluate(`() => htmx.trigger(document.body, 'refresh-jobs')`)
+	require.NoError(t, err)
+	press(t, page, "/")
+	require.NoError(t, page.Keyboard().Type("hourly"))
+	press(t, page, "Enter")
+	waitJobPage(t, page, hourly)
+}
+
+func TestKeys_JumpEnterWaitsForListOfItsQuery(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	weekday, hourly := jobID(t, page, jobWeekday), jobID(t, page, jobHourly)
+	gotoJob(t, page, weekday, "")
+	blurFocus(t, page)
+
+	press(t, page, "/")
+	waitVisible(t, page.Locator("#jdrop a.ji").First())
+	delayRoute(t, page, regexp.MustCompile(`/api/jobs/jump`), time.Second)
+	require.NoError(t, page.Keyboard().Type("hourly"))
+	press(t, page, "Enter")
+	require.NoError(t, page.Locator(`#jdrop [data-q="hourly"]`).WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateAttached}))
+	assert.Contains(t, page.URL(), "/jobs/"+weekday, "Enter on the list of an older query opens nothing")
+	press(t, page, "Enter")
+	waitJobPage(t, page, hourly)
+}
+
+func TestKeys_EscOnJumpLinkClosesTheList(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	weekday := jobID(t, page, jobWeekday)
+	gotoJob(t, page, weekday, "")
+	blurFocus(t, page)
+
+	press(t, page, "/")
+	waitVisible(t, page.Locator("#jdrop a.ji").First())
+	press(t, page, "Tab")
+	require.True(t, evalBool(t, page, `() => document.activeElement.matches('#jdrop a.ji')`))
+	press(t, page, "Escape")
+	waitHidden(t, page.Locator("#jdrop"))
+	assert.Never(t, func() bool { return !strings.Contains(page.URL(), "/jobs/"+weekday) }, 500*time.Millisecond, 50*time.Millisecond,
+		"Esc closes the list and stays on the job page")
 }

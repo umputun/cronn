@@ -39,7 +39,8 @@
 {{end}}
 
 {{define "jump-list"}}
-{{range .}}
+<span hidden data-q="{{.Query}}"></span>
+{{range .Rows}}
 <a class="ji" href="{{.Link}}" tabindex="0" data-job-id="{{.Job.ID}}"
    {{if and .Job.Enabled (not .Job.IsRunning)}}data-confirm="{{url (printf "/api/jobs/%s/run-confirm" .Job.ID)}}"{{end}}>
     <span class="dot {{template "job-dot" .Job}}" aria-hidden="true"></span>
@@ -202,11 +203,11 @@
     <div class="acts">
         <button type="button" class="btn" id="clear-search"
                 hx-get="{{url "/api/jobs"}}" hx-vals='{"search": "", "reset-search": "1"}'
-                hx-target="#rows" hx-swap="innerHTML"
+                hx-target="#rows" hx-swap="innerHTML" hx-sync="#rows:replace"
                 hx-include="#filter-mode, #sort-mode, #sort-rev">Clear search</button>
         <button type="button" class="btn" id="show-all"
                 hx-post="{{url "/api/filter-mode"}}" hx-vals='{"filter": "all", "search": "", "reset-search": "1"}'
-                hx-target="#rows" hx-swap="innerHTML"
+                hx-target="#rows" hx-swap="innerHTML" hx-sync="#rows:replace"
                 hx-include="#sort-mode, #sort-rev">Show all jobs</button>
     </div>
     {{else}}
@@ -214,7 +215,7 @@
     <div class="acts">
         <button type="button" class="btn" id="show-all"
                 hx-post="{{url "/api/filter-mode"}}" hx-vals='{"filter": "all"}'
-                hx-target="#rows" hx-swap="innerHTML"
+                hx-target="#rows" hx-swap="innerHTML" hx-sync="#rows:replace"
                 hx-include="#search, #sort-mode, #sort-rev">Show all jobs</button>
     </div>
     {{end}}

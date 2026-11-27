@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -393,4 +394,27 @@ func TestMenu_ClosesOnOutsideClickAndEsc(t *testing.T) {
 	waitVisible(t, page.Locator("#open-settings"))
 	require.NoError(t, page.Keyboard().Press("Escape"))
 	waitHidden(t, page.Locator("#open-settings"))
+}
+
+func TestList_ClearSearchKeepsStateWhenPollLandsInFlight(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	require.NoError(t, page.Locator("#search").Fill("no-such-job-xyz"))
+	waitVisible(t, page.Locator("#clear-search"))
+
+	delayRoute(t, page, regexp.MustCompile(`reset-search=1`), 1500*time.Millisecond)
+	require.NoError(t, page.Locator("#clear-search").Click())
+	_, err := page.Evaluate(`() => htmx.trigger(document.body, 'refresh-jobs')`)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		n, cerr := page.Locator("#rows .it").Count()
+		return cerr == nil && n == totalJobs
+	}, 8*time.Second, 100*time.Millisecond, "the cleared list shows every job")
+	val, err := page.Locator("#search").InputValue()
+	require.NoError(t, err)
+	assert.Empty(t, val, "the search field is cleared with the list")
+	waitForPoll(t, page)
+	n, err := page.Locator("#rows .it").Count()
+	require.NoError(t, err)
+	assert.Equal(t, totalJobs, n, "the next poll keeps the cleared list")
 }

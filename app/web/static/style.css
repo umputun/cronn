@@ -358,6 +358,10 @@ dialog.cf { border: 1px solid var(--line2); border-radius: 6px; background: var(
     .obar { padding: 0 44px 0 12px; gap: 8px; }
     .modal-row { grid-template-columns: 1fr 1fr; }
 }
+/* a short landscape screen has no room for the job header and the log together, so the job page scrolls */
+@media (max-height: 480px) {
+    .jp { overflow-y: auto; grid-template-rows: auto minmax(240px, 1fr); }
+}
 @media (pointer: coarse) {
     .ibtn { width: 36px; height: 36px; }
     .it { min-height: 48px; }

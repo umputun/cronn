@@ -49,7 +49,7 @@ type indexRow struct {
 
 // filterTab is one filter pill of the top bar
 type filterTab struct {
-	Mode   string
+	Mode   enums.FilterMode
 	Label  string
 	Dot    string
 	Count  int
@@ -168,22 +168,18 @@ func (s *Server) listData(r *http.Request, q jobsQuery, stats jobsStats) Templat
 	data.MatchCount = len(stats.jobs)
 	data.HiddenBySearch = stats.hiddenBySearch
 	data.Tabs = []filterTab{
-		{Mode: "all", Label: "All", Count: stats.totalCount},
-		{Mode: "failed", Label: "Failing", Dot: "fail", Count: stats.failedCount},
-		{Mode: "running", Label: "Running", Dot: "running", Count: stats.runningCount},
-		{Mode: "success", Label: "OK", Dot: "ok", Count: stats.successCount},
-		{Mode: "idle", Label: "Never", Dot: "never", Count: stats.idleCount},
-		{Mode: "disabled", Label: "Disabled", Dot: "off", Count: stats.disabledCount},
+		{Mode: enums.FilterModeAll, Label: "All", Count: stats.totalCount},
+		{Mode: enums.FilterModeFailed, Label: "Failing", Dot: "fail", Count: stats.failedCount},
+		{Mode: enums.FilterModeRunning, Label: "Running", Dot: "running", Count: stats.runningCount},
+		{Mode: enums.FilterModeSuccess, Label: "OK", Dot: "ok", Count: stats.successCount},
+		{Mode: enums.FilterModeIdle, Label: "Never", Dot: "never", Count: stats.idleCount},
+		{Mode: enums.FilterModeDisabled, Label: "Disabled", Dot: "off", Count: stats.disabledCount},
 	}
 	for i := range data.Tabs {
 		tab := &data.Tabs[i]
-		tab.Active = tab.Mode == q.filter.String()
-		mode, err := enums.ParseFilterMode(tab.Mode)
-		if err != nil {
-			continue
-		}
+		tab.Active = tab.Mode == q.filter
 		link := q
-		link.filter = mode
+		link.filter = tab.Mode
 		tab.Href = s.indexLink(link)
 	}
 	data.SortCols = []sortCol{
@@ -215,7 +211,7 @@ func (s *Server) indexRows(jobs []persistence.JobInfo, q jobsQuery) []indexRow {
 	}
 	rows := make([]indexRow, 0, len(jobs))
 	for _, job := range jobs {
-		bars := s.stripBars(stripReq{Job: job, Runs: runs[job.ID], Size: indexStripSize}, q)
+		bars := s.stripBars(stripReq{job: job, runs: runs[job.ID], size: indexStripSize}, q)
 		rows = append(rows, indexRow{Job: job, Strip: bars, Link: s.jobLink(job.ID, q)})
 	}
 	return rows

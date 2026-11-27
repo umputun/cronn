@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -42,10 +41,10 @@ type stripBar struct {
 // stripReq is what stripBars draws: the job, its recorded runs newest first, the bar count and the
 // selected run's key
 type stripReq struct {
-	Job      persistence.JobInfo
-	Runs     []persistence.RunSummary
-	Size     int
-	Selected string
+	job      persistence.JobInfo
+	runs     []persistence.RunSummary
+	size     int
+	selected string
 }
 
 // jobPosition is a job's place in the list the user came from, with links to the jobs before and after it
@@ -110,10 +109,9 @@ type jobPageData struct {
 	Strip        []stripBar
 	Active       []liveRunView // runs in progress not yet recorded, newest first
 	Runs         []persistence.ExecutionInfo
-	Newest       string // key of the newest run, so a poll can tell when the runs list is stale
+	Newest       string // runsMark of the runs list, so a poll can tell when it is stale
 	Selected     string
 	StopStart    int64 // the run the Stop button stops: the selected run in progress, else the newest
-	BackLink     string
 	HasTemplates bool
 	CommandRows  int // rows of the command field for a multi-line command, 0 for a single line
 	Output       jobOutput
@@ -126,7 +124,6 @@ func (s *Server) handleJobPage(w http.ResponseWriter, r *http.Request) {
 	stats := s.getJobsWithStats(q)
 	data := jobPageData{TemplateData: s.listData(r, q, stats)}
 	data.OnJob = true
-	data.BackLink = data.IndexLink
 	job, ok := s.jobByID(r.PathValue("id"))
 	if !ok {
 		s.renderJobNotFound(w, data)
@@ -168,17 +165,7 @@ func (s *Server) handleJobPage(w http.ResponseWriter, r *http.Request) {
 
 // renderJobNotFound answers an unknown job id with the page shell, a notice and 404
 func (s *Server) renderJobNotFound(w http.ResponseWriter, data jobPageData) {
-	var buf bytes.Buffer
-	if err := s.templates["job"].ExecuteTemplate(&buf, "layout", data); err != nil {
-		log.Printf("[WARN] failed to execute template: %v", err)
-		http.Error(w, "Template error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusNotFound)
-	if _, err := buf.WriteTo(w); err != nil {
-		log.Printf("[WARN] failed to write response: %v", err)
-	}
+	s.renderParts(w, renderReq{set: "job", names: []string{"layout"}, status: http.StatusNotFound, data: data})
 }
 
 // pageOutput picks what the output pane opens with: the wait for a started run, the run named by run= when
@@ -199,6 +186,9 @@ func (s *Server) pageOutput(r *http.Request, data *jobPageData, pending []active
 	}
 	if id, err := strconv.Atoi(r.FormValue("run")); err == nil {
 		run, err := s.store.GetExecutionByID(id)
+		if err != nil && !errors.Is(err, persistence.ErrNotFound) {
+			log.Printf("[WARN] failed to get execution %d of job %s: %v", id, job.ID, err)
+		}
 		if err == nil && run.JobID == job.ID {
 			o := s.newRunOutput(job, run)
 			out.Run = &o
@@ -233,6 +223,9 @@ func (s *Server) liveLinkOutput(job persistence.JobInfo, pending []activeRun, to
 	}
 	run, err := s.store.GetExecutionByStart(job.ID, start)
 	if err != nil {
+		if !errors.Is(err, persistence.ErrNotFound) {
+			log.Printf("[WARN] failed to get the run of job %s started at %d: %v", job.ID, start, err)
+		}
 		return out, false
 	}
 	o := s.newRunOutput(job, run)
@@ -258,11 +251,13 @@ func (s *Server) fillFacts(data *jobPageData) {
 		log.Printf("[WARN] failed to load runs of job %s: %v", data.Job.ID, err)
 	}
 	q := jobsQuery{sort: data.SortMode, filter: data.FilterMode, search: data.Search, reverse: data.Reverse}
-	data.Strip = s.stripBars(stripReq{Job: data.Job, Runs: summaries, Size: jobStripSize, Selected: data.Selected}, q)
-	if last := data.Strip[len(data.Strip)-1]; last.Key != "" {
-		data.Newest = last.Key
-	}
+	data.Strip = s.stripBars(stripReq{job: data.Job, runs: summaries, size: jobStripSize, selected: data.Selected}, q)
 	active := s.activeRuns(data.Job.ID)
+	newest := 0
+	if len(summaries) > 0 {
+		newest = summaries[0].ID
+	}
+	data.Newest = s.runsMark(active, newest)
 	for _, run := range active {
 		if run.view().Token == data.Selected {
 			data.StopStart = run.StartedAt.UnixMicro()
@@ -297,19 +292,8 @@ func (s *Server) handleJobFacts(w http.ResponseWriter, r *http.Request) {
 		status = 286 // htmx stops polling on this code
 	}
 
-	var buf bytes.Buffer
-	for _, name := range []string{"job-facts", "job-title-oob", "job-runact-oob", "pill-counts-oob"} {
-		if err := s.templates["partials"].ExecuteTemplate(&buf, name, data); err != nil {
-			log.Printf("[ERROR] failed to render %s: %v", name, err)
-			http.Error(w, "Template error", http.StatusInternalServerError)
-			return
-		}
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	if _, err := buf.WriteTo(w); err != nil {
-		log.Printf("[WARN] failed to write facts: %v", err)
-	}
+	s.renderParts(w, renderReq{set: "partials", status: status, data: data,
+		names: []string{"job-facts", "job-title-oob", "job-runact-oob", "pill-counts-oob"}})
 }
 
 // handleJobRuns renders the job page's runs list with the selected run marked
@@ -332,13 +316,25 @@ func (s *Server) handleJobRuns(w http.ResponseWriter, r *http.Request) {
 	for _, run := range s.pendingRuns(active, runs) {
 		data.Active = append(data.Active, run.view())
 	}
-	switch {
-	case len(data.Active) > 0:
-		data.Newest = data.Active[0].Token
-	case len(runs) > 0:
-		data.Newest = strconv.Itoa(runs[0].ID)
+	newest := 0
+	if len(runs) > 0 {
+		newest = runs[0].ID
 	}
+	data.Newest = s.runsMark(active, newest)
 	s.render(w, "partials", "job-runs", data)
+}
+
+// runsMark names what the runs list is drawn from: the start of every run in progress and the newest
+// recorded run id. Any run starting or ending changes it, an older overlapping run included
+func (s *Server) runsMark(active []activeRun, newest int) string {
+	parts := make([]string, 0, len(active)+1)
+	for _, run := range active {
+		parts = append(parts, "live:"+strconv.FormatInt(run.StartedAt.UnixMicro(), 10))
+	}
+	if newest > 0 {
+		parts = append(parts, strconv.Itoa(newest))
+	}
+	return strings.Join(parts, ",")
 }
 
 // pendingRuns keeps the runs in progress that are not recorded yet, newest first
@@ -354,9 +350,9 @@ func (s *Server) pendingRuns(active []activeRun, runs []persistence.ExecutionInf
 // runs in progress. Heights scale with duration against the longest shown run, failed runs are full height
 func (s *Server) stripBars(req stripReq, q jobsQuery) []stripBar {
 	var live []activeRun
-	if req.Job.IsRunning {
-		for _, a := range s.activeRuns(req.Job.ID) {
-			recorded := slices.ContainsFunc(req.Runs, func(r persistence.RunSummary) bool {
+	if req.job.IsRunning {
+		for _, a := range s.activeRuns(req.job.ID) {
+			recorded := slices.ContainsFunc(req.runs, func(r persistence.RunSummary) bool {
 				return r.StartedAt.UnixMicro() == a.StartedAt.UnixMicro()
 			})
 			if !recorded {
@@ -364,11 +360,11 @@ func (s *Server) stripBars(req stripReq, q jobsQuery) []stripBar {
 			}
 		}
 	}
-	if len(live) > req.Size {
-		live = live[:req.Size]
+	if len(live) > req.size {
+		live = live[:req.size]
 	}
-	runs := req.Runs
-	if n := req.Size - len(live); len(runs) > n {
+	runs := req.runs
+	if n := req.size - len(live); len(runs) > n {
 		runs = runs[:n]
 	}
 
@@ -377,8 +373,8 @@ func (s *Server) stripBars(req stripReq, q jobsQuery) []stripBar {
 		longest = max(longest, r.FinishedAt.Sub(r.StartedAt))
 	}
 
-	bars := make([]stripBar, 0, req.Size)
-	for range req.Size - len(runs) - len(live) {
+	bars := make([]stripBar, 0, req.size)
+	for range req.size - len(runs) - len(live) {
 		bars = append(bars, stripBar{Class: "e", Height: 25})
 	}
 	for _, r := range slices.Backward(runs) {
@@ -395,14 +391,14 @@ func (s *Server) stripBars(req stripReq, q jobsQuery) []stripBar {
 		if r.Manual {
 			bar.Tip += " · manual"
 		}
-		bar.Out = s.url(fmt.Sprintf("/api/jobs/%s/executions/%d/output", req.Job.ID, r.ID))
+		bar.Out = s.url(fmt.Sprintf("/api/jobs/%s/executions/%d/output", req.job.ID, r.ID))
 		bars = append(bars, bar)
 	}
 	for _, a := range slices.Backward(live) {
 		v := a.view()
 		bar := stripBar{Key: v.Token, Class: "run", Height: 100,
 			Tip: a.StartedAt.Format("Jan 2 15:04:05") + " · running " + s.humanDuration(time.Since(a.StartedAt)),
-			Out: s.url(fmt.Sprintf("/api/jobs/%s/live-output?start=%d", req.Job.ID, v.Start))}
+			Out: s.url(fmt.Sprintf("/api/jobs/%s/live-output?start=%d", req.job.ID, v.Start))}
 		if a.ExecutedCommand != "" {
 			bar.Tip += " · manual"
 		}
@@ -412,10 +408,10 @@ func (s *Server) stripBars(req stripReq, q jobsQuery) []stripBar {
 		if bars[i].Key == "" {
 			continue
 		}
-		bars[i].Sel = bars[i].Key == req.Selected
+		bars[i].Sel = bars[i].Key == req.selected
 		v := q.values()
 		v.Set("run", bars[i].Key)
-		bars[i].Href = s.url("/jobs/"+req.Job.ID) + "?" + v.Encode()
+		bars[i].Href = s.url("/jobs/"+req.job.ID) + "?" + v.Encode()
 	}
 	return bars
 }
@@ -442,6 +438,12 @@ func (s *Server) jobPosition(id string, q jobsQuery) jobPosition {
 	return pos
 }
 
+// jumpList is the jump list answer: the matching rows and the query they match
+type jumpList struct {
+	Query string
+	Rows  []indexRow
+}
+
 // handleJump renders the jump list of the job page search: jobs whose name or command holds every word of
 // q, in crontab order
 func (s *Server) handleJump(w http.ResponseWriter, r *http.Request) {
@@ -458,7 +460,8 @@ func (s *Server) handleJump(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	s.render(w, "partials", "jump-list", rows)
+	// the query goes back with the rows, so Enter never opens a match of a query since changed
+	s.render(w, "partials", "jump-list", jumpList{Query: r.FormValue("q"), Rows: rows})
 }
 
 // handleRunOutput renders one recorded run's output into the job page's output pane
@@ -585,17 +588,7 @@ func (s *Server) waitForRun(w http.ResponseWriter, r *http.Request, job persiste
 		if time.Since(time.UnixMicro(after)) > startTimeout {
 			data.NoStart, status = true, 286 // htmx stops polling on this code
 		}
-		var buf bytes.Buffer
-		if err := s.templates["partials"].ExecuteTemplate(&buf, "wait-body", data); err != nil {
-			log.Printf("[ERROR] failed to render wait: %v", err)
-			http.Error(w, "Template error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(status)
-		if _, err := buf.WriteTo(w); err != nil {
-			log.Printf("[WARN] failed to write wait: %v", err)
-		}
+		s.renderParts(w, renderReq{set: "partials", names: []string{"wait-body"}, status: status, data: data})
 	}
 }
 

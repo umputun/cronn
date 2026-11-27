@@ -449,22 +449,38 @@ func (s *Server) routes() http.Handler {
 
 // render renders a template
 func (s *Server) render(w http.ResponseWriter, page, tmplName string, data any) {
-	tmpl, ok := s.templates[page]
+	s.renderParts(w, renderReq{set: page, names: []string{tmplName}, status: http.StatusOK, data: data})
+}
+
+// renderReq is what renderParts writes: the named templates of one set, in order, under one status
+type renderReq struct {
+	set    string
+	names  []string
+	status int
+	data   any
+}
+
+// renderParts renders every named template into one buffer first, so a failing part answers 500 instead
+// of a truncated page
+func (s *Server) renderParts(w http.ResponseWriter, req renderReq) {
+	tmpl, ok := s.templates[req.set]
 	if !ok {
-		log.Printf("[WARN] template %s not found", page)
+		log.Printf("[WARN] template %s not found", req.set)
 		http.Error(w, "Template not found", http.StatusInternalServerError)
 		return
 	}
 
 	buf := new(bytes.Buffer)
-	if err := tmpl.ExecuteTemplate(buf, tmplName, data); err != nil {
-		log.Printf("[WARN] failed to execute template: %v", err)
-		http.Error(w, "Template error", http.StatusInternalServerError)
-		return
+	for _, name := range req.names {
+		if err := tmpl.ExecuteTemplate(buf, name, req.data); err != nil {
+			log.Printf("[WARN] failed to execute template %s: %v", name, err)
+			http.Error(w, "Template error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(req.status)
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Printf("[WARN] failed to write response: %v", err)
 	}

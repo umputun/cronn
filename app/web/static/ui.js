@@ -65,15 +65,17 @@ function uiRestoreFocus(id) {
     if (target) target.focus();
 }
 
-// the live log keeps the reader's place across its polls and follows new lines only when it was already at
-// its end; a log opened fresh starts at its end when the run is in progress
+// the live log keeps the reader's place across its polls, and when its run ends and the recorded output
+// replaces it, and follows new lines only when it was already at its end; a log opened fresh starts at its
+// end when the run is in progress. Only the live poll carries the place: a click on another run opens fresh
 let uiLogScroll = null;
 const uiLogTargets = ['live-out', 'joutput'];
 document.addEventListener('htmx:beforeSwap', function (evt) {
     const target = evt.detail.target;
     if (!evt.detail.shouldSwap || !uiLogTargets.includes(target.id)) return;
     const log = target.querySelector('.log');
-    uiLogScroll = target.id === 'live-out' && log
+    const cfg = evt.detail.requestConfig;
+    uiLogScroll = cfg && cfg.elt && cfg.elt.id === 'live-out' && log
         ? {top: log.scrollTop, left: log.scrollLeft, pinned: log.scrollHeight - log.scrollTop - log.clientHeight < 4}
         : {pinned: true, fresh: true};
 });
@@ -254,10 +256,19 @@ document.addEventListener('htmx:afterSettle', function (evt) {
     if (id === 'jdrop') uiJumpMove(0);
     if (id !== 'rows') return;
     uiMarkCursor();
-    if (!uiOpenFirst) return;
+    const search = document.getElementById('search');
+    if (!uiOpenFirst || !search) return;
+    // rows of an older query, from a poll or a search already in flight, are not the match Enter asked for
+    const sent = new URL(evt.detail.xhr.responseURL, location.href).searchParams.get('search') || '';
+    if (sent !== search.value) return;
     uiOpenFirst = false;
     const first = document.querySelector('#rows .it .nm');
     if (first) first.click();
+});
+['htmx:responseError', 'htmx:sendError'].forEach(function (name) {
+    document.addEventListener(name, function (evt) {
+        if (evt.target.id === 'search') uiOpenFirst = false;
+    });
 });
 
 // uiFieldKey handles the keys a text field gives the map: Esc leaves the field, Enter in the index search
@@ -272,6 +283,8 @@ function uiFieldKey(evt) {
     }
     if (jump && evt.key === 'Enter') {
         evt.preventDefault();
+        const shown = document.querySelector('#jdrop [data-q]');
+        if (!shown || shown.dataset.q !== field.value) return;
         const item = document.querySelector('#jdrop a.ji.cur') || document.querySelector('#jdrop a.ji');
         if (!item) return;
         if (evt.shiftKey) uiJumpConfirm(item);
@@ -318,6 +331,10 @@ document.addEventListener('keydown', function (evt) {
     }
     if (evt.metaKey || evt.ctrlKey || evt.altKey) return;
     const target = evt.target;
+    if (target.closest('#jdrop')) {
+        if (evt.key === 'Escape') target.blur();
+        return;
+    }
     if (target.matches('input:not([type="checkbox"]), textarea, select')) {
         uiFieldKey(evt);
         return;

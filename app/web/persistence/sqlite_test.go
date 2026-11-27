@@ -502,6 +502,116 @@ func TestSQLiteStore_GetExecutions(t *testing.T) {
 	})
 }
 
+func recordRuns(t *testing.T, store *SQLiteStore, jobID string, base time.Time, n int) {
+	t.Helper()
+	for i := range n {
+		cmd := ""
+		if i%2 == 1 {
+			cmd = "echo manual"
+		}
+		require.NoError(t, store.RecordExecution(request.RecordExecution{JobID: jobID, StartedAt: base.Add(time.Duration(i) * time.Minute),
+			FinishedAt: base.Add(time.Duration(i)*time.Minute + 10*time.Second), Status: enums.JobStatusSuccess, ExecutedCommand: cmd,
+			Output: "out"}))
+	}
+}
+
+func TestSQLiteStore_RecentRuns(t *testing.T) {
+	newStore := func(t *testing.T) *SQLiteStore {
+		t.Helper()
+		store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = store.Close() })
+		return store
+	}
+	base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+
+	t.Run("newest runs per job up to the limit", func(t *testing.T) {
+		store := newStore(t)
+		recordRuns(t, store, "job1", base, 5)
+		recordRuns(t, store, "job2", base, 2)
+
+		res, err := store.RecentRuns(3)
+		require.NoError(t, err)
+		require.Len(t, res, 2)
+		require.Len(t, res["job1"], 3)
+		require.Len(t, res["job2"], 2)
+		assert.True(t, res["job1"][0].StartedAt.Equal(base.Add(4*time.Minute)))
+		assert.True(t, res["job1"][2].StartedAt.Equal(base.Add(2*time.Minute)))
+		assert.True(t, res["job1"][0].FinishedAt.Equal(base.Add(4*time.Minute+10*time.Second)))
+		assert.Equal(t, "job1", res["job1"][0].JobID)
+		assert.Equal(t, enums.JobStatusSuccess, res["job1"][0].Status)
+		assert.False(t, res["job1"][0].Manual)
+		assert.True(t, res["job1"][1].Manual)
+		assert.NotZero(t, res["job1"][0].ID)
+	})
+
+	t.Run("equal start times ordered by id, newest id first", func(t *testing.T) {
+		store := newStore(t)
+		for range 3 {
+			require.NoError(t, store.RecordExecution(request.RecordExecution{JobID: "job1", StartedAt: base, FinishedAt: base,
+				Status: enums.JobStatusSuccess}))
+		}
+		res, err := store.RecentRuns(2)
+		require.NoError(t, err)
+		require.Len(t, res["job1"], 2)
+		assert.Greater(t, res["job1"][0].ID, res["job1"][1].ID)
+	})
+
+	t.Run("null executed_command is not manual", func(t *testing.T) {
+		store := newStore(t)
+		_, err := store.db.Exec(`INSERT INTO executions (job_id, started_at, finished_at, status, exit_code, executed_command)
+			VALUES ('job1', ?, ?, 'success', 0, NULL)`, base, base)
+		require.NoError(t, err)
+		res, err := store.RecentRuns(5)
+		require.NoError(t, err)
+		require.Len(t, res["job1"], 1)
+		assert.False(t, res["job1"][0].Manual)
+	})
+
+	t.Run("empty table", func(t *testing.T) {
+		res, err := newStore(t).RecentRuns(5)
+		require.NoError(t, err)
+		assert.Empty(t, res)
+	})
+
+	t.Run("query error", func(t *testing.T) {
+		store := newStore(t)
+		_, err := store.db.Exec("DROP TABLE executions")
+		require.NoError(t, err)
+		_, err = store.RecentRuns(5)
+		require.ErrorContains(t, err, "failed to query recent runs")
+	})
+}
+
+func TestSQLiteStore_JobRuns(t *testing.T) {
+	base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	recordRuns(t, store, "job1", base, 5)
+	recordRuns(t, store, "job2", base, 2)
+
+	runs, err := store.JobRuns("job1", 3)
+	require.NoError(t, err)
+	require.Len(t, runs, 3)
+	assert.True(t, runs[0].StartedAt.Equal(base.Add(4*time.Minute)))
+	assert.True(t, runs[2].StartedAt.Equal(base.Add(2*time.Minute)))
+	assert.True(t, runs[1].Manual)
+	for _, r := range runs {
+		assert.Equal(t, "job1", r.JobID)
+	}
+
+	runs, err = store.JobRuns("missing", 3)
+	require.NoError(t, err)
+	assert.NotNil(t, runs)
+	assert.Empty(t, runs)
+
+	_, err = store.db.Exec("DROP TABLE executions")
+	require.NoError(t, err)
+	_, err = store.JobRuns("job1", 3)
+	require.ErrorContains(t, err, "failed to query job runs")
+}
+
 func TestSQLiteStore_Migration_OutputColumn(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

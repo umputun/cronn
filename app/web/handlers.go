@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,9 +21,25 @@ import (
 
 // jobsQuery selects which jobs the dashboard shows and in what order
 type jobsQuery struct {
-	sort   enums.SortMode
-	filter enums.FilterMode
-	search string
+	sort    enums.SortMode
+	filter  enums.FilterMode
+	search  string
+	reverse bool
+}
+
+// values returns the list state as URL query values, so links can carry it between pages
+func (q jobsQuery) values() url.Values {
+	v := url.Values{}
+	v.Set("filter", q.filter.String())
+	v.Set("sort", q.sort.String())
+	v.Set("rev", "0")
+	if q.reverse {
+		v.Set("rev", "1")
+	}
+	if q.search != "" {
+		v.Set("search", q.search)
+	}
+	return v
 }
 
 // inspectorData is the template data of the job inspector panel
@@ -104,7 +121,7 @@ const inspectorRuns = 50
 
 // handleDashboard renders the main dashboard
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	q := jobsQuery{sort: s.getSortMode(r), filter: s.getFilterMode(r)}
+	q := s.listQuery(r)
 	data := s.jobsTemplateData(r, q)
 	data.CurrentYear = time.Now().Year()
 	data.Theme = s.getTheme(r)
@@ -146,14 +163,14 @@ func (s *Server) getJobsWithStats(q jobsQuery) jobsStats {
 			stats.idleCount++
 		}
 	}
-	s.sortJobs(stats.failing, enums.SortModeLastrun)
+	s.sortJobs(stats.failing, enums.SortModeLastrun, false)
 
 	searched := s.searchJobs(allJobs, q.search)
 	stats.jobs = s.filterJobs(searched, q.filter)
 	if len(stats.jobs) == 0 && q.search != "" {
 		stats.hiddenBySearch = len(s.filterJobs(allJobs, q.filter))
 	}
-	s.sortJobs(stats.jobs, q.sort)
+	s.sortJobs(stats.jobs, q.sort, q.reverse)
 	return stats
 }
 
@@ -222,7 +239,7 @@ func (s *Server) renderJobs(w http.ResponseWriter, r *http.Request, q jobsQuery)
 
 // handleJobsPartial returns the job table for polling and search
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
-	q := jobsQuery{sort: s.getSortMode(r), filter: s.getFilterMode(r), search: r.FormValue("search")}
+	q := s.listQuery(r)
 	if err := s.renderJobs(w, r, q); err != nil {
 		log.Printf("[ERROR] failed to render jobs partial: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
@@ -259,7 +276,8 @@ func (s *Server) handleFilterModeChange(w http.ResponseWriter, r *http.Request) 
 	}
 	s.setFilterCookie(w, filterMode)
 
-	q := jobsQuery{sort: s.getSortMode(r), filter: filterMode, search: r.FormValue("search")}
+	q := s.listQuery(r)
+	q.filter = filterMode
 	if err := s.renderJobs(w, r, q); err != nil {
 		log.Printf("[ERROR] failed to render filtered jobs: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
@@ -273,9 +291,10 @@ func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[WARN] invalid sort mode %q: %v", r.FormValue("sort"), err)
 		sortMode = enums.SortModeDefault
 	}
-	s.setSortCookie(w, sortMode)
+	q := s.listQuery(r)
+	q.sort = sortMode
+	s.setSortCookie(w, sortMode, q.reverse)
 
-	q := jobsQuery{sort: sortMode, filter: s.getFilterMode(r), search: r.FormValue("search")}
 	if err := s.renderJobs(w, r, q); err != nil {
 		log.Printf("[ERROR] failed to render sorted jobs: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)

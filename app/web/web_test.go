@@ -114,6 +114,55 @@ func TestServer_getSortMode(t *testing.T) {
 	}
 }
 
+func TestServer_getSortReverse(t *testing.T) {
+	server := &Server{}
+	tests := []struct {
+		name, query, cookie string
+		want                bool
+	}{
+		{name: "nothing", want: false},
+		{name: "cookie on", cookie: "1", want: true},
+		{name: "cookie off", cookie: "0", want: false},
+		{name: "cookie junk", cookie: "yes", want: false},
+		{name: "form on over cookie off", query: "rev=1", cookie: "0", want: true},
+		{name: "form off over cookie on", query: "rev=0", cookie: "1", want: false},
+		{name: "form junk falls back to cookie", query: "rev=x", cookie: "1", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/?"+tt.query, http.NoBody)
+			if tt.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: "sort-rev", Value: tt.cookie})
+			}
+			assert.Equal(t, tt.want, server.getSortReverse(req))
+		})
+	}
+}
+
+func TestServer_listQuery(t *testing.T) {
+	server := &Server{}
+
+	t.Run("form values", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/?filter=failed&sort=nextrun&rev=1&search=sync", http.NoBody)
+		assert.Equal(t, jobsQuery{sort: enums.SortModeNextrun, filter: enums.FilterModeFailed, search: "sync", reverse: true},
+			server.listQuery(req))
+	})
+
+	t.Run("cookies then defaults", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "sort-mode", Value: "lastrun"})
+		req.AddCookie(&http.Cookie{Name: "sort-rev", Value: "1"})
+		assert.Equal(t, jobsQuery{sort: enums.SortModeLastrun, filter: enums.FilterModeAll, reverse: true}, server.listQuery(req))
+	})
+
+	t.Run("round trip through values", func(t *testing.T) {
+		q := jobsQuery{sort: enums.SortModeLastrun, filter: enums.FilterModeDisabled, search: "a b&c", reverse: true}
+		req := httptest.NewRequest(http.MethodGet, "/?"+q.values().Encode(), http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "sort-rev", Value: "0"})
+		assert.Equal(t, q, server.listQuery(req))
+	})
+}
+
 func TestServer_parseJobSpecs(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -748,9 +797,11 @@ func TestServer_BaseURL(t *testing.T) {
 		server.handleSortModeChange(rec, req)
 
 		cookies := rec.Result().Cookies()
-		require.Len(t, cookies, 1)
+		require.Len(t, cookies, 2)
 		assert.Equal(t, "sort-mode", cookies[0].Name)
 		assert.Equal(t, "/cronn/", cookies[0].Path)
+		assert.Equal(t, "sort-rev", cookies[1].Name)
+		assert.Equal(t, "/cronn/", cookies[1].Path)
 	})
 
 	t.Run("redirects with baseURL", func(t *testing.T) {

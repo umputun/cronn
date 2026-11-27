@@ -266,29 +266,50 @@ func TestServer_handleJobsPartial(t *testing.T) {
 	})
 }
 
+func TestJobsQuery_values(t *testing.T) {
+	tests := []struct {
+		name string
+		q    jobsQuery
+		want string
+	}{
+		{name: "defaults", q: jobsQuery{sort: enums.SortModeDefault, filter: enums.FilterModeAll}, want: "filter=all&rev=0&sort=default"},
+		{name: "everything set", q: jobsQuery{sort: enums.SortModeNextrun, filter: enums.FilterModeFailed, search: "db backup", reverse: true},
+			want: "filter=failed&rev=1&search=db+backup&sort=nextrun"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.q.values().Encode())
+		})
+	}
+}
+
 func TestServer_handleSortModeChange(t *testing.T) {
 	server := newHandlersTestServer(t, Config{})
 	addJobs(server, sampleJobs()...)
 
 	tbl := []struct {
-		form, wantCookie string
+		form, wantCookie, wantRev string
 	}{
-		{"lastrun", "lastrun"},
-		{"nextrun", "nextrun"},
-		{"default", "default"},
-		{"bogus", "default"},
+		{"sort=lastrun", "lastrun", "0"},
+		{"sort=nextrun", "nextrun", "0"},
+		{"sort=default", "default", "0"},
+		{"sort=bogus", "default", "0"},
+		{"sort=lastrun&rev=1", "lastrun", "1"},
+		{"sort=nextrun&rev=0", "nextrun", "0"},
 	}
 	for _, tt := range tbl {
 		t.Run(tt.form, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort="+tt.form))
+			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader(tt.form))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
 			server.handleSortModeChange(w, req)
 			require.Equal(t, http.StatusOK, w.Code)
 			cookies := w.Result().Cookies()
-			require.Len(t, cookies, 1)
+			require.Len(t, cookies, 2)
 			assert.Equal(t, "sort-mode", cookies[0].Name)
 			assert.Equal(t, tt.wantCookie, cookies[0].Value)
+			assert.Equal(t, "sort-rev", cookies[1].Name)
+			assert.Equal(t, tt.wantRev, cookies[1].Value)
 			assert.Contains(t, w.Body.String(), `id="jobs-controls" class="bar" hx-swap-oob="innerHTML"`)
 		})
 	}
@@ -301,6 +322,33 @@ func TestServer_handleSortModeChange(t *testing.T) {
 		server.handleSortModeChange(w, req)
 		assert.Equal(t, []string{"run", "ok", "fail", "off", "never"}, rowIDs(w.Body.String()))
 		assert.Contains(t, w.Body.String(), `<option value="lastrun" selected>`)
+	})
+
+	t.Run("reverse flips the order", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort=lastrun&rev=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		server.handleSortModeChange(w, req)
+		assert.Equal(t, []string{"off", "fail", "ok", "run", "never"}, rowIDs(w.Body.String()))
+	})
+
+	t.Run("next run keeps the disabled job last", func(t *testing.T) {
+		srv := newHandlersTestServer(t, Config{})
+		jobs := sampleJobs()
+		for i := range jobs {
+			jobs[i].NextRun = time.Now().Add(time.Duration(i+1) * time.Hour)
+		}
+		jobs[4].NextRun = time.Now().Add(time.Minute) // the disabled job has the soonest next time
+		addJobs(srv, jobs...)
+		for _, form := range []string{"sort=nextrun", "sort=nextrun&rev=1"} {
+			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader(form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			srv.handleSortModeChange(w, req)
+			ids := rowIDs(w.Body.String())
+			require.Len(t, ids, 5, form)
+			assert.Equal(t, "off", ids[4], form)
+		}
 	})
 
 	t.Run("keeps the tab's filter over the cookie", func(t *testing.T) {

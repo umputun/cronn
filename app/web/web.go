@@ -97,6 +97,8 @@ type Persistence interface {
 	SaveJobs(jobs []persistence.JobInfo) error
 	RecordExecution(req request.RecordExecution) error
 	GetExecutions(jobID string, limit int) ([]persistence.ExecutionInfo, error)
+	RecentRuns(limit int) (map[string][]persistence.RunSummary, error)
+	JobRuns(jobID string, limit int) ([]persistence.RunSummary, error)
 	GetExecutionByID(execID int) (persistence.ExecutionInfo, error)
 	GetExecutionByStart(jobID string, start int64) (persistence.ExecutionInfo, error)
 	CleanupOldExecutions(jobID string, limit int) error
@@ -540,6 +542,21 @@ func (s *Server) getSortMode(r *http.Request) enums.SortMode {
 	return mode
 }
 
+// getSortReverse returns the sort direction the page sent ("1" flips it), else the cookie, else false
+func (s *Server) getSortReverse(r *http.Request) bool {
+	if v := r.FormValue("rev"); v == "0" || v == "1" {
+		return v == "1"
+	}
+	cookie, err := r.Cookie("sort-rev")
+	return err == nil && cookie.Value == "1"
+}
+
+// listQuery returns the list state of the request: search, filter, sort and direction
+func (s *Server) listQuery(r *http.Request) jobsQuery {
+	return jobsQuery{sort: s.getSortMode(r), filter: s.getFilterMode(r), search: r.FormValue("search"),
+		reverse: s.getSortReverse(r)}
+}
+
 // getFilterMode returns the filter mode the page sent, else the cookie, else "all"; see getSortMode
 func (s *Server) getFilterMode(r *http.Request) enums.FilterMode {
 	if mode, err := enums.ParseFilterMode(r.FormValue("filter")); err == nil {
@@ -557,16 +574,22 @@ func (s *Server) getFilterMode(r *http.Request) enums.FilterMode {
 	return mode
 }
 
-// setSortCookie sets the sort mode cookie
-func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "sort-mode",
-		Value:    mode.String(),
-		Path:     s.cookiePath(),
-		MaxAge:   365 * 24 * 60 * 60, // 1 year
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+// setSortCookie sets the sort mode and sort direction cookies
+func (s *Server) setSortCookie(w http.ResponseWriter, mode enums.SortMode, reverse bool) {
+	rev := "0"
+	if reverse {
+		rev = "1"
+	}
+	for _, c := range [][2]string{{"sort-mode", mode.String()}, {"sort-rev", rev}} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     c[0],
+			Value:    c[1],
+			Path:     s.cookiePath(),
+			MaxAge:   365 * 24 * 60 * 60, // 1 year
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
 
 // setFilterCookie sets the filter mode cookie

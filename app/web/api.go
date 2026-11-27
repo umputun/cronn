@@ -109,7 +109,7 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, _ *http.Request) {
 	s.jobsMu.RUnlock()
 
 	// sort by crontab order for consistent output
-	s.sortJobs(allJobs, enums.SortModeDefault)
+	s.sortJobs(allJobs, enums.SortModeDefault, false)
 
 	// convert to API response and count stats
 	jobs := make([]APIJob, 0, len(allJobs))

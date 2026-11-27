@@ -28,7 +28,7 @@ type neighborsTemplateData struct {
 
 // handleNeighbors returns HTML fragment with list of neighbor instances
 func (s *Server) handleNeighbors(w http.ResponseWriter, _ *http.Request) {
-	tmpl := s.templates["partials/jobs.html"]
+	tmpl := s.templates["partials"]
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if s.neighborsURL == "" {

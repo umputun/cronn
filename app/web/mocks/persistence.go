@@ -31,8 +31,14 @@ import (
 //			GetExecutionsFunc: func(jobID string, limit int) ([]persistence.ExecutionInfo, error) {
 //				panic("mock out the GetExecutions method")
 //			},
+//			JobRunsFunc: func(jobID string, limit int) ([]persistence.RunSummary, error) {
+//				panic("mock out the JobRuns method")
+//			},
 //			LoadJobsFunc: func() ([]persistence.JobInfo, error) {
 //				panic("mock out the LoadJobs method")
+//			},
+//			RecentRunsFunc: func(limit int) (map[string][]persistence.RunSummary, error) {
+//				panic("mock out the RecentRuns method")
 //			},
 //			RecordExecutionFunc: func(req request.RecordExecution) error {
 //				panic("mock out the RecordExecution method")
@@ -62,8 +68,14 @@ type PersistenceMock struct {
 	// GetExecutionsFunc mocks the GetExecutions method.
 	GetExecutionsFunc func(jobID string, limit int) ([]persistence.ExecutionInfo, error)
 
+	// JobRunsFunc mocks the JobRuns method.
+	JobRunsFunc func(jobID string, limit int) ([]persistence.RunSummary, error)
+
 	// LoadJobsFunc mocks the LoadJobs method.
 	LoadJobsFunc func() ([]persistence.JobInfo, error)
+
+	// RecentRunsFunc mocks the RecentRuns method.
+	RecentRunsFunc func(limit int) (map[string][]persistence.RunSummary, error)
 
 	// RecordExecutionFunc mocks the RecordExecution method.
 	RecordExecutionFunc func(req request.RecordExecution) error
@@ -102,8 +114,20 @@ type PersistenceMock struct {
 			// Limit is the limit argument value.
 			Limit int
 		}
+		// JobRuns holds details about calls to the JobRuns method.
+		JobRuns []struct {
+			// JobID is the jobID argument value.
+			JobID string
+			// Limit is the limit argument value.
+			Limit int
+		}
 		// LoadJobs holds details about calls to the LoadJobs method.
 		LoadJobs []struct {
+		}
+		// RecentRuns holds details about calls to the RecentRuns method.
+		RecentRuns []struct {
+			// Limit is the limit argument value.
+			Limit int
 		}
 		// RecordExecution holds details about calls to the RecordExecution method.
 		RecordExecution []struct {
@@ -121,7 +145,9 @@ type PersistenceMock struct {
 	lockGetExecutionByID     sync.RWMutex
 	lockGetExecutionByStart  sync.RWMutex
 	lockGetExecutions        sync.RWMutex
+	lockJobRuns              sync.RWMutex
 	lockLoadJobs             sync.RWMutex
+	lockRecentRuns           sync.RWMutex
 	lockRecordExecution      sync.RWMutex
 	lockSaveJobs             sync.RWMutex
 }
@@ -293,6 +319,42 @@ func (mock *PersistenceMock) GetExecutionsCalls() []struct {
 	return calls
 }
 
+// JobRuns calls JobRunsFunc.
+func (mock *PersistenceMock) JobRuns(jobID string, limit int) ([]persistence.RunSummary, error) {
+	if mock.JobRunsFunc == nil {
+		panic("PersistenceMock.JobRunsFunc: method is nil but Persistence.JobRuns was just called")
+	}
+	callInfo := struct {
+		JobID string
+		Limit int
+	}{
+		JobID: jobID,
+		Limit: limit,
+	}
+	mock.lockJobRuns.Lock()
+	mock.calls.JobRuns = append(mock.calls.JobRuns, callInfo)
+	mock.lockJobRuns.Unlock()
+	return mock.JobRunsFunc(jobID, limit)
+}
+
+// JobRunsCalls gets all the calls that were made to JobRuns.
+// Check the length with:
+//
+//	len(mockedPersistence.JobRunsCalls())
+func (mock *PersistenceMock) JobRunsCalls() []struct {
+	JobID string
+	Limit int
+} {
+	var calls []struct {
+		JobID string
+		Limit int
+	}
+	mock.lockJobRuns.RLock()
+	calls = mock.calls.JobRuns
+	mock.lockJobRuns.RUnlock()
+	return calls
+}
+
 // LoadJobs calls LoadJobsFunc.
 func (mock *PersistenceMock) LoadJobs() ([]persistence.JobInfo, error) {
 	if mock.LoadJobsFunc == nil {
@@ -317,6 +379,38 @@ func (mock *PersistenceMock) LoadJobsCalls() []struct {
 	mock.lockLoadJobs.RLock()
 	calls = mock.calls.LoadJobs
 	mock.lockLoadJobs.RUnlock()
+	return calls
+}
+
+// RecentRuns calls RecentRunsFunc.
+func (mock *PersistenceMock) RecentRuns(limit int) (map[string][]persistence.RunSummary, error) {
+	if mock.RecentRunsFunc == nil {
+		panic("PersistenceMock.RecentRunsFunc: method is nil but Persistence.RecentRuns was just called")
+	}
+	callInfo := struct {
+		Limit int
+	}{
+		Limit: limit,
+	}
+	mock.lockRecentRuns.Lock()
+	mock.calls.RecentRuns = append(mock.calls.RecentRuns, callInfo)
+	mock.lockRecentRuns.Unlock()
+	return mock.RecentRunsFunc(limit)
+}
+
+// RecentRunsCalls gets all the calls that were made to RecentRuns.
+// Check the length with:
+//
+//	len(mockedPersistence.RecentRunsCalls())
+func (mock *PersistenceMock) RecentRunsCalls() []struct {
+	Limit int
+} {
+	var calls []struct {
+		Limit int
+	}
+	mock.lockRecentRuns.RLock()
+	calls = mock.calls.RecentRuns
+	mock.lockRecentRuns.RUnlock()
 	return calls
 }
 

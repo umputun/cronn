@@ -22,16 +22,16 @@ func TestServer_sortJobs(t *testing.T) {
 	// create test jobs with different attributes
 	now := time.Now()
 	jobs := []persistence.JobInfo{
-		{ID: "1", Command: "cmd1", SortIndex: 2, LastRun: now.Add(-2 * time.Hour), NextRun: now.Add(2 * time.Hour)},
-		{ID: "2", Command: "cmd2", SortIndex: 0, LastRun: now.Add(-1 * time.Hour), NextRun: now.Add(1 * time.Hour)},
-		{ID: "3", Command: "cmd3", SortIndex: 1, LastRun: now.Add(-3 * time.Hour), NextRun: now.Add(30 * time.Minute)},
-		{ID: "4", Command: "cmd4", SortIndex: 3, LastRun: time.Time{}, NextRun: time.Time{}}, // never run
+		{ID: "1", Command: "cmd1", Enabled: true, SortIndex: 2, LastRun: now.Add(-2 * time.Hour), NextRun: now.Add(2 * time.Hour)},
+		{ID: "2", Command: "cmd2", Enabled: true, SortIndex: 0, LastRun: now.Add(-1 * time.Hour), NextRun: now.Add(1 * time.Hour)},
+		{ID: "3", Command: "cmd3", Enabled: true, SortIndex: 1, LastRun: now.Add(-3 * time.Hour), NextRun: now.Add(30 * time.Minute)},
+		{ID: "4", Command: "cmd4", Enabled: true, SortIndex: 3, LastRun: time.Time{}, NextRun: time.Time{}}, // never run
 	}
 
 	t.Run("default sort", func(t *testing.T) {
 		sorted := make([]persistence.JobInfo, len(jobs))
 		copy(sorted, jobs)
-		server.sortJobs(sorted, enums.SortModeDefault)
+		server.sortJobs(sorted, enums.SortModeDefault, false)
 
 		// should be sorted by SortIndex
 		assert.Equal(t, "2", sorted[0].ID)
@@ -43,7 +43,7 @@ func TestServer_sortJobs(t *testing.T) {
 	t.Run("sort by last run", func(t *testing.T) {
 		sorted := make([]persistence.JobInfo, len(jobs))
 		copy(sorted, jobs)
-		server.sortJobs(sorted, enums.SortModeLastrun)
+		server.sortJobs(sorted, enums.SortModeLastrun, false)
 
 		// should be sorted by LastRun, most recent first
 		assert.Equal(t, "2", sorted[0].ID, "First should be ID 2 (1 hour ago - most recent)")
@@ -60,7 +60,7 @@ func TestServer_sortJobs(t *testing.T) {
 	t.Run("sort by next run", func(t *testing.T) {
 		sorted := make([]persistence.JobInfo, len(jobs))
 		copy(sorted, jobs)
-		server.sortJobs(sorted, enums.SortModeNextrun)
+		server.sortJobs(sorted, enums.SortModeNextrun, false)
 
 		// should be sorted by NextRun, soonest first
 		assert.Equal(t, "3", sorted[0].ID) // 30 minutes
@@ -69,22 +69,57 @@ func TestServer_sortJobs(t *testing.T) {
 		assert.Equal(t, "4", sorted[3].ID) // never (zero time)
 	})
 
+	t.Run("direction and jobs without a value", func(t *testing.T) {
+		mixed := []persistence.JobInfo{
+			{ID: "a", Enabled: true, SortIndex: 0, LastRun: now.Add(-time.Hour), NextRun: now.Add(2 * time.Hour)},
+			{ID: "b", Enabled: true, SortIndex: 1, LastRun: now.Add(-3 * time.Hour), NextRun: now.Add(time.Hour)},
+			{ID: "off", Enabled: false, SortIndex: 2, LastRun: now.Add(-2 * time.Hour), NextRun: now.Add(time.Minute)},
+			{ID: "never", Enabled: true, SortIndex: 3, NextRun: now.Add(3 * time.Hour)},
+			{ID: "nosched", Enabled: true, SortIndex: 4, LastRun: now.Add(-4 * time.Hour)},
+		}
+		tbl := []struct {
+			name    string
+			mode    enums.SortMode
+			reverse bool
+			want    []string
+		}{
+			{name: "crontab order", mode: enums.SortModeDefault, want: []string{"a", "b", "off", "never", "nosched"}},
+			{name: "crontab reversed", mode: enums.SortModeDefault, reverse: true, want: []string{"nosched", "never", "off", "b", "a"}},
+			{name: "last run newest first", mode: enums.SortModeLastrun, want: []string{"a", "off", "b", "nosched", "never"}},
+			{name: "last run oldest first", mode: enums.SortModeLastrun, reverse: true, want: []string{"nosched", "b", "off", "a", "never"}},
+			{name: "next run soonest first, disabled last", mode: enums.SortModeNextrun, want: []string{"b", "a", "never", "off", "nosched"}},
+			{name: "next run latest first, disabled last", mode: enums.SortModeNextrun, reverse: true, want: []string{"never", "a", "b", "off", "nosched"}},
+		}
+		for _, tc := range tbl {
+			t.Run(tc.name, func(t *testing.T) {
+				sorted := make([]persistence.JobInfo, len(mixed))
+				copy(sorted, mixed)
+				server.sortJobs(sorted, tc.mode, tc.reverse)
+				ids := make([]string, 0, len(sorted))
+				for _, j := range sorted {
+					ids = append(ids, j.ID)
+				}
+				assert.Equal(t, tc.want, ids)
+			})
+		}
+	})
+
 	t.Run("stable sort with equal times", func(t *testing.T) {
 		// create jobs with some having equal next run times
 		sameTime := now.Add(1 * time.Hour)
 		sameTime2 := now.Add(2 * time.Hour)
 		jobsEqual := []persistence.JobInfo{
-			{ID: "A", Command: "cmdA", SortIndex: 0, NextRun: sameTime, LastRun: sameTime2},
-			{ID: "B", Command: "cmdB", SortIndex: 1, NextRun: sameTime, LastRun: sameTime2},
-			{ID: "C", Command: "cmdC", SortIndex: 2, NextRun: sameTime, LastRun: sameTime2},
-			{ID: "D", Command: "cmdD", SortIndex: 3, NextRun: now.Add(30 * time.Minute), LastRun: now},
-			{ID: "E", Command: "cmdE", SortIndex: 4, NextRun: sameTime, LastRun: sameTime2},
+			{ID: "A", Command: "cmdA", Enabled: true, SortIndex: 0, NextRun: sameTime, LastRun: sameTime2},
+			{ID: "B", Command: "cmdB", Enabled: true, SortIndex: 1, NextRun: sameTime, LastRun: sameTime2},
+			{ID: "C", Command: "cmdC", Enabled: true, SortIndex: 2, NextRun: sameTime, LastRun: sameTime2},
+			{ID: "D", Command: "cmdD", Enabled: true, SortIndex: 3, NextRun: now.Add(30 * time.Minute), LastRun: now},
+			{ID: "E", Command: "cmdE", Enabled: true, SortIndex: 4, NextRun: sameTime, LastRun: sameTime2},
 		}
 
 		// test next run sorting stability
 		sortedNext := make([]persistence.JobInfo, len(jobsEqual))
 		copy(sortedNext, jobsEqual)
-		server.sortJobs(sortedNext, enums.SortModeNextrun)
+		server.sortJobs(sortedNext, enums.SortModeNextrun, false)
 
 		// d should be first (30 minutes), then A,B,C,E in original order (all 1 hour)
 		assert.Equal(t, "D", sortedNext[0].ID, "D should be first (soonest)")
@@ -96,7 +131,7 @@ func TestServer_sortJobs(t *testing.T) {
 		// test last run sorting stability
 		sortedLast := make([]persistence.JobInfo, len(jobsEqual))
 		copy(sortedLast, jobsEqual)
-		server.sortJobs(sortedLast, enums.SortModeLastrun)
+		server.sortJobs(sortedLast, enums.SortModeLastrun, false)
 
 		// a,B,C,E have same LastRun (2 hours from now), D is different (now)
 		// since LastRun sorts most recent first, A,B,C,E should come first in original order
@@ -754,13 +789,13 @@ func TestServer_sortJobs_EdgeCases(t *testing.T) {
 
 	t.Run("sort by next run with zero times", func(t *testing.T) {
 		jobs := []persistence.JobInfo{
-			{ID: "1", Command: "cmd1", NextRun: time.Time{}},
-			{ID: "2", Command: "cmd2", NextRun: now.Add(time.Hour)},
-			{ID: "3", Command: "cmd3", NextRun: time.Time{}},
-			{ID: "4", Command: "cmd4", NextRun: now.Add(-time.Hour)},
+			{ID: "1", Command: "cmd1", Enabled: true, NextRun: time.Time{}},
+			{ID: "2", Command: "cmd2", Enabled: true, NextRun: now.Add(time.Hour)},
+			{ID: "3", Command: "cmd3", Enabled: true, NextRun: time.Time{}},
+			{ID: "4", Command: "cmd4", Enabled: true, NextRun: now.Add(-time.Hour)},
 		}
 
-		server.sortJobs(jobs, enums.SortModeNextrun)
+		server.sortJobs(jobs, enums.SortModeNextrun, false)
 		sorted := jobs
 
 		// zero times should be sorted last
@@ -778,7 +813,7 @@ func TestServer_sortJobs_EdgeCases(t *testing.T) {
 			{ID: "4", Command: "cmd4", LastRun: time.Time{}},
 		}
 
-		server.sortJobs(jobs, enums.SortModeLastrun)
+		server.sortJobs(jobs, enums.SortModeLastrun, false)
 		sorted := jobs
 
 		// most recent first, zero times last
@@ -790,7 +825,7 @@ func TestServer_sortJobs_EdgeCases(t *testing.T) {
 
 	t.Run("empty job list", func(t *testing.T) {
 		jobs := []persistence.JobInfo{}
-		server.sortJobs(jobs, enums.SortModeDefault)
+		server.sortJobs(jobs, enums.SortModeDefault, false)
 		assert.Empty(t, jobs)
 	})
 
@@ -798,7 +833,7 @@ func TestServer_sortJobs_EdgeCases(t *testing.T) {
 		jobs := []persistence.JobInfo{
 			{ID: "1", Command: "cmd1"},
 		}
-		server.sortJobs(jobs, enums.SortModeDefault)
+		server.sortJobs(jobs, enums.SortModeDefault, false)
 		assert.Len(t, jobs, 1)
 		assert.Equal(t, "1", jobs[0].ID)
 	})
@@ -810,7 +845,7 @@ func TestServer_sortJobs_EdgeCases(t *testing.T) {
 			{ID: "3", Command: "mmm", LastStatus: enums.JobStatusSuccess},
 		}
 
-		server.sortJobs(jobs, enums.SortModeDefault)
+		server.sortJobs(jobs, enums.SortModeDefault, false)
 		sorted := jobs
 
 		// when all statuses are same, should maintain original order

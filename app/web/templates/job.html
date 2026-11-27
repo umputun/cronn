@@ -1,0 +1,70 @@
+{{define "main"}}
+{{if .Found}}
+<div class="jp" id="jp" data-job-id="{{.Job.ID}}">
+    <div class="jh">
+        <div class="jh1">
+            <a class="back" id="back-link" href="{{.IndexLink}}" title="All jobs (Esc)">{{template "icon-back"}}<span class="lbl">All jobs</span></a>
+            <span class="jtitle" id="jtitle">{{template "job-title" .}}</span>
+            <span class="sp"></span>
+            <span class="pos">
+                {{if .Total}}<span id="jpos">{{.Pos}} of {{.Total}}</span>{{end}}
+                {{if .Prev}}<a class="ibtn" id="prev-job" href="{{.Prev}}" title="Previous job (k)" aria-label="Previous job">{{template "icon-back"}}</a>{{else}}<span class="ibtn dim" aria-hidden="true">{{template "icon-back"}}</span>{{end}}
+                {{if .Next}}<a class="ibtn" id="next-job" href="{{.Next}}" title="Next job (j)" aria-label="Next job">{{template "icon-next"}}</a>{{else}}<span class="ibtn dim" aria-hidden="true">{{template "icon-next"}}</span>{{end}}
+            </span>
+        </div>
+        <div class="facts" id="facts"
+             hx-get="{{url (printf "/api/jobs/%s/facts" .Job.ID)}}"
+             hx-trigger="every 5s [!uiHeld], refresh-jobs from:body, run-selected from:body"
+             hx-include="#joutput [name='selected-run'], #jruns [name='newest'], #filter-mode, #sort-mode, #sort-rev, #list-search"
+             hx-swap="innerHTML"
+             hx-on::after-request="uiPollDone(this, event)">{{template "job-facts" .}}</div>
+        <form class="runbar{{if .HasTemplates}} dated{{end}}" id="runbar"
+              hx-post="{{url (printf "/api/jobs/%s/run-confirm" .Job.ID)}}"
+              hx-target="#dialog-slot" hx-swap="innerHTML">
+            {{template "list-state-fields" .}}
+            <div class="cmdf">
+                {{if .CommandRows}}
+                {{/* the parser drops the newline after the opening tag, so a command starting with one keeps its own */}}
+                <textarea class="cmdin" id="cmdin" name="command" rows="{{.CommandRows}}" data-orig="{{.Job.Command}}"
+                          spellcheck="false" autocomplete="off" aria-label="Command"
+                          {{if or .ManualDisabled (not .CommandEditEnabled)}}readonly{{else}}title="Edits apply to this run only"{{end}}
+                          hx-on:input="uiMarkEdited()">
+{{.Job.Command}}</textarea>
+                {{else}}
+                <input class="cmdin" id="cmdin" name="command" value="{{.Job.Command}}" data-orig="{{.Job.Command}}"
+                       spellcheck="false" autocomplete="off" aria-label="Command"
+                       {{if or .ManualDisabled (not .CommandEditEnabled)}}readonly{{else}}title="Edits apply to this run only"{{end}}
+                       hx-on:input="uiMarkEdited()">
+                {{end}}
+                <button type="button" class="ibtn" id="copy-cmd" data-tip="Copy command" aria-label="Copy command"
+                        hx-on:click="uiCopyCommand()">{{template "icon-copy"}}</button>
+            </div>
+            {{if .HasTemplates}}
+            <input class="datein" id="datein" name="date" placeholder="date YYYYMMDD" inputmode="numeric"
+                   autocomplete="off" aria-label="Date for templates" title="Empty uses the current time; a date is used at 00:00"
+                   hx-on:input="uiMarkEdited()">
+            {{end}}
+            <span class="runact" id="runact">{{template "job-runact" .}}</span>
+        </form>
+    </div>
+    <div class="jb">
+        <div class="jruns" id="jruns"
+             hx-get="{{url (printf "/api/jobs/%s/runs" .Job.ID)}}"
+             hx-trigger="runs-changed from:body, run-selected from:body"
+             hx-include="#joutput [name='selected-run']"
+             hx-swap="innerHTML" hx-sync="#joutput:queue last">{{template "job-runs" .}}</div>
+        <div class="jlog">
+            <label class="wraptg" title="Wrap lines">
+                <input type="checkbox" id="wrap" checked><span class="sr-only">Wrap lines</span>{{template "icon-wrap"}}
+            </label>
+            <div class="joutput" id="joutput">{{template "job-output" .Output}}</div>
+        </div>
+    </div>
+</div>
+{{else}}
+<div class="missing">
+    <b>Job not found</b>
+    <p>No job with this id is in the crontab. <a href="{{.IndexLink}}" id="back-link">All jobs</a></p>
+</div>
+{{end}}
+{{end}}

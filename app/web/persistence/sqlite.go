@@ -48,6 +48,17 @@ type ExecutionInfo struct {
 	Output          string          `db:"output"`
 }
 
+// RunSummary is an execution record without its output, for run history strips and run matching
+type RunSummary struct {
+	ID         int             `db:"id"`
+	JobID      string          `db:"job_id"`
+	StartedAt  time.Time       `db:"started_at"`
+	FinishedAt time.Time       `db:"finished_at"`
+	Status     enums.JobStatus `db:"status"`
+	ExitCode   int             `db:"exit_code"`
+	Manual     bool            `db:"manual"`
+}
+
 // SQLiteStore implements persistence using SQLite
 type SQLiteStore struct {
 	db *sqlx.DB
@@ -303,6 +314,52 @@ func (s *SQLiteStore) GetExecutions(jobID string, limit int) ([]ExecutionInfo, e
 	}
 
 	return executions, nil
+}
+
+// runSummaryCols selects a RunSummary; executed_command is NULL in rows written before the column default
+const runSummaryCols = `id, job_id, started_at, finished_at, status, exit_code,
+	COALESCE(executed_command, '') != '' AS manual`
+
+// RecentRuns returns up to limit newest run summaries of every job, keyed by job id, newest first
+func (s *SQLiteStore) RecentRuns(limit int) (map[string][]RunSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var runs []RunSummary
+	err := s.db.Select(&runs, `
+		SELECT `+runSummaryCols+` FROM executions
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id, ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at DESC, id DESC) AS rn
+				FROM executions)
+			WHERE rn <= ?)
+		ORDER BY job_id, started_at DESC, id DESC`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent runs: %w", err)
+	}
+
+	res := make(map[string][]RunSummary)
+	for _, r := range runs {
+		res[r.JobID] = append(res[r.JobID], r)
+	}
+	return res, nil
+}
+
+// JobRuns returns up to limit newest run summaries of one job, newest first
+func (s *SQLiteStore) JobRuns(jobID string, limit int) ([]RunSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	runs := []RunSummary{}
+	err := s.db.Select(&runs, `
+		SELECT `+runSummaryCols+` FROM executions
+		WHERE job_id = ?
+		ORDER BY started_at DESC, id DESC
+		LIMIT ?`, jobID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query job runs: %w", err)
+	}
+	return runs, nil
 }
 
 // GetExecutionByID retrieves a specific execution by its ID.

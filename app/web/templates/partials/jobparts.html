@@ -1,0 +1,144 @@
+{{define "job-badge"}}{{if not .Enabled}}Disabled{{else if .IsRunning}}Running{{else if eq .LastStatus.String "success"}}Healthy{{else if eq .LastStatus.String "failed"}}Failing{{else}}Never ran{{end}}{{end}}
+
+{{define "job-title"}}
+{{if .Found}}
+<span class="dot big {{template "job-dot" .Job}}" aria-hidden="true"></span>
+<h1 class="{{if not .Job.Name}}cmd{{end}}" id="job-heading">{{template "job-name" .Job}}</h1>
+<span class="badge {{template "job-dot" .Job}}" id="job-badge">{{template "job-badge" .Job}}</span>
+{{else}}
+<span class="badge off" id="job-badge">Removed</span>
+{{end}}
+{{end}}
+
+{{define "job-title-oob"}}<span class="jtitle" id="jtitle" hx-swap-oob="true">{{template "job-title" .}}</span>{{end}}
+
+{{/* state that changes at runtime lives here only, so the command and date fields are never swapped */}}
+{{define "job-runact"}}
+{{if not .Found}}
+{{else if .Job.IsRunning}}
+{{if .StopEnabled}}
+<button type="button" class="btn danger" id="stop-run"
+        hx-get="{{url (printf "/api/jobs/%s/stop-form" .Job.ID)}}{{if .StopStart}}?start={{.StopStart}}{{end}}"
+        hx-target="#dialog-slot" hx-swap="innerHTML">{{template "icon-stop"}} Stop</button>
+{{end}}
+{{else if not .Job.Enabled}}
+<span class="runnote">Enable the schedule to run this job</span>
+{{else if not .ManualDisabled}}
+<button type="submit" class="btn pri" id="run-now">{{template "icon-play"}} <span class="lbl">Run now</span></button>
+{{end}}
+{{end}}
+
+{{define "job-runact-oob"}}<span class="runact" id="runact" hx-swap-oob="true">{{template "job-runact" .}}</span>{{end}}
+
+{{define "job-facts"}}
+{{if .Found}}
+<div class="fact">Schedule<b>{{describeSchedule .Job.Schedule}} <span class="mono faint">{{.Job.Schedule}}</span></b></div>
+<div class="fact">
+    <button type="button" role="switch" class="sw{{if .Job.Enabled}} on{{end}}" id="toggle-{{.Job.ID}}"
+            aria-checked="{{if .Job.Enabled}}true{{else}}false{{end}}"
+            title="{{if .Job.Enabled}}Disable{{else}}Enable{{end}} the schedule (⇧E)"
+            hx-post="{{url (printf "/api/jobs/%s/toggle" .Job.ID)}}"
+            hx-target="#toasts" hx-swap="innerHTML"><i aria-hidden="true"></i>{{if .Job.Enabled}}Enabled{{else}}Disabled{{end}}</button>
+</div>
+<div class="fact">Last run<b id="fact-last">{{if .Job.IsRunning}}<span class="elapsed">running {{humanDuration (since .Job.LastRun)}}</span>{{else if .Job.LastRun.IsZero}}never{{else}}{{ago .Job.LastRun}}{{with .Job.LastExitCode}}{{if ne (deref .) 0}} · <span class="bad">exit {{deref .}}</span>{{end}}{{end}}{{end}}</b></div>
+<div class="fact">Next run<b id="fact-next">{{if and .Job.Enabled (not .Job.NextRun.IsZero)}}{{clock .Job.NextRun}} · in {{timeUntil .Job.NextRun}}{{else}}—{{end}}</b></div>
+<div class="fact">Recent<b>{{template "job-strip" .Strip}}</b></div>
+{{else}}
+<div class="removed" role="alert">This job was removed from the crontab. <a href="{{.IndexLink}}">All jobs</a></div>
+{{end}}
+{{end}}
+
+{{define "job-strip"}}<span class="strip big">{{range .}}{{if .Href}}<a class="{{.Class}}{{if .Sel}} sel{{end}}" href="{{.Href}}" data-run="{{.Key}}"
+    hx-get="{{.Out}}" hx-target="#joutput" hx-swap="innerHTML" hx-sync="#joutput:replace"
+    data-tip="{{.Tip}}" aria-label="{{.Tip}}" style="height: {{.Height}}%"></a>{{else}}<i class="e"></i>{{end}}{{end}}</span>{{end}}
+
+{{define "job-runs"}}
+<input type="hidden" name="newest" value="{{.Newest}}">
+<h5>Runs · newest first · latest 50</h5>
+{{range .Active}}
+<button type="button" class="jr{{if eq .Token $.Selected}} sel{{end}}" data-run="{{.Token}}"
+        hx-get="{{url (printf "/api/jobs/%s/live-output" $.Job.ID)}}?start={{.Start}}"
+        hx-target="#joutput" hx-swap="innerHTML" hx-sync="#joutput:replace">
+    <span class="dot running" aria-hidden="true"></span><b>{{when .StartedAt}}</b><span class="x live">running</span>
+    <small>{{if .ExecutedCommand}}manual{{else}}scheduled{{end}}</small>
+</button>
+{{end}}
+{{range .Runs}}
+<button type="button" class="jr{{if eq (printf "%d" .ID) $.Selected}} sel{{end}}" data-run="{{.ID}}"
+        hx-get="{{url (printf "/api/jobs/%s/executions/%d/output" $.Job.ID .ID)}}"
+        hx-target="#joutput" hx-swap="innerHTML" hx-sync="#joutput:replace">
+    <span class="dot {{if eq .Status.String "failed"}}fail{{else}}ok{{end}}" aria-hidden="true"></span><b>{{when .StartedAt}}</b>
+    <span class="x">{{if ne .ExitCode 0}}<span class="bad">exit {{.ExitCode}}</span> · {{end}}{{runDuration (.FinishedAt.Sub .StartedAt)}}</span>
+    <small>{{if .ExecutedCommand}}manual{{else}}scheduled{{end}}</small>
+</button>
+{{end}}
+{{if and (not .Active) (not .Runs)}}<div class="noruns">No runs yet.</div>{{end}}
+{{end}}
+
+{{/* the output pane. A run in progress and the wait for a started run poll their own wrapper and swap its
+     inside; an answer that ends either replaces the whole pane */}}
+{{define "job-output"}}
+{{if .Run}}
+{{template "run-out" .Run}}
+{{else if .Live}}
+<div class="out" id="live-out"
+     hx-get="{{url (printf "/api/jobs/%s/live-output" .JobID)}}?start={{.Live.Start}}&poll=1"
+     hx-trigger="every 5s [!uiHeld], refresh-jobs from:body" hx-swap="innerHTML" hx-sync="#joutput:abort">{{template "live-body" .Live}}</div>
+{{else if .After}}
+<div class="out" id="live-out"
+     hx-get="{{url (printf "/api/jobs/%s/live-output" .JobID)}}?after={{.After}}"
+     hx-trigger="every 1s [!uiHeld]" hx-swap="innerHTML" hx-sync="#joutput:abort"
+     hx-include="#filter-mode, #sort-mode, #sort-rev, #list-search">{{template "wait-body" .}}</div>
+{{else if .Gone}}
+<div class="out"><div class="obar"></div><p class="empty-out">This run's output is no longer available.</p></div>
+{{else}}
+<div class="out"><div class="obar"></div><p class="empty-out">No runs yet.</p></div>
+{{end}}
+{{end}}
+
+{{define "wait-body"}}
+<div class="obar"><b>{{if .NoStart}}Not started{{else}}Starting…{{end}}</b></div>
+{{if .NoStart}}
+<p class="empty-out bad" role="alert">The run did not start within 10 seconds. Check the cronn log for the reason.</p>
+{{else}}
+<p class="empty-out">Waiting for the run to start.</p>
+{{end}}
+{{end}}
+
+{{define "run-out"}}
+<div class="out">
+    <input type="hidden" name="selected-run" value="{{.Run.ID}}">
+    <div class="obar">
+        <b>Run {{when .Run.StartedAt}}</b>
+        <span>{{if .Run.ExecutedCommand}}manual{{else}}scheduled{{end}}</span>
+        <span>{{if ne .Run.ExitCode 0}}<span class="bad">exit {{.Run.ExitCode}}</span> · {{end}}{{runDuration (.Run.FinishedAt.Sub .Run.StartedAt)}}</span>
+    </div>
+    <div class="out-cmd"><b>{{.CommandLabel}}:</b> <span class="mono">{{.Command}}</span></div>
+    {{if .Lines}}
+    <div class="log">{{template "log-lines" .Lines}}</div>
+    {{else}}
+    <p class="empty-out">No output captured.{{if ne .Run.ExitCode 0}} The run failed with exit code {{.Run.ExitCode}}.{{end}}</p>
+    {{end}}
+</div>
+{{end}}
+
+{{define "live-body"}}
+<input type="hidden" name="selected-run" value="{{.Token}}">
+<div class="obar">
+    <b>Live {{when .StartedAt}}</b>
+    <span>{{if .ExecutedCommand}}manual{{else}}scheduled{{end}}</span>
+    <span class="live">running · {{humanDuration (since .StartedAt)}}</span>
+</div>
+<div class="out-cmd"><b>{{.CommandLabel}}:</b> <span class="mono">{{.Command}}</span></div>
+{{if not .Capture}}
+<p class="empty-out">Output capture is disabled.</p>
+{{else if .Lines}}
+<div class="log">{{template "log-lines" .Lines}}</div>
+{{else}}
+<p class="empty-out">No output yet.</p>
+{{end}}
+{{end}}
+
+{{define "log-lines"}}{{range .}}<div{{if or .Err .Cursor}} class="{{if .Err}}err{{end}}{{if .Cursor}} cursor{{end}}"{{end}}>{{.Text}}</div>{{end}}{{end}}
+
+{{define "toggle-toast"}}<div class="t"><span class="dot {{if .Enabled}}ok{{else}}off{{end}}" aria-hidden="true"></span>Schedule {{if .Enabled}}enabled{{else}}disabled{{end}}: <b>{{template "job-name" .}}</b></div>{{end}}

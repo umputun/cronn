@@ -341,53 +341,42 @@ func (s *Server) updateNextRun(job *persistence.JobInfo) {
 	}
 }
 
-// sortJobs sorts jobs based on the sort mode
-func (s *Server) sortJobs(jobs []persistence.JobInfo, sortMode enums.SortMode) {
-	switch sortMode {
-	case enums.SortModeLastrun:
-		// sort by last run time, most recent first
-		sort.Slice(jobs, func(i, j int) bool {
-			// handle zero times - put them at the end
-			if jobs[i].LastRun.IsZero() && jobs[j].LastRun.IsZero() {
-				return jobs[i].SortIndex < jobs[j].SortIndex // maintain default order for unrun jobs
-			}
-			if jobs[i].LastRun.IsZero() {
-				return false
-			}
-			if jobs[j].LastRun.IsZero() {
-				return true
-			}
-			// if times are equal, use SortIndex for stable ordering
-			if jobs[i].LastRun.Equal(jobs[j].LastRun) {
-				return jobs[i].SortIndex < jobs[j].SortIndex
-			}
-			return jobs[i].LastRun.After(jobs[j].LastRun)
-		})
-	case enums.SortModeNextrun:
-		// sort by next run time, soonest first
-		sort.Slice(jobs, func(i, j int) bool {
-			// handle zero times - put them at the end
-			if jobs[i].NextRun.IsZero() && jobs[j].NextRun.IsZero() {
-				return jobs[i].SortIndex < jobs[j].SortIndex
-			}
-			if jobs[i].NextRun.IsZero() {
-				return false
-			}
-			if jobs[j].NextRun.IsZero() {
-				return true
-			}
-			// if times are equal, use SortIndex for stable ordering
-			if jobs[i].NextRun.Equal(jobs[j].NextRun) {
-				return jobs[i].SortIndex < jobs[j].SortIndex
-			}
-			return jobs[i].NextRun.Before(jobs[j].NextRun)
-		})
-	default: // "default"
-		// sort by original crontab order
-		sort.Slice(jobs, func(i, j int) bool {
-			return jobs[i].SortIndex < jobs[j].SortIndex
-		})
+// sortJobs orders jobs by mode with the nearest to now first, or the farthest first when reverse is set.
+// Jobs without a value for the mode (never ran for last run; disabled or unscheduled for next run) stay
+// last in both directions, and ties keep crontab order
+func (s *Server) sortJobs(jobs []persistence.JobInfo, mode enums.SortMode, reverse bool) {
+	key := func(j persistence.JobInfo) (time.Time, bool) {
+		switch mode {
+		case enums.SortModeLastrun:
+			return j.LastRun, !j.LastRun.IsZero()
+		case enums.SortModeNextrun:
+			return j.NextRun, j.Enabled && !j.NextRun.IsZero()
+		default:
+			return time.Time{}, false
+		}
 	}
+	sort.SliceStable(jobs, func(i, j int) bool {
+		a, b := jobs[i], jobs[j]
+		if mode == enums.SortModeDefault {
+			if reverse {
+				return a.SortIndex > b.SortIndex
+			}
+			return a.SortIndex < b.SortIndex
+		}
+		ta, okA := key(a)
+		tb, okB := key(b)
+		if okA != okB {
+			return okA
+		}
+		if !okA || ta.Equal(tb) {
+			return a.SortIndex < b.SortIndex
+		}
+		nearer := ta.Before(tb) // next run: sooner is nearer
+		if mode == enums.SortModeLastrun {
+			nearer = ta.After(tb) // last run: more recent is nearer
+		}
+		return nearer != reverse
+	})
 }
 
 // filterJobs filters jobs based on the selected filter mode. Disabled jobs appear only under all and disabled,

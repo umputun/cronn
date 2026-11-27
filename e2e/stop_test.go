@@ -49,16 +49,42 @@ func lastExecution(t *testing.T, id string) (status string, exitCode int, output
 
 func confirmStop(t *testing.T, page playwright.Page) {
 	t.Helper()
-	dlg := page.Locator("dialog.stop-dialog[open]")
+	dlg := page.Locator("#stop-dialog[open]")
 	waitVisible(t, dlg)
 	_, err := page.ExpectResponse(stopRe, func() error {
-		return dlg.Locator("button.danger").Click()
+		return page.Locator("#sf-stop").Click()
 	}, playwright.PageExpectResponseOptions{Timeout: new(4000.0)})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		count, e := page.Locator("dialog.stop-dialog").Count()
+		count, e := page.Locator("#stop-dialog").Count()
 		return e == nil && count == 0
 	}, 3*time.Second, 50*time.Millisecond, "the dialog closes after the stop")
+}
+
+// stopRunFromBar stops the run in progress shown on a job page and waits for Run to come back
+func stopRunFromBar(t *testing.T, page playwright.Page) {
+	t.Helper()
+	clickAndAwait(t, page, page.Locator("#stop-run"), stopFormRe)
+	confirmStop(t, page)
+	waitVisible(t, page.Locator("#run-now"))
+}
+
+func TestStop_DisabledRunningJobKeepsStopOnJobPage(t *testing.T) {
+	// turning the schedule off hid Stop on the job page while the run went on
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := startLive(t, page)
+	started := time.Now()
+	gotoJob(t, page, id, "")
+	waitVisible(t, page.Locator("#stop-run"))
+
+	setEnabled(t, id, false)
+	t.Cleanup(func() { setEnabled(t, id, true) })
+	require.Eventually(t, func() bool { return pageText(t, page, "#job-badge") == "Disabled" }, 8*time.Second, 100*time.Millisecond)
+	waitVisible(t, page.Locator("#stop-run"))
+	clickAndAwait(t, page, page.Locator("#stop-run"), stopFormRe)
+	confirmStop(t, page)
+	requireStopped(t, id, started)
 }
 
 func requireStopped(t *testing.T, id string, started time.Time) {
@@ -77,14 +103,14 @@ func TestStop_FromRowEndsTheRun(t *testing.T) {
 	id := startLive(t, page)
 	started := time.Now()
 
-	stopBtn := row(page, jobLive).Locator(".stop-btn")
+	stopBtn := row(page, jobLive).Locator("#stop-" + id)
 	waitVisible(t, stopBtn)
-	count, err := row(page, jobLive).Locator(".run-btn").Count()
+	count, err := row(page, jobLive).Locator("#run-" + id).Count()
 	require.NoError(t, err)
 	assert.Zero(t, count, "a running job shows Stop in place of Run")
 
 	clickAndAwait(t, page, stopBtn, stopFormRe)
-	title, err := page.Locator("dialog.stop-dialog[open] h4").TextContent()
+	title, err := page.Locator("#stop-dialog[open] h4").TextContent()
 	require.NoError(t, err)
 	assert.Equal(t, "Stop “"+jobLive+"”?", title)
 	confirmStop(t, page)
@@ -92,24 +118,29 @@ func TestStop_FromRowEndsTheRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, toast, "Stop requested: "+jobLive)
 	requireStopped(t, id, started)
-	waitVisible(t, row(page, jobLive).Locator(".run-btn"))
+	waitVisible(t, row(page, jobLive).Locator("#run-"+id))
 }
 
-func TestStop_FromInspectorEndsTheSelectedRun(t *testing.T) {
+func TestStop_FromCommandBarEndsTheSelectedRun(t *testing.T) {
 	page := newPageSized(t, 1440, 900)
 	navigateToDashboard(t, page)
 	id := startLive(t, page)
 	started := time.Now()
+	gotoJob(t, page, id, "")
 
-	openInspector(t, page, jobLive)
-	stopBtn := page.Locator("#live-out .stop-btn")
-	waitVisible(t, stopBtn)
-	clickAndAwait(t, page, stopBtn, stopFormRe)
-	start, err := page.Locator("dialog.stop-dialog[open] input[name=start]").InputValue()
+	waitVisible(t, page.Locator("#stop-run"))
+	clickAndAwait(t, page, page.Locator("#stop-run"), stopFormRe)
+	start, err := page.Locator("#stop-dialog[open] input[name=start]").InputValue()
 	require.NoError(t, err)
-	assert.Equal(t, "live:"+start, selectedRun(page), "the dialog targets the run the inspector shows")
+	assert.Equal(t, "live:"+start, selectedRun(page), "the dialog targets the run the page shows")
 	confirmStop(t, page)
 	requireStopped(t, id, started)
+	waitVisible(t, page.Locator("#run-now"))
+	require.Eventually(t, func() bool {
+		count, e := page.Locator("#live-out").Count()
+		return e == nil && count == 0
+	}, 8*time.Second, 100*time.Millisecond, "the stopped run turns into its recorded output without a reload")
+	assert.Contains(t, pageText(t, page, "#joutput"), "stopped from the dashboard")
 }
 
 func TestStop_StaleConfirmLeavesNoError(t *testing.T) {
@@ -118,8 +149,8 @@ func TestStop_StaleConfirmLeavesNoError(t *testing.T) {
 	id := startLive(t, page)
 	started := time.Now()
 
-	clickAndAwait(t, page, row(page, jobLive).Locator(".stop-btn"), stopFormRe)
-	start, err := page.Locator("dialog.stop-dialog[open] input[name=start]").InputValue()
+	clickAndAwait(t, page, row(page, jobLive).Locator("#stop-"+id), stopFormRe)
+	start, err := page.Locator("#stop-dialog[open] input[name=start]").InputValue()
 	require.NoError(t, err)
 	resp, err := http.PostForm(baseURL+"/api/jobs/"+id+"/stop", url.Values{"start": {start}}) //nolint:noctx // test helper
 	require.NoError(t, err)

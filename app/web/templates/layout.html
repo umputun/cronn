@@ -1,0 +1,88 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en" data-theme="{{.Theme.String}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- swapped content gets its htmx handlers in the settle step; a delay leaves polled buttons dead for it -->
+    <meta name="htmx-config" content='{"defaultSettleDelay":0}'>
+    <title>{{if .PageTitle}}{{.PageTitle}} · {{end}}cronn</title>
+    <meta name="description" content="Monitor and manage cron jobs with Cronn">
+    <link rel="stylesheet" href="{{url "/static/style.css"}}">
+    <link rel="icon" href="{{url "/static/favicon.svg"}}" type="image/svg+xml">
+</head>
+{{/* index polls replace the URL; without this htmx snapshots the page, commands included, into localStorage */}}
+<body hx-history="false">
+<div class="app">
+    <header class="tb">
+        <a class="tb-brand" href="{{.IndexLink}}" id="brand">{{template "icon-logo"}}<span>cronn</span></a>
+        {{if .Hostname}}
+        {{if .NeighborsEnabled}}
+        <details class="tb-pop menu" id="host-menu">
+            <summary class="tb-host" aria-label="Switch host"><span class="mono">{{.Hostname}}</span>{{template "icon-chev"}}</summary>
+            <div class="tb-menu"
+                 hx-get="{{url "/api/neighbors"}}"
+                 hx-trigger="toggle once from:closest details"
+                 hx-swap="innerHTML">
+                <div class="neighbors-loading">Loading...</div>
+            </div>
+        </details>
+        {{else}}
+        <span class="tb-host static"><span class="mono">{{.Hostname}}</span></span>
+        {{end}}
+        {{end}}
+        <div class="jump">{{if .OnJob}}{{template "jump-search" .}}{{else}}{{template "search-input" .}}{{end}}</div>
+        <nav class="seg" id="pills" aria-label="Filter jobs by state">{{template "pills" .}}</nav>
+        {{template "fdd" .}}
+        <span class="sp"></span>
+        <div class="tb-live" role="status"><span class="dot" aria-hidden="true"></span><span class="lv-ok">live</span><span class="lv-failed">updates failed</span></div>
+        <button class="ibtn" id="theme-toggle" type="button"
+                hx-post="{{url "/api/theme"}}"
+                title="Theme" aria-label="Toggle theme">{{if eq .Theme.String "dark"}}{{template "icon-sun"}}{{else}}{{template "icon-moon"}}{{end}}</button>
+        <details class="tb-pop menu" id="gear-menu">
+            <summary class="ibtn" title="Settings" aria-label="Settings menu">{{template "icon-gear"}}</summary>
+            <div class="tb-menu right">
+                <button type="button" id="open-settings"
+                        hx-get="{{url "/api/settings/modal"}}"
+                        hx-target="#dialog-slot" hx-swap="innerHTML">Settings &amp; about</button>
+                <button type="button" id="open-keys" hx-on:click="uiShowKeys()">Keyboard shortcuts <kbd>?</kbd></button>
+                {{if .AuthEnabled}}<hr><a href="{{url "/logout"}}" id="logout">Log out</a>{{end}}
+            </div>
+        </details>
+    </header>
+    <main class="page">{{template "main" .}}</main>
+</div>
+
+<div id="dialog-slot" hx-on::after-settle="uiDialogSwapped(this, event)"></div>
+<dialog class="keys-modal" id="keys-dialog" aria-labelledby="keys-title" closedby="any">
+    <div class="modal-header">
+        <h2 id="keys-title">Keyboard shortcuts</h2>
+        <form method="dialog">
+            <button class="modal-close" aria-label="Close">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
+        </form>
+    </div>
+    <dl class="keys">
+        <dt><kbd>/</kbd> <kbd>⌘K</kbd></dt><dd>Search jobs; on a job page, jump to another job</dd>
+        <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Move down and up the list; on a job page, next and previous job</dd>
+        <dt><kbd>Enter</kbd></dt><dd>Open the job; in the search field, the first match</dd>
+        <dt><kbd>r</kbd></dt><dd>Run the job, after the confirmation</dd>
+        <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Newer and older run</dd>
+        <dt><kbd>⇧E</kbd></dt><dd>Enable or disable the schedule</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Back to all jobs</dd>
+        <dt><kbd>t</kbd></dt><dd>Switch the theme</dd>
+        <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move in the jump list; Enter opens, ⇧Enter runs</dd>
+        <dt><kbd>?</kbd></dt><dd>This list</dd>
+    </dl>
+</dialog>
+<div id="toasts" class="toast" role="status" aria-live="polite"></div>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script src="{{url "/static/htmx.min.js"}}"></script>
+<script src="{{url "/static/ui.js"}}"></script>
+</body>
+</html>
+{{end}}

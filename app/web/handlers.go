@@ -3,10 +3,9 @@ package web
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
-	"slices"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,59 +19,65 @@ import (
 
 // jobsQuery selects which jobs the dashboard shows and in what order
 type jobsQuery struct {
-	sort   enums.SortMode
-	filter enums.FilterMode
-	search string
+	sort    enums.SortMode
+	filter  enums.FilterMode
+	search  string
+	reverse bool
 }
 
-// inspectorData is the template data of the job inspector panel
-type inspectorData struct {
-	Job            persistence.JobInfo
-	Active         []liveRunView // runs in progress, newest first
-	Runs           []persistence.ExecutionInfo
-	SelectedRun    string    // a recorded run's execution id, or the token of a run in progress
-	RunningSince   time.Time // start of the newest run in progress
-	ManualDisabled bool
-	Output         *runOutputData  // output of the selected recorded run
-	Live           *liveOutputData // output of the selected run in progress
+// values returns the list state as URL query values, so links can carry it between pages
+func (q jobsQuery) values() url.Values {
+	v := url.Values{}
+	v.Set("filter", q.filter.String())
+	v.Set("sort", q.sort.String())
+	v.Set("rev", "0")
+	if q.reverse {
+		v.Set("rev", "1")
+	}
+	if q.search != "" {
+		v.Set("search", q.search)
+	}
+	return v
 }
 
-// liveRunView is a run in progress as listed in the inspector
-type liveRunView struct {
-	Start           int64 // start time in unix microseconds, the run's identity while it is in progress
-	Token           string
-	StartedAt       time.Time
-	ExecutedCommand string
+// indexRow is one job of the index grid
+type indexRow struct {
+	Job   persistence.JobInfo
+	Strip []stripBar
+	Link  string // job page URL carrying the list state
 }
 
-// liveOutputData is the template data of a run in progress in the inspector
-type liveOutputData struct {
-	liveRunView
-	JobID        string
-	Command      string
-	CommandLabel string
-	Capture      bool // false when output capture is disabled
-	Stoppable    bool // false when manual control is disabled
-	Output       string
+// filterTab is one filter pill of the top bar
+type filterTab struct {
+	Mode   enums.FilterMode
+	Label  string
+	Dot    string
+	Count  int
+	Active bool
+	Href   string // index link with this filter, for the pills on a job page
 }
 
-// runOutputData is the template data of one run's output in the inspector
-type runOutputData struct {
-	JobID        string
-	Run          persistence.ExecutionInfo
-	Command      string
-	CommandLabel string
+// sortCol is one sortable column. A click on the sorted column flips it, a click on another column sorts
+// it nearest to now first
+type sortCol struct {
+	Mode    enums.SortMode
+	Label   string // grid header text
+	Menu    string // filter menu text
+	On      bool
+	Reverse bool   // sorted and flipped
+	NextRev string // rev value a click sends
+	Href    string // index link with this sort, for the menu on a job page
 }
 
-// runForm is the template data of the manual run dialog
-type runForm struct {
-	JobID           string
-	Name            string
-	Command         string
-	Date            string
-	HasTemplates    bool
-	CommandEditable bool
-	Error           string
+// runConfirm is the template data of the run confirmation dialog
+type runConfirm struct {
+	JobID   string
+	Name    string
+	Command string
+	Date    string
+	Edited  bool
+	Error   string
+	List    url.Values // list state, echoed so the page the run lands on keeps it
 }
 
 // stopForm is the template data of the stop confirmation dialog, bound to one run by its start time
@@ -84,34 +89,22 @@ type stopForm struct {
 	StartedAt time.Time
 }
 
-// filterTab is one filter tab of the dashboard
-type filterTab struct {
-	Mode   string
-	Label  string
-	Dot    string
-	Count  int
-	Active bool
-}
-
 // runError is a rejected manual run with the status code and text curl callers get
 type runError struct {
 	status int
 	msg    string
 }
 
-// inspectorRuns is how many recent runs the inspector lists
-const inspectorRuns = 50
+// indexStripSize is how many recent runs an index row shows
+const indexStripSize = 20
 
-// handleDashboard renders the main dashboard
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	q := jobsQuery{sort: s.getSortMode(r), filter: s.getFilterMode(r)}
-	data := s.jobsTemplateData(r, q)
-	data.CurrentYear = time.Now().Year()
-	data.Theme = s.getTheme(r)
-	data.AuthEnabled = s.passwordHash != ""
-	data.Version = shortVersion(s.version)
-	data.FullVersion = s.version
-	s.render(w, "base.html", "base", data)
+// handleIndex renders the job list page
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	q := s.listQuery(r)
+	stats := s.getJobsWithStats(q)
+	data := s.listData(r, q, stats)
+	data.Rows = s.indexRows(stats.jobs, q)
+	s.render(w, "index", "layout", data)
 }
 
 // getJobsWithStats retrieves jobs with counts and applies search, filter and sort
@@ -141,31 +134,31 @@ func (s *Server) getJobsWithStats(q jobsQuery) jobsStats {
 			stats.successCount++
 		case enums.JobStatusFailed:
 			stats.failedCount++
-			stats.failing = append(stats.failing, job)
 		case enums.JobStatusIdle:
 			stats.idleCount++
 		}
 	}
-	s.sortJobs(stats.failing, enums.SortModeLastrun)
 
 	searched := s.searchJobs(allJobs, q.search)
 	stats.jobs = s.filterJobs(searched, q.filter)
 	if len(stats.jobs) == 0 && q.search != "" {
 		stats.hiddenBySearch = len(s.filterJobs(allJobs, q.filter))
 	}
-	s.sortJobs(stats.jobs, q.sort)
+	s.sortJobs(stats.jobs, q.sort, q.reverse)
 	return stats
 }
 
-// jobsTemplateData builds template data for the job list from the query and the request's selection state
-func (s *Server) jobsTemplateData(r *http.Request, q jobsQuery) TemplateData {
-	stats := s.getJobsWithStats(q)
+// listData builds the template data every page shares: the top bar, the list state, the counts and the
+// pills, menus and sort columns built from them
+func (s *Server) listData(r *http.Request, q jobsQuery, stats jobsStats) TemplateData {
 	data := s.newTemplateData(r)
+	data.Theme = s.getTheme(r)
+	data.AuthEnabled = s.passwordHash != ""
 	data.SortMode = q.sort
 	data.FilterMode = q.filter
+	data.Reverse = q.reverse
 	data.Search = q.search
-	data.Jobs = stats.jobs
-	data.Failing = stats.failing
+	data.IndexLink = s.indexLink(q)
 	data.TotalCount = stats.totalCount
 	data.RunningCount = stats.runningCount
 	data.SuccessCount = stats.successCount
@@ -174,36 +167,83 @@ func (s *Server) jobsTemplateData(r *http.Request, q jobsQuery) TemplateData {
 	data.DisabledCount = stats.disabledCount
 	data.MatchCount = len(stats.jobs)
 	data.HiddenBySearch = stats.hiddenBySearch
-	data.SelectedJob = r.FormValue("selected-job")
 	data.Tabs = []filterTab{
-		{Mode: "all", Label: "All", Count: stats.totalCount},
-		{Mode: "failed", Label: "Failed", Dot: "fail", Count: stats.failedCount},
-		{Mode: "running", Label: "Running", Dot: "running", Count: stats.runningCount},
-		{Mode: "success", Label: "Succeeded", Dot: "ok", Count: stats.successCount},
-		{Mode: "idle", Label: "Never ran", Dot: "never", Count: stats.idleCount},
-		{Mode: "disabled", Label: "Disabled", Dot: "off", Count: stats.disabledCount},
+		{Mode: enums.FilterModeAll, Label: "All", Count: stats.totalCount},
+		{Mode: enums.FilterModeFailed, Label: "Failing", Dot: "fail", Count: stats.failedCount},
+		{Mode: enums.FilterModeRunning, Label: "Running", Dot: "running", Count: stats.runningCount},
+		{Mode: enums.FilterModeSuccess, Label: "OK", Dot: "ok", Count: stats.successCount},
+		{Mode: enums.FilterModeIdle, Label: "Never", Dot: "never", Count: stats.idleCount},
+		{Mode: enums.FilterModeDisabled, Label: "Disabled", Dot: "off", Count: stats.disabledCount},
 	}
 	for i := range data.Tabs {
-		data.Tabs[i].Active = data.Tabs[i].Mode == q.filter.String()
+		tab := &data.Tabs[i]
+		tab.Active = tab.Mode == q.filter
+		link := q
+		link.filter = tab.Mode
+		tab.Href = s.indexLink(link)
+	}
+	data.SortCols = []sortCol{
+		{Mode: enums.SortModeDefault, Label: "Job", Menu: "Crontab order"},
+		{Mode: enums.SortModeLastrun, Label: "Last run", Menu: "Last run"},
+		{Mode: enums.SortModeNextrun, Label: "Next", Menu: "Next run"},
+	}
+	for i := range data.SortCols {
+		col := &data.SortCols[i]
+		col.On = col.Mode == q.sort
+		col.Reverse = col.On && q.reverse
+		link := q
+		link.sort, link.reverse = col.Mode, col.On && !q.reverse
+		col.NextRev = "0"
+		if link.reverse {
+			col.NextRev = "1"
+		}
+		col.Href = s.indexLink(link)
 	}
 	return data
 }
 
-// renderJobs is the one render path for the job table. It writes the table and out-of-band updates for the
-// counts and the failing-jobs alert; a filter or sort change also re-renders the controls with the new mode
+// indexRows pairs each job with its run history strip and its page link. A failed history read leaves the
+// strips empty rather than failing the list
+func (s *Server) indexRows(jobs []persistence.JobInfo, q jobsQuery) []indexRow {
+	runs, err := s.store.RecentRuns(indexStripSize)
+	if err != nil {
+		log.Printf("[WARN] failed to load recent runs: %v", err)
+	}
+	rows := make([]indexRow, 0, len(jobs))
+	for _, job := range jobs {
+		bars := s.stripBars(stripReq{job: job, runs: runs[job.ID], size: indexStripSize}, q)
+		rows = append(rows, indexRow{Job: job, Strip: bars, Link: s.jobLink(job.ID, q)})
+	}
+	return rows
+}
+
+// indexLink is the index URL with the list state
+func (s *Server) indexLink(q jobsQuery) string {
+	return s.url("/") + "?" + q.values().Encode()
+}
+
+// jobLink is a job page URL with the list state
+func (s *Server) jobLink(id string, q jobsQuery) string {
+	return s.url("/jobs/"+id) + "?" + q.values().Encode()
+}
+
+// renderJobs is the one render path for the index rows. A poll gets the rows and the counts out of band; a
+// filter or sort change also re-renders the grid header, the list state, the pills and the filter menu
 func (s *Server) renderJobs(w http.ResponseWriter, r *http.Request, q jobsQuery) error {
-	tmpl, ok := s.templates["partials/jobs.html"]
+	tmpl, ok := s.templates["partials"]
 	if !ok {
 		return fmt.Errorf("partials template not found")
 	}
-	data := s.jobsTemplateData(r, q)
+	stats := s.getJobsWithStats(q)
+	data := s.listData(r, q, stats)
+	data.Rows = s.indexRows(stats.jobs, q)
 
-	parts := []string{"jobs-table", "failing-alert-oob", "jobs-counts-oob"}
+	parts := []string{"grid-rows", "counts-oob"}
 	if r.Method == http.MethodPost {
-		parts[2] = "jobs-controls-oob" // the controls carry the counts and the newly active tab and sort
+		parts = []string{"grid-rows", "grid-head-oob", "list-state-oob", "pills-oob", "fdd-oob"}
 	}
 	if r.FormValue("reset-search") != "" {
-		parts = append(parts, "search-input-oob")
+		parts = append(parts, "search-oob")
 	}
 
 	var buf bytes.Buffer
@@ -213,6 +253,10 @@ func (s *Server) renderJobs(w http.ResponseWriter, r *http.Request, q jobsQuery)
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Header.Get("HX-Request") == "true" {
+		// a reload, the theme toggle's refresh and a copied link all read the list state from the address
+		w.Header().Set("HX-Replace-Url", s.indexLink(q))
+	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Printf("[WARN] failed to write jobs response: %v", err)
@@ -220,10 +264,9 @@ func (s *Server) renderJobs(w http.ResponseWriter, r *http.Request, q jobsQuery)
 	return nil
 }
 
-// handleJobsPartial returns the job table for polling and search
+// handleJobsPartial returns the index rows for polling and search
 func (s *Server) handleJobsPartial(w http.ResponseWriter, r *http.Request) {
-	q := jobsQuery{sort: s.getSortMode(r), filter: s.getFilterMode(r), search: r.FormValue("search")}
-	if err := s.renderJobs(w, r, q); err != nil {
+	if err := s.renderJobs(w, r, s.listQuery(r)); err != nil {
 		log.Printf("[ERROR] failed to render jobs partial: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
 	}
@@ -250,7 +293,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleFilterModeChange sets the filter mode chosen from the filter tabs
+// handleFilterModeChange sets the filter mode chosen from the pills or the filter menu
 func (s *Server) handleFilterModeChange(w http.ResponseWriter, r *http.Request) {
 	filterMode, err := enums.ParseFilterMode(r.FormValue("filter"))
 	if err != nil {
@@ -259,31 +302,34 @@ func (s *Server) handleFilterModeChange(w http.ResponseWriter, r *http.Request) 
 	}
 	s.setFilterCookie(w, filterMode)
 
-	q := jobsQuery{sort: s.getSortMode(r), filter: filterMode, search: r.FormValue("search")}
+	q := s.listQuery(r)
+	q.filter = filterMode
 	if err := s.renderJobs(w, r, q); err != nil {
 		log.Printf("[ERROR] failed to render filtered jobs: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
 	}
 }
 
-// handleSortModeChange sets the sort mode chosen from the sort select
+// handleSortModeChange sets the sort column and direction chosen from the grid header or the filter menu
 func (s *Server) handleSortModeChange(w http.ResponseWriter, r *http.Request) {
 	sortMode, err := enums.ParseSortMode(r.FormValue("sort"))
 	if err != nil {
 		log.Printf("[WARN] invalid sort mode %q: %v", r.FormValue("sort"), err)
 		sortMode = enums.SortModeDefault
 	}
-	s.setSortCookie(w, sortMode)
+	q := s.listQuery(r)
+	q.sort = sortMode
+	s.setSortCookie(w, sortMode, q.reverse)
 
-	q := jobsQuery{sort: sortMode, filter: s.getFilterMode(r), search: r.FormValue("search")}
 	if err := s.renderJobs(w, r, q); err != nil {
 		log.Printf("[ERROR] failed to render sorted jobs: %v", err)
 		http.Error(w, "Failed to render jobs", http.StatusInternalServerError)
 	}
 }
 
-// handleRunForm renders the manual run dialog for a job
-func (s *Server) handleRunForm(w http.ResponseWriter, r *http.Request) {
+// handleRunConfirm renders the confirmation of a manual run with the exact command and date it will use.
+// It is a POST so an edited command stays out of URLs, which request logs and proxies record
+func (s *Server) handleRunConfirm(w http.ResponseWriter, r *http.Request) {
 	if s.disableManual {
 		http.Error(w, "Manual job execution is disabled", http.StatusForbidden)
 		return
@@ -293,23 +339,34 @@ func (s *Server) handleRunForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
-	s.render(w, "partials/jobs.html", "run-form", s.newRunForm(job, job.Command, ""))
+	// Enter in the command field submits the run bar of a disabled or running job too, and a row's Run can be
+	// stale: nothing opens, and the page refreshes to show why
+	if !job.Enabled || job.IsRunning {
+		w.Header().Set("HX-Trigger", "refresh-jobs")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	form := s.newRunConfirm(job, r)
+	if s.disableCommandEdit && form.Edited {
+		http.Error(w, "Command editing is disabled", http.StatusForbidden)
+		return
+	}
+	s.render(w, "partials", "run-confirm", form)
 }
 
-// newRunForm builds the run dialog data for a job with the given command and date values
-func (s *Server) newRunForm(job persistence.JobInfo, command, date string) runForm {
-	return runForm{
-		JobID:           job.ID,
-		Name:            job.Name,
-		Command:         command,
-		Date:            date,
-		HasTemplates:    strings.Contains(job.Command, "{{") || strings.Contains(job.Command, "[["),
-		CommandEditable: !s.disableCommandEdit,
+// newRunConfirm builds the confirmation from the submitted command and date; a blank command means the
+// job's own
+func (s *Server) newRunConfirm(job persistence.JobInfo, r *http.Request) runConfirm {
+	command := r.FormValue("command")
+	if strings.TrimSpace(command) == "" {
+		command = job.Command
 	}
+	return runConfirm{JobID: job.ID, Name: job.Name, Command: command, Date: strings.TrimSpace(r.FormValue("date")),
+		Edited: command != job.Command, List: s.listQuery(r).values()}
 }
 
 // handleStopForm renders the stop confirmation for the run that started at start, or for the job's newest
-// run in progress when start is absent. A run that has already ended closes the dialog and refreshes the table.
+// run in progress when start is absent. A run that has already ended closes the dialog and refreshes the page.
 func (s *Server) handleStopForm(w http.ResponseWriter, r *http.Request) {
 	if s.disableManual || s.runStopper == nil {
 		http.Error(w, "Stopping runs is disabled", http.StatusForbidden)
@@ -341,7 +398,7 @@ func (s *Server) handleStopForm(w http.ResponseWriter, r *http.Request) {
 	if run.ExecutedCommand != "" {
 		command = run.ExecutedCommand
 	}
-	s.render(w, "partials/jobs.html", "stop-form", stopForm{JobID: job.ID, Name: job.Name, Command: command,
+	s.render(w, "partials", "stop-form", stopForm{JobID: job.ID, Name: job.Name, Command: command,
 		Start: run.StartedAt.UnixMicro(), StartedAt: run.StartedAt})
 }
 
@@ -380,20 +437,20 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl := s.templates["partials/jobs.html"]
-	if err := tmpl.ExecuteTemplate(w, "stop-accepted-oob", job); err != nil {
+	if err := s.templates["partials"].ExecuteTemplate(w, "stop-accepted-oob", job); err != nil {
 		log.Printf("[ERROR] failed to render stop toast: %v", err)
 	}
 }
 
-// writeStopGone empties the dialog slot and refreshes the table when the run to stop is no longer in progress
+// writeStopGone empties the dialog slot and refreshes the page when the run to stop is no longer in progress
 func (s *Server) writeStopGone(w http.ResponseWriter) {
 	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleRunJob handles manual job trigger requests. htmx requests get the run dialog back (with the error on
-// a rejection, empty with a toast on acceptance); other callers get the status code and plain text
+// handleRunJob handles manual job trigger requests. An accepted htmx request is redirected to the job page,
+// which waits for the run that started after the trigger; a rejected one gets the confirmation back with
+// the error. Other callers get the status code and plain text
 func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 	if s.disableManual {
 		http.Error(w, "Manual job execution is disabled", http.StatusForbidden)
@@ -413,6 +470,7 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	after := time.Now().UnixMicro() // the run starts after the send, so its start time is at least this
 	select {
 	case <-ctx.Done():
 		s.writeRunError(w, r, runError{status: http.StatusRequestTimeout, msg: "Request canceled"})
@@ -433,17 +491,13 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	v := s.listQuery(r).values()
+	v.Set("after", strconv.FormatInt(after, 10))
+	w.Header().Set("HX-Redirect", s.url("/jobs/"+job.ID)+"?"+v.Encode())
 	w.WriteHeader(http.StatusAccepted)
-	tmpl := s.templates["partials/jobs.html"]
-	if err := tmpl.ExecuteTemplate(w, "run-accepted-oob", job); err != nil {
-		log.Printf("[ERROR] failed to render run toast: %v", err)
-	}
 }
 
-// checkRun validates a manual run request and builds the scheduler request.
-// The command and date are read first so every rejection can show them back in the form
+// checkRun validates a manual run request and builds the scheduler request
 func (s *Server) checkRun(r *http.Request, job persistence.JobInfo) (service.ManualJobRequest, *runError) {
 	if err := r.ParseForm(); err != nil {
 		return service.ManualJobRequest{}, &runError{status: http.StatusBadRequest, msg: "Invalid form data"}
@@ -477,8 +531,8 @@ func (s *Server) checkRun(r *http.Request, job persistence.JobInfo) (service.Man
 	return req, nil
 }
 
-// writeRunError answers a rejected run: htmx gets the dialog re-rendered with the error and the submitted
-// values (200, so htmx swaps it), other callers get the status code and text as before
+// writeRunError answers a rejected run: htmx gets the confirmation re-rendered with the error and the
+// submitted values (200, so htmx swaps it), other callers get the status code and text
 func (s *Server) writeRunError(w http.ResponseWriter, r *http.Request, e runError) {
 	if r.Header.Get("HX-Request") != "true" {
 		http.Error(w, e.msg, e.status)
@@ -486,20 +540,17 @@ func (s *Server) writeRunError(w http.ResponseWriter, r *http.Request, e runErro
 	}
 	job, ok := s.jobByID(r.PathValue("id"))
 	if !ok {
-		// the definition is gone, so the form keeps the request's own id and values
+		// the definition is gone, so the dialog keeps the request's own id and command
 		job = persistence.JobInfo{ID: r.PathValue("id"), Command: r.FormValue("command")}
 		e.msg = "Job no longer exists in the crontab"
 	}
-	form := s.newRunForm(job, r.FormValue("command"), r.FormValue("date"))
-	form.HasTemplates = form.HasTemplates || form.Date != ""
-	if form.Command == "" {
-		form.Command = job.Command
-	}
+	form := s.newRunConfirm(job, r)
 	form.Error = e.msg
-	s.render(w, "partials/jobs.html", "run-form", form)
+	s.render(w, "partials", "run-confirm", form)
 }
 
-// handleToggleJob toggles the enabled state of a job
+// handleToggleJob toggles the enabled state of a job. htmx requests get a toast; every caller gets the
+// page refreshed through refresh-jobs
 func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
@@ -520,181 +571,20 @@ func (s *Server) handleToggleJob(w http.ResponseWriter, r *http.Request) {
 	s.jobsMu.Unlock()
 
 	s.persistJobs()
-	w.Header().Set("HX-Trigger", "refresh-jobs")
-	w.WriteHeader(http.StatusOK)
-}
-
-// handleInspector renders the job inspector. part=live renders only the refreshable part (status, runs) and
-// the header dot out of band, for the inspector's own polling; otherwise the whole panel, the selected-job input, and the output of the newest
-// run in progress, or of the latest recorded run when nothing runs
-func (s *Server) handleInspector(w http.ResponseWriter, r *http.Request) {
-	job, ok := s.jobByID(r.PathValue("id"))
-	if !ok && r.Header.Get("HX-Request") == "true" {
-		// a crontab sync removed the job: close the panel, since htmx would keep showing it on a 404
-		w.Header().Set("HX-Retarget", "#inspector")
-		w.Header().Set("HX-Reswap", "innerHTML")
-		s.render(w, "partials/jobs.html", "inspector-closed", nil)
+	if r.Header.Get("HX-Request") != "true" {
+		w.Header().Set("HX-Trigger", "refresh-jobs")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if !ok {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-	if job.Enabled {
-		s.updateNextRun(&job)
-	}
-
-	// active runs are read before history: a run finishing in between is then in both, and its
-	// recorded row wins, where the reverse order would leave it in neither
-	active := s.activeRuns(job.ID)
-	runs, err := s.store.GetExecutions(job.ID, inspectorRuns)
-	if err != nil {
-		log.Printf("[ERROR] failed to get executions for job %s: %v", job.ID, err)
-		http.Error(w, "Failed to load execution history", http.StatusInternalServerError)
-		return
-	}
-	active = slices.DeleteFunc(active, func(a activeRun) bool {
-		return slices.ContainsFunc(runs, func(r persistence.ExecutionInfo) bool {
-			return r.StartedAt.UnixMicro() == a.StartedAt.UnixMicro()
-		})
-	})
-	data := inspectorData{Job: job, Runs: runs, ManualDisabled: s.disableManual, RunningSince: job.LastRun}
-	for _, run := range active {
-		data.Active = append(data.Active, run.view())
-	}
-	if len(active) > 0 {
-		data.RunningSince = active[0].StartedAt
-	}
-
-	if r.FormValue("part") == "live" {
-		data.SelectedRun = r.FormValue("selected-run")
-		s.render(w, "partials/jobs.html", "inspector-live-poll", data)
-		return
-	}
-
-	switch {
-	case len(active) > 0:
-		data.SelectedRun = data.Active[0].Token
-		live := s.newLiveOutput(job, active[0])
-		data.Live = &live
-	case len(runs) > 0:
-		data.SelectedRun = strconv.Itoa(runs[0].ID)
-		out := s.newRunOutput(job, runs[0])
-		data.Output = &out
-	}
-	tmpl := s.templates["partials/jobs.html"]
-	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "inspector", data); err != nil {
-		log.Printf("[ERROR] failed to render inspector: %v", err)
-		http.Error(w, "Template error", http.StatusInternalServerError)
-		return
-	}
+	// the switch sits in the polled facts, so the refresh rides After-Swap, which htmx sends from the body
+	// when the switch was replaced before the response came
 	w.Header().Set("HX-Trigger-After-Swap", "refresh-jobs")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if _, err := buf.WriteTo(w); err != nil {
-		log.Printf("[WARN] failed to write inspector: %v", err)
-	}
-}
-
-// handleRunOutput renders one run's output in the inspector, with its command and exit code
-func (s *Server) handleRunOutput(w http.ResponseWriter, r *http.Request) {
-	jobID := r.PathValue("id")
-	execID, err := strconv.Atoi(r.PathValue("exec_id"))
-	if err != nil {
-		http.Error(w, "Invalid execution ID", http.StatusBadRequest)
-		return
-	}
-	job, ok := s.jobByID(jobID)
-	if !ok {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-	run, err := s.store.GetExecutionByID(execID)
-	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
-		log.Printf("[ERROR] failed to get execution %d: %v", execID, err)
-		http.Error(w, "Failed to load execution", http.StatusInternalServerError)
-		return
-	}
-	if err != nil || run.JobID != jobID {
-		http.Error(w, "Execution not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
-	s.render(w, "partials/jobs.html", "run-output", s.newRunOutput(job, run))
-}
-
-// handleLiveOutput renders the output of a run in progress, identified by its start (unix microseconds).
-// The fragment polls itself while the run is in progress; once the run is recorded, it is replaced by that
-// run's ordinary output, matched by start time rather than by position, so a newer run never takes its place.
-func (s *Server) handleLiveOutput(w http.ResponseWriter, r *http.Request) {
-	start, err := strconv.ParseInt(r.FormValue("start"), 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid run start", http.StatusBadRequest)
-		return
-	}
-	job, ok := s.jobByID(r.PathValue("id"))
-	if !ok {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-
-	if run, ok := s.activeRunAt(job.ID, start); ok {
-		if r.FormValue("poll") == "" {
-			w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
-		}
-		s.render(w, "partials/jobs.html", "live-output", s.newLiveOutput(job, run))
-		return
-	}
-
-	run, err := s.store.GetExecutionByStart(job.ID, start)
-	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
-		log.Printf("[ERROR] failed to get execution of job %s started at %d: %v", job.ID, start, err)
-		http.Error(w, "Failed to load execution", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("HX-Trigger-After-Swap", "refresh-inspector")
-	if err != nil {
-		s.render(w, "partials/jobs.html", "live-output-gone", nil)
-		return
-	}
-	s.render(w, "partials/jobs.html", "run-output", s.newRunOutput(job, run))
-}
-
-// newLiveOutput pairs a run in progress with its command and the output it has produced so far
-func (s *Server) newLiveOutput(job persistence.JobInfo, run activeRun) liveOutputData {
-	data := liveOutputData{liveRunView: run.view(), JobID: job.ID, Command: job.Command,
-		CommandLabel: "Job command", Capture: run.Output != nil, Stoppable: !s.disableManual && s.runStopper != nil}
-	if run.ExecutedCommand != "" {
-		data.Command, data.CommandLabel = run.ExecutedCommand, "Executed"
-	}
-	if run.Output != nil {
-		data.Output = run.Output()
-	}
-	return data
-}
-
-// view makes the inspector entry of a run in progress
-func (r activeRun) view() liveRunView {
-	start := r.StartedAt.UnixMicro()
-	return liveRunView{Start: start, Token: fmt.Sprintf("live:%d", start), StartedAt: r.StartedAt,
-		ExecutedCommand: r.ExecutedCommand}
-}
-
-// newRunOutput pairs a run with the command it ran: the executed command of a manual run, the job command
-// otherwise, since scheduled runs do not record their resolved command
-func (s *Server) newRunOutput(job persistence.JobInfo, run persistence.ExecutionInfo) runOutputData {
-	data := runOutputData{JobID: job.ID, Run: run, Command: job.Command, CommandLabel: "Job command"}
-	if run.ExecutedCommand != "" {
-		data.Command, data.CommandLabel = run.ExecutedCommand, "Executed"
-	}
-	return data
+	s.render(w, "partials", "toggle-toast", job)
 }
 
 // handleSettingsModal renders the settings and about dialog
 func (s *Server) handleSettingsModal(w http.ResponseWriter, _ *http.Request) {
-	s.render(w, "partials/jobs.html", "settings-modal", s.settingsInfo)
+	s.render(w, "partials", "settings-modal", s.settingsInfo)
 }
 
 // jobByID returns a copy of the job with the given id

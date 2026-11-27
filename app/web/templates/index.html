@@ -1,0 +1,12 @@
+{{define "main"}}
+{{template "list-state" .}}
+<div class="ilist" id="ilist">
+    <div class="grid ihead" id="ihead">{{template "grid-head" .}}</div>
+    <div id="rows"
+         hx-get="{{url "/api/jobs"}}"
+         hx-trigger="every 5s [!uiHeld], refresh-jobs from:body"
+         hx-include="#search, #filter-mode, #sort-mode, #sort-rev"
+         hx-swap="innerHTML"
+         hx-on::after-request="uiPollDone(this, event)">{{template "grid-rows" .}}</div>
+</div>
+{{end}}

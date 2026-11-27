@@ -2,7 +2,6 @@ package web
 
 import (
 	"errors"
-	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -61,7 +60,7 @@ func sampleJobs() []persistence.JobInfo {
 }
 
 func rowIDs(body string) []string {
-	parts := strings.Split(body, `<tr class="row`)[1:]
+	parts := strings.Split(body, `<div class="grid it`)[1:]
 	ids := make([]string, 0, len(parts))
 	for _, part := range parts {
 		start := strings.Index(part, `data-job-id="`) + len(`data-job-id="`)
@@ -82,8 +81,6 @@ func TestServer_getJobsWithStats(t *testing.T) {
 		assert.Equal(t, 1, stats.runningCount)
 		assert.Equal(t, 1, stats.idleCount)
 		assert.Equal(t, 1, stats.disabledCount)
-		require.Len(t, stats.failing, 1)
-		assert.Equal(t, "fail", stats.failing[0].ID)
 		assert.Len(t, stats.jobs, 5)
 	})
 
@@ -127,40 +124,32 @@ func TestServer_getJobsWithStats(t *testing.T) {
 		stats = server.getJobsWithStats(jobsQuery{filter: enums.FilterModeFailed, search: "vendor"})
 		assert.Zero(t, stats.hiddenBySearch)
 	})
-
-	t.Run("failing ordered by most recent run", func(t *testing.T) {
-		s := newHandlersTestServer(t, Config{})
-		now := time.Now()
-		addJobs(s,
-			persistence.JobInfo{ID: "old", Command: "a", Schedule: "@hourly", Enabled: true, LastStatus: enums.JobStatusFailed, LastRun: now.Add(-time.Hour)},
-			persistence.JobInfo{ID: "new", Command: "b", Schedule: "@hourly", Enabled: true, LastStatus: enums.JobStatusFailed, LastRun: now},
-		)
-		stats := s.getJobsWithStats(jobsQuery{})
-		require.Len(t, stats.failing, 2)
-		assert.Equal(t, "new", stats.failing[0].ID)
-	})
 }
 
-func TestServer_handleDashboard(t *testing.T) {
+func TestServer_handleIndex(t *testing.T) {
 	server := newHandlersTestServer(t, Config{Hostname: "bigmac"})
 	addJobs(server, sampleJobs()...)
 
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	w := httptest.NewRecorder()
-	server.handleDashboard(w, req)
+	server.handleIndex(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
-	assert.Contains(t, body, "<title>Cronn Dashboard</title>")
-	assert.Contains(t, body, `id="jobs-container"`)
-	assert.Contains(t, body, `id="inspector"`)
+	assert.Contains(t, body, "<title>cronn</title>")
+	assert.Contains(t, body, `id="rows"`)
+	assert.Contains(t, body, `hx-trigger="every 5s [!uiHeld], refresh-jobs from:body"`)
+	assert.Contains(t, body, `id="ihead"`)
 	assert.Contains(t, body, `id="dialog-slot"`)
-	assert.Contains(t, body, `id="selected-job"`)
-	assert.Contains(t, body, "1 job failing")
-	assert.Contains(t, body, "Vendor feed import")
+	assert.Contains(t, body, `id="filter-mode" name="filter" value="all"`)
+	assert.Contains(t, body, `id="sort-rev" name="rev" value="0"`)
+	assert.Contains(t, body, "bigmac")
 	assert.Contains(t, body, `<em id="count-disabled">1</em>`)
+	assert.Contains(t, body, `<em id="count-failed">1</em>`)
 	assert.Contains(t, body, "/static/ui.js")
-	assert.NotContains(t, body, "app.js")
+	assert.NotContains(t, body, "hx-boost")
+	assert.NotContains(t, body, `id="inspector"`)
+	assert.NotContains(t, body, `id="selected-job"`)
 	assert.Equal(t, []string{"ok", "fail", "run", "never", "off"}, rowIDs(body))
 }
 
@@ -180,46 +169,77 @@ func TestServer_handleJobsPartial(t *testing.T) {
 		return w.Body.String()
 	}
 
+	t.Run("htmx answers keep the address in step with the list", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?filter=failed&sort=lastrun&rev=1&search=vendor", http.NoBody)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		server.handleJobsPartial(w, req)
+		assert.Equal(t, "/?filter=failed&rev=1&search=vendor&sort=lastrun", w.Header().Get("HX-Replace-Url"))
+
+		plain := httptest.NewRecorder()
+		server.handleJobsPartial(plain, httptest.NewRequest(http.MethodGet, "/api/jobs?filter=failed", http.NoBody))
+		assert.Empty(t, plain.Header().Get("HX-Replace-Url"), "a caller without htmx gets no address header")
+	})
+
 	t.Run("rows show name, readable schedule and last result", func(t *testing.T) {
 		body := get(t, "")
 		assert.Contains(t, body, "Quote sync")
 		assert.Contains(t, body, "Every minute")
-		assert.Contains(t, body, "exit 3 · 2.0s")
-		assert.Contains(t, body, "exit 0 · 0.1s")
+		assert.Contains(t, body, `<span class="bad">exit 3</span>`)
 		assert.Contains(t, body, "Every 1h15m")
 		assert.Contains(t, body, "running 47s")
-		assert.Contains(t, body, `<span class="tag off">disabled</span>`)
-		assert.Contains(t, body, `hx-swap-oob="innerHTML">5</em>`)
-		assert.Contains(t, body, `id="failing-alert" hx-swap-oob="innerHTML"`)
-		assert.NotContains(t, body, `id="jobs-controls"`, "polling must not replace the open sort select or focused tab")
+		assert.Contains(t, body, `<div class="grid it off" data-job-id="off"`)
+		assert.Contains(t, body, `<span class="faint">disabled</span>`)
+		assert.Contains(t, body, `<em id="count-all" hx-swap-oob="innerHTML">5</em>`)
+		assert.Contains(t, body, `<span id="match-count" hx-swap-oob="innerHTML">5 jobs</span>`)
+		assert.NotContains(t, body, `id="ihead"`, "polling must not replace the sort buttons")
+		assert.NotContains(t, body, `id="pills"`, "polling must not replace the pills")
 	})
 
 	t.Run("never-ran job shows no exit code or duration", func(t *testing.T) {
 		body := get(t, "filter=idle", &http.Cookie{Name: "filter-mode", Value: "idle"})
 		assert.Equal(t, []string{"never"}, rowIDs(body))
-		table, _, found := strings.Cut(body, "</table>")
-		require.True(t, found)
-		assert.Contains(t, table, "never ran")
-		assert.NotContains(t, table, "exit ")
+		assert.Contains(t, body, "never ran")
+		assert.NotContains(t, body, "exit ")
 	})
 
-	t.Run("selected job row is marked", func(t *testing.T) {
-		body := get(t, "selected-job=fail")
-		assert.Contains(t, body, `<tr class="row sel" data-job-id="fail"`)
-		assert.NotContains(t, body, `<tr class="row sel" data-job-id="ok"`)
+	t.Run("row links carry the list state", func(t *testing.T) {
+		body := get(t, "filter=all&sort=lastrun&rev=1&search=sync")
+		assert.Contains(t, body, `href="/jobs/ok?filter=all&amp;rev=1&amp;search=sync&amp;sort=lastrun"`)
+	})
+
+	t.Run("run, stop or no button by job state", func(t *testing.T) {
+		body := get(t, "")
+		assert.Contains(t, body, `id="run-ok"`)
+		assert.Contains(t, body, `id="run-never"`)
+		assert.NotContains(t, body, `id="run-run"`, "a running job cannot start again")
+		assert.NotContains(t, body, `id="run-off"`, "a disabled job has no run")
+		assert.NotContains(t, body, `id="stop-run"`, "stopping needs a stopper")
+
+		withStop := newHandlersTestServer(t, Config{RunStopper: &mocks.RunStopperMock{}})
+		addJobs(withStop, sampleJobs()...)
+		w := httptest.NewRecorder()
+		withStop.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
+		assert.Contains(t, w.Body.String(), `id="stop-run"`)
+
+		manualOff := newHandlersTestServer(t, Config{DisableManual: true})
+		addJobs(manualOff, sampleJobs()...)
+		w = httptest.NewRecorder()
+		manualOff.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
+		assert.NotContains(t, w.Body.String(), `id="run-`)
 	})
 
 	t.Run("search by name", func(t *testing.T) {
 		body := get(t, "search=report")
 		assert.Equal(t, []string{"run"}, rowIDs(body))
-		assert.Contains(t, body, "1 of 5 jobs")
+		assert.Contains(t, body, "1 of 5")
 	})
 
 	t.Run("empty search result says what hides the jobs", func(t *testing.T) {
 		body := get(t, "search=rsync", &http.Cookie{Name: "filter-mode", Value: "failed"})
 		assert.Empty(t, rowIDs(body))
-		assert.Contains(t, body, "No failed jobs match “rsync”")
-		assert.Contains(t, body, "1 failed job is hidden by the search.")
+		assert.Contains(t, body, "No failing jobs match “rsync”")
+		assert.Contains(t, body, "1 failing job is hidden by the search.")
 		assert.Contains(t, body, "Clear search")
 		assert.Contains(t, body, "Show all jobs")
 	})
@@ -251,7 +271,7 @@ func TestServer_handleJobsPartial(t *testing.T) {
 
 	t.Run("template missing", func(t *testing.T) {
 		s := newHandlersTestServer(t, Config{})
-		delete(s.templates, "partials/jobs.html")
+		delete(s.templates, "partials")
 		w := httptest.NewRecorder()
 		s.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -259,11 +279,65 @@ func TestServer_handleJobsPartial(t *testing.T) {
 
 	t.Run("template execution error", func(t *testing.T) {
 		s := newHandlersTestServer(t, Config{})
-		s.templates["partials/jobs.html"] = template.Must(template.New("x").Parse(`{{define "jobs-table"}}{{.Missing}}{{end}}`))
+		s.templates["partials"] = template.Must(template.New("x").Parse(`{{define "grid-rows"}}{{.Missing}}{{end}}`))
 		w := httptest.NewRecorder()
 		s.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
+}
+
+func TestServer_indexRows(t *testing.T) {
+	server := newHandlersTestServer(t, Config{})
+	addJobs(server, sampleJobs()...)
+	start := time.Now().Add(-time.Hour)
+	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: "fail", StartedAt: start,
+		FinishedAt: start.Add(time.Second), Status: enums.JobStatusFailed, ExitCode: 3}))
+	q := jobsQuery{sort: enums.SortModeDefault, filter: enums.FilterModeAll}
+	jobs := server.getJobsWithStats(q).jobs
+
+	t.Run("strips come from recent runs", func(t *testing.T) {
+		rows := server.indexRows(jobs, q)
+		require.Len(t, rows, 5)
+		assert.Equal(t, "/jobs/ok?filter=all&rev=0&sort=default", rows[0].Link)
+		require.Len(t, rows[1].Strip, indexStripSize)
+		last := rows[1].Strip[indexStripSize-1]
+		assert.Equal(t, "fail", last.Class)
+		assert.Contains(t, last.Href, "run=")
+		assert.Equal(t, "e", rows[0].Strip[indexStripSize-1].Class, "a job without runs is all padding")
+	})
+
+	t.Run("a store error leaves the strips empty", func(t *testing.T) {
+		store := server.store
+		server.store = &mocks.PersistenceMock{
+			RecentRunsFunc: func(int) (map[string][]persistence.RunSummary, error) { return nil, errors.New("db is gone") },
+			CloseFunc:      store.Close,
+		}
+		defer func() { server.store = store }()
+		rows := server.indexRows(jobs, q)
+		require.Len(t, rows, 5)
+		for _, row := range rows {
+			for _, bar := range row.Strip {
+				assert.Equal(t, "e", bar.Class)
+			}
+		}
+	})
+}
+
+func TestJobsQuery_values(t *testing.T) {
+	tests := []struct {
+		name string
+		q    jobsQuery
+		want string
+	}{
+		{name: "defaults", q: jobsQuery{sort: enums.SortModeDefault, filter: enums.FilterModeAll}, want: "filter=all&rev=0&sort=default"},
+		{name: "everything set", q: jobsQuery{sort: enums.SortModeNextrun, filter: enums.FilterModeFailed, search: "db backup", reverse: true},
+			want: "filter=failed&rev=1&search=db+backup&sort=nextrun"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.q.values().Encode())
+		})
+	}
 }
 
 func TestServer_handleSortModeChange(t *testing.T) {
@@ -271,25 +345,34 @@ func TestServer_handleSortModeChange(t *testing.T) {
 	addJobs(server, sampleJobs()...)
 
 	tbl := []struct {
-		form, wantCookie string
+		form, wantCookie, wantRev string
 	}{
-		{"lastrun", "lastrun"},
-		{"nextrun", "nextrun"},
-		{"default", "default"},
-		{"bogus", "default"},
+		{"sort=lastrun", "lastrun", "0"},
+		{"sort=nextrun", "nextrun", "0"},
+		{"sort=default", "default", "0"},
+		{"sort=bogus", "default", "0"},
+		{"sort=lastrun&rev=1", "lastrun", "1"},
+		{"sort=nextrun&rev=0", "nextrun", "0"},
 	}
 	for _, tt := range tbl {
 		t.Run(tt.form, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort="+tt.form))
+			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader(tt.form))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
 			server.handleSortModeChange(w, req)
 			require.Equal(t, http.StatusOK, w.Code)
 			cookies := w.Result().Cookies()
-			require.Len(t, cookies, 1)
+			require.Len(t, cookies, 2)
 			assert.Equal(t, "sort-mode", cookies[0].Name)
 			assert.Equal(t, tt.wantCookie, cookies[0].Value)
-			assert.Contains(t, w.Body.String(), `id="jobs-controls" class="bar" hx-swap-oob="innerHTML"`)
+			assert.Equal(t, "sort-rev", cookies[1].Name)
+			assert.Equal(t, tt.wantRev, cookies[1].Value)
+			body := w.Body.String()
+			assert.Contains(t, body, `id="ihead" hx-swap-oob="true"`)
+			assert.Contains(t, body, `id="list-state" hidden hx-swap-oob="true"`)
+			assert.Contains(t, body, `id="pills" aria-label="Filter jobs by state" hx-swap-oob="true"`)
+			assert.Contains(t, body, `id="fdd" hx-swap-oob="true"`)
+			assert.Contains(t, body, `id="sort-rev" name="rev" value="`+tt.wantRev+`"`)
 		})
 	}
 
@@ -300,7 +383,52 @@ func TestServer_handleSortModeChange(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleSortModeChange(w, req)
 		assert.Equal(t, []string{"run", "ok", "fail", "off", "never"}, rowIDs(w.Body.String()))
-		assert.Contains(t, w.Body.String(), `<option value="lastrun" selected>`)
+		assert.Contains(t, w.Body.String(), `class="hsort on" id="sort-lastrun"`)
+	})
+
+	t.Run("arrow shows the direction and the next click flips it", func(t *testing.T) {
+		for _, tt := range []struct{ form, dir, next string }{
+			{"sort=lastrun&rev=0", "down", "1"}, {"sort=lastrun&rev=1", "up", "0"},
+		} {
+			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader(tt.form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			server.handleSortModeChange(w, req)
+			_, rest, found := strings.Cut(w.Body.String(), `id="sort-lastrun"`)
+			require.True(t, found, tt.form)
+			head, _, found := strings.Cut(rest, "</button>")
+			require.True(t, found, tt.form)
+			assert.Contains(t, head, `data-dir="`+tt.dir+`"`, tt.form)
+			assert.Contains(t, head, `"rev": "`+tt.next+`"`, tt.form)
+			assert.Contains(t, w.Body.String(), `{"sort": "nextrun", "rev": "0"}`, "another column starts nearest first")
+		}
+	})
+
+	t.Run("reverse flips the order", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader("sort=lastrun&rev=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		server.handleSortModeChange(w, req)
+		assert.Equal(t, []string{"off", "fail", "ok", "run", "never"}, rowIDs(w.Body.String()))
+	})
+
+	t.Run("next run keeps the disabled job last", func(t *testing.T) {
+		srv := newHandlersTestServer(t, Config{})
+		jobs := sampleJobs()
+		for i := range jobs {
+			jobs[i].NextRun = time.Now().Add(time.Duration(i+1) * time.Hour)
+		}
+		jobs[4].NextRun = time.Now().Add(time.Minute) // the disabled job has the soonest next time
+		addJobs(srv, jobs...)
+		for _, form := range []string{"sort=nextrun", "sort=nextrun&rev=1"} {
+			req := httptest.NewRequest(http.MethodPost, "/api/sort-mode", strings.NewReader(form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			srv.handleSortModeChange(w, req)
+			ids := rowIDs(w.Body.String())
+			require.Len(t, ids, 5, form)
+			assert.Equal(t, "off", ids[4], form)
+		}
 	})
 
 	t.Run("keeps the tab's filter over the cookie", func(t *testing.T) {
@@ -347,7 +475,8 @@ func TestServer_handleFilterModeChange(t *testing.T) {
 			require.Equal(t, http.StatusOK, w.Code)
 			assert.Equal(t, tt.wantCookie, w.Result().Cookies()[0].Value)
 			assert.Equal(t, tt.wantRows, rowIDs(w.Body.String()))
-			assert.Contains(t, w.Body.String(), `class="tab on"`)
+			mode := tt.wantCookie
+			assert.Contains(t, w.Body.String(), `class="on" id="pill-`+mode+`"`)
 		})
 	}
 
@@ -358,7 +487,7 @@ func TestServer_handleFilterModeChange(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleFilterModeChange(w, req)
 		assert.Equal(t, []string{"run", "ok", "fail", "off", "never"}, rowIDs(w.Body.String()))
-		assert.Contains(t, w.Body.String(), `<option value="lastrun" selected>`)
+		assert.Contains(t, w.Body.String(), `class="hsort on" id="sort-lastrun"`)
 	})
 
 	t.Run("show all resets the search box", func(t *testing.T) {
@@ -389,55 +518,84 @@ func TestServer_handleThemeToggle(t *testing.T) {
 	}
 }
 
-func TestServer_handleRunForm(t *testing.T) {
-	get := func(s *Server, id string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/run-form", http.NoBody)
+func TestServer_handleRunConfirm(t *testing.T) {
+	post := func(s *Server, id string, form url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/jobs/"+id+"/run-confirm", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.SetPathValue("id", id)
 		w := httptest.NewRecorder()
-		s.handleRunForm(w, req)
+		s.handleRunConfirm(w, req)
 		return w
 	}
+	newServer := func(t *testing.T, cfg Config) *Server {
+		s := newHandlersTestServer(t, cfg)
+		addJobs(s, append(sampleJobs(),
+			persistence.JobInfo{ID: "tpl", Name: "Templated", Command: "echo {{.YYYYMMDD}}", Schedule: "@daily", Enabled: true})...)
+		return s
+	}
 
-	t.Run("plain command has no date field", func(t *testing.T) {
-		s := newHandlersTestServer(t, Config{})
-		addJobs(s, sampleJobs()...)
-		w := get(s, "ok")
+	t.Run("plain run shows the job command", func(t *testing.T) {
+		w := post(newServer(t, Config{}), "ok", url.Values{})
 		require.Equal(t, http.StatusOK, w.Code)
 		body := w.Body.String()
-		assert.Contains(t, body, `<dialog class="run-dialog" data-job-id="ok"`)
-		assert.Contains(t, body, "Run “Quote sync” now")
-		assert.Contains(t, body, "Requests a one-time run.")
-		assert.Contains(t, body, ">echo sync</textarea>")
-		assert.NotContains(t, body, `name="date"`)
-		assert.NotContains(t, body, " readonly")
-		assert.Contains(t, body, `<form method="dialog">`)
+		assert.Contains(t, body, `<dialog class="cf" id="run-dialog" data-job-id="ok"`)
+		assert.Contains(t, body, "Run “Quote sync” now?")
+		assert.Contains(t, body, `<div class="cmd" id="cf-cmd">echo sync</div>`)
+		assert.Contains(t, body, `<input type="hidden" name="command" value="echo sync">`)
+		assert.NotContains(t, body, `id="cf-edited"`)
+		assert.NotContains(t, body, `id="cf-date"`)
+		assert.Contains(t, body, `hx-post="/api/jobs/ok/run"`)
 	})
 
-	t.Run("templated command gets the date field", func(t *testing.T) {
-		s := newHandlersTestServer(t, Config{})
-		addJobs(s, persistence.JobInfo{ID: "tpl", Command: "echo {{.YYYYMMDD}}", Schedule: "@daily", Enabled: true})
-		body := get(s, "tpl").Body.String()
-		assert.Contains(t, body, `name="date"`)
-		assert.Contains(t, body, "a supplied date is used at 00:00")
+	t.Run("blank command means the job's own", func(t *testing.T) {
+		body := post(newServer(t, Config{}), "ok", url.Values{"command": {"   "}}).Body.String()
+		assert.Contains(t, body, `id="cf-cmd">echo sync</div>`)
+		assert.NotContains(t, body, `id="cf-edited"`)
 	})
 
-	t.Run("command edit disabled makes the command read-only", func(t *testing.T) {
-		s := newHandlersTestServer(t, Config{DisableCommandEdit: true})
-		addJobs(s, sampleJobs()...)
-		body := get(s, "ok").Body.String()
-		assert.Contains(t, body, " readonly>")
-		assert.NotContains(t, body, "edits apply to this run only")
+	t.Run("templated run with a date", func(t *testing.T) {
+		body := post(newServer(t, Config{}), "tpl", url.Values{"date": {" 20260915 "}}).Body.String()
+		assert.Contains(t, body, `<b class="mono" id="cf-date">20260915</b>`)
+		assert.Contains(t, body, `<input type="hidden" name="date" value="20260915">`)
+	})
+
+	t.Run("edited command is marked", func(t *testing.T) {
+		body := post(newServer(t, Config{}), "ok", url.Values{"command": {"echo other"}}).Body.String()
+		assert.Contains(t, body, `id="cf-cmd">echo other</div>`)
+		assert.Contains(t, body, "Command edited for this run only.")
+	})
+
+	t.Run("list state is echoed", func(t *testing.T) {
+		form := url.Values{"filter": {"failed"}, "sort": {"lastrun"}, "rev": {"1"}, "search": {"feed"}}
+		body := post(newServer(t, Config{}), "fail", form).Body.String()
+		for _, field := range []string{`name="filter" value="failed"`, `name="sort" value="lastrun"`,
+			`name="rev" value="1"`, `name="search" value="feed"`} {
+			assert.Contains(t, body, field)
+		}
+	})
+
+	t.Run("disabled or running job opens nothing and refreshes", func(t *testing.T) {
+		s := newServer(t, Config{})
+		for _, id := range []string{"off", "run"} {
+			w := post(s, id, url.Values{})
+			assert.Equal(t, http.StatusNoContent, w.Code, id)
+			assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger"), id)
+			assert.Empty(t, w.Body.String(), id)
+		}
+	})
+
+	t.Run("edited command refused when editing is disabled", func(t *testing.T) {
+		s := newServer(t, Config{DisableCommandEdit: true})
+		assert.Equal(t, http.StatusForbidden, post(s, "ok", url.Values{"command": {"echo other"}}).Code)
+		assert.Equal(t, http.StatusOK, post(s, "ok", url.Values{"command": {"echo sync"}}).Code)
 	})
 
 	t.Run("manual runs disabled", func(t *testing.T) {
-		s := newHandlersTestServer(t, Config{DisableManual: true})
-		addJobs(s, sampleJobs()...)
-		assert.Equal(t, http.StatusForbidden, get(s, "ok").Code)
+		assert.Equal(t, http.StatusForbidden, post(newServer(t, Config{DisableManual: true}), "ok", url.Values{}).Code)
 	})
 
 	t.Run("unknown job", func(t *testing.T) {
-		s := newHandlersTestServer(t, Config{})
-		assert.Equal(t, http.StatusNotFound, get(s, "nope").Code)
+		assert.Equal(t, http.StatusNotFound, post(newServer(t, Config{}), "nope", url.Values{}).Code)
 	})
 }
 
@@ -466,7 +624,7 @@ func TestServer_handleRunJob(t *testing.T) {
 		return s, ch
 	}
 
-	t.Run("accepted: curl gets 202 text, htmx gets 202 with toast", func(t *testing.T) {
+	t.Run("accepted: curl gets 202 text, htmx is redirected to the run", func(t *testing.T) {
 		s, ch := newServer(t, Config{}, 2)
 
 		w := post(s, "ok", url.Values{}, false)
@@ -477,16 +635,33 @@ func TestServer_handleRunJob(t *testing.T) {
 		assert.Equal(t, "echo sync", req.Command)
 		assert.Nil(t, req.CustomDate)
 
-		w = post(s, "tpl", url.Values{"command": {"echo edited {{.YYYYMMDD}}"}, "date": {"20260915"}}, true)
+		before := time.Now().UnixMicro()
+		w = post(s, "tpl", url.Values{"command": {"echo edited {{.YYYYMMDD}}"}, "date": {"20260915"},
+			"filter": {"failed"}, "sort": {"bogus"}, "rev": {"1"}, "search": {"a&b"}}, true)
 		assert.Equal(t, http.StatusAccepted, w.Code)
-		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
-		assert.Contains(t, w.Body.String(), `id="toasts" hx-swap-oob="innerHTML"`)
-		assert.Contains(t, w.Body.String(), "Run request accepted: <b>Templated</b>")
-		assert.NotContains(t, w.Body.String(), "<dialog")
+		assert.Empty(t, w.Body.String())
+		loc, err := url.Parse(w.Header().Get("HX-Redirect"))
+		require.NoError(t, err)
+		assert.Equal(t, "/jobs/tpl", loc.Path)
+		after, err := strconv.ParseInt(loc.Query().Get("after"), 10, 64)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, after, before)
+		assert.LessOrEqual(t, after, time.Now().UnixMicro())
+		assert.Equal(t, "failed", loc.Query().Get("filter"))
+		assert.Equal(t, "default", loc.Query().Get("sort"), "the list state is re-parsed, not copied")
+		assert.Equal(t, "1", loc.Query().Get("rev"))
+		assert.Equal(t, "a&b", loc.Query().Get("search"))
 		req = <-ch
 		assert.Equal(t, "echo edited {{.YYYYMMDD}}", req.Command)
 		require.NotNil(t, req.CustomDate)
 		assert.Equal(t, "2026-09-15 00:00", req.CustomDate.Format("2006-01-02 15:04"))
+	})
+
+	t.Run("redirect keeps the base URL", func(t *testing.T) {
+		s, ch := newServer(t, Config{BaseURL: "/cronn"}, 1)
+		w := post(s, "ok", url.Values{}, true)
+		assert.True(t, strings.HasPrefix(w.Header().Get("HX-Redirect"), "/cronn/jobs/ok?"))
+		<-ch
 	})
 
 	tbl := []struct {
@@ -518,12 +693,11 @@ func TestServer_handleRunJob(t *testing.T) {
 			w = post(s, tt.id, tt.form, true)
 			assert.Equal(t, http.StatusOK, w.Code, "htmx rejections answer 200 so htmx swaps the form")
 			body := w.Body.String()
-			assert.Contains(t, body, "<dialog")
+			assert.Contains(t, body, `id="run-dialog"`)
 			assert.Contains(t, body, template.HTMLEscapeString("Not started: "+tt.wantMsg+"."))
-			assert.Empty(t, w.Header().Get("HX-Trigger-After-Swap"))
-			assert.NotContains(t, body, "toasts")
+			assert.Empty(t, w.Header().Get("HX-Redirect"))
 			if cmd := tt.form.Get("command"); cmd != "" {
-				assert.Contains(t, body, ">"+template.HTMLEscapeString(cmd)+"</textarea>", "edits are kept")
+				assert.Contains(t, body, `name="command" value="`+template.HTMLEscapeString(cmd)+`"`, "edits are kept")
 			}
 			if d := tt.form.Get("date"); d != "" {
 				assert.Contains(t, body, `value="`+d+`"`)
@@ -550,9 +724,8 @@ func TestServer_handleRunJob(t *testing.T) {
 		body := w.Body.String()
 		assert.Contains(t, body, "Not started: Job no longer exists in the crontab.")
 		assert.Contains(t, body, `hx-post="/api/jobs/gone/run"`)
-		assert.Contains(t, body, ">echo edited</textarea>")
-		assert.Contains(t, body, `value="20260915"`, "a submitted date keeps its field")
-		assert.NotContains(t, body, "toasts")
+		assert.Contains(t, body, `name="command" value="echo edited"`)
+		assert.Contains(t, body, `name="date" value="20260915"`, "a submitted date is kept")
 		assert.Empty(t, ch, "nothing is queued for a missing job")
 	})
 }
@@ -568,6 +741,14 @@ func TestServer_handleToggleJob(t *testing.T) {
 		server.handleToggleJob(w, req)
 		return w
 	}
+	toggleHtmx := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/jobs/"+id+"/toggle", http.NoBody)
+		req.Header.Set("HX-Request", "true")
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		server.handleToggleJob(w, req)
+		return w
+	}
 
 	w := toggle("t")
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -577,366 +758,15 @@ func TestServer_handleToggleJob(t *testing.T) {
 	toggle("t")
 	assert.False(t, server.IsJobDisabled("t"))
 
+	w = toggleHtmx("t")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
+	assert.Contains(t, w.Body.String(), "Schedule disabled: <b>echo toggle</b>")
+	w = toggleHtmx("t")
+	assert.Contains(t, w.Body.String(), "Schedule enabled: <b>echo toggle</b>")
+
 	assert.Equal(t, http.StatusNotFound, toggle("nope").Code)
 	assert.Equal(t, http.StatusBadRequest, toggle("").Code)
-}
-
-func TestServer_handleInspector(t *testing.T) {
-	server := newHandlersTestServer(t, Config{})
-	addJobs(server, sampleJobs()...)
-	start := time.Date(2026, 9, 29, 16, 50, 0, 0, time.Local)
-	record := func(jobID string, at time.Time, status enums.JobStatus, code int, executed, output string) {
-		require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: jobID, StartedAt: at,
-			FinishedAt: at.Add(2 * time.Second), Status: status, ExitCode: code, ExecutedCommand: executed, Output: output}))
-	}
-	record("fail", start, enums.JobStatusFailed, 3, "", "fetching\nboom")
-	record("fail", start.Add(time.Minute), enums.JobStatusSuccess, 0, "sh -c 'exit 0'", "manual ok")
-	record("fail", start.Add(2*time.Minute), enums.JobStatusFailed, 137, "", "")
-
-	get := func(id, query string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector?"+query, http.NoBody)
-		req.SetPathValue("id", id)
-		w := httptest.NewRecorder()
-		server.handleInspector(w, req)
-		return w
-	}
-
-	t.Run("full panel selects the latest run", func(t *testing.T) {
-		w := get("fail", "")
-		require.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "refresh-jobs", w.Header().Get("HX-Trigger-After-Swap"))
-		body := w.Body.String()
-		assert.Contains(t, body, `<div class="insp" data-job-id="fail">`)
-		assert.Contains(t, body, "Vendor feed import")
-		assert.Contains(t, body, "Last run failed · exit 3")
-		assert.Contains(t, body, `id="selected-job" name="selected-job" value="fail" hx-swap-oob="true"`)
-		assert.Contains(t, body, "newest first · latest 50 shown")
-		assert.Contains(t, body, `<span class="tag man">manual</span>`)
-		assert.Contains(t, body, "No output captured. The run failed with exit code 137.")
-		assert.Contains(t, body, "<b>Job command:</b> sh -c &#39;exit 3&#39;")
-		assert.Equal(t, 3, strings.Count(body, `id="exec-`))
-		assert.Equal(t, 1, strings.Count(body, `class="run sel"`))
-		assert.Contains(t, body, `<span class="dot fail" id="insp-dot" aria-hidden="true"></span>`)
-		assert.Equal(t, 1, strings.Count(body, `id="insp-dot"`))
-	})
-
-	t.Run("live part keeps the selected run", func(t *testing.T) {
-		runs, err := server.store.GetExecutions("fail", 10)
-		require.NoError(t, err)
-		w := get("fail", "part=live&selected-run="+strconv.Itoa(runs[2].ID))
-		require.Equal(t, http.StatusOK, w.Code)
-		body := w.Body.String()
-		assert.Contains(t, body, `id="insp-live"`)
-		assert.Contains(t, body, `<span class="dot fail" id="insp-dot" aria-hidden="true" hx-swap-oob="true"></span>`)
-		assert.NotContains(t, body, "selected-job")
-		_, sel, found := strings.Cut(body, `class="run sel"`)
-		require.True(t, found)
-		assert.True(t, strings.HasPrefix(strings.Join(strings.Fields(sel), " "),
-			`id="exec-`+strconv.Itoa(runs[2].ID)+`" aria-pressed="true"`))
-		assert.Empty(t, w.Header().Get("HX-Trigger-After-Swap"))
-	})
-
-	tbl := []struct {
-		id   string
-		want []string
-	}{
-		{"ok", []string{"Last run succeeded", "Enabled", "Run now…", ">Disable<", "No runs recorded yet."}},
-		{"never", []string{"Never ran", "reindex --full"}},
-		{"off", []string{"Disabled</span>", ">Enable<"}},
-		{"run", []string{"Running for 47s", "disabled\n"}},
-	}
-	for _, tt := range tbl {
-		t.Run("state "+tt.id, func(t *testing.T) {
-			body := get(tt.id, "").Body.String()
-			for _, want := range tt.want {
-				assert.Contains(t, body, want)
-			}
-		})
-	}
-
-	t.Run("job without runs shows one empty message", func(t *testing.T) {
-		body := get("never", "").Body.String()
-		assert.Equal(t, 1, strings.Count(body, "No runs"), "the runs list and the output pane must not both say it")
-		assert.Contains(t, body, "No runs recorded yet.")
-	})
-
-	t.Run("disabled job has no run button", func(t *testing.T) {
-		assert.NotContains(t, get("off", "").Body.String(), "Run now…")
-	})
-
-	t.Run("unknown job", func(t *testing.T) {
-		assert.Equal(t, http.StatusNotFound, get("nope", "").Code)
-	})
-
-	t.Run("removed job closes the panel for htmx", func(t *testing.T) {
-		for _, query := range []string{"", "part=live"} {
-			req := httptest.NewRequest(http.MethodGet, "/api/jobs/gone/inspector?"+query, http.NoBody)
-			req.SetPathValue("id", "gone")
-			req.Header.Set("HX-Request", "true")
-			w := httptest.NewRecorder()
-			server.handleInspector(w, req)
-			require.Equal(t, http.StatusOK, w.Code, "htmx swaps only 2xx, so a 404 would leave the removed job on screen")
-			assert.Equal(t, "#inspector", w.Header().Get("HX-Retarget"))
-			assert.Equal(t, "innerHTML", w.Header().Get("HX-Reswap"), "the live part swaps outerHTML and would delete the slot")
-			body := w.Body.String()
-			assert.Contains(t, body, `id="selected-job" name="selected-job" value="" hx-swap-oob="true"`)
-			assert.NotContains(t, body, "selected-run", "the run selection goes with the emptied panel")
-			assert.NotContains(t, body, `class="insp"`)
-		}
-	})
-}
-
-func TestServer_handleRunOutput(t *testing.T) {
-	server := newHandlersTestServer(t, Config{})
-	addJobs(server, sampleJobs()...)
-	now := time.Now()
-	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: "fail", StartedAt: now, FinishedAt: now.Add(1900 * time.Millisecond),
-		Status: enums.JobStatusSuccess, ExitCode: 0, ExecutedCommand: "sh -c 'exit 0'", Output: "manual ok"}))
-	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: "ok", StartedAt: now, FinishedAt: now,
-		Status: enums.JobStatusSuccess}))
-	runs, err := server.store.GetExecutions("fail", 1)
-	require.NoError(t, err)
-	other, err := server.store.GetExecutions("ok", 1)
-	require.NoError(t, err)
-
-	get := func(jobID, execID string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.SetPathValue("id", jobID)
-		req.SetPathValue("exec_id", execID)
-		w := httptest.NewRecorder()
-		server.handleRunOutput(w, req)
-		return w
-	}
-
-	w := get("fail", strconv.Itoa(runs[0].ID))
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "refresh-inspector", w.Header().Get("HX-Trigger-After-Swap"))
-	body := w.Body.String()
-	assert.Contains(t, body, "<b>Executed:</b> sh -c &#39;exit 0&#39;")
-	assert.Contains(t, body, "manual ok")
-	assert.Contains(t, body, "exit 0 · 1.9s")
-	assert.Contains(t, body, `<input type="hidden" name="selected-run" value="`+strconv.Itoa(runs[0].ID)+`">`)
-	assert.NotContains(t, body, "hx-swap-oob", "the selection travels inside the output, not out of band")
-
-	assert.Equal(t, http.StatusNotFound, get("fail", strconv.Itoa(other[0].ID)).Code, "run of another job")
-	assert.Equal(t, http.StatusNotFound, get("fail", "99999").Code)
-	assert.Equal(t, http.StatusNotFound, get("nope", strconv.Itoa(runs[0].ID)).Code)
-	assert.Equal(t, http.StatusBadRequest, get("fail", "abc").Code)
-
-	require.NoError(t, server.store.Close())
-	assert.Equal(t, http.StatusInternalServerError, get("fail", strconv.Itoa(runs[0].ID)).Code,
-		"a database failure is not reported as a missing run")
-}
-
-func TestServer_handleLiveOutput(t *testing.T) {
-	server := newHandlersTestServer(t, Config{ExecMaxLogLines: 100})
-	id := HashCommand("live cmd")
-	startA := time.Now().Add(-time.Minute).Round(time.Microsecond)
-	startB := startA.Add(10 * time.Second)
-	startEvent := func(at time.Time, output func() string) {
-		server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
-			StartedAt: at, LiveOutput: output})
-	}
-	startEvent(startA, func() string { return "a one\na two" })
-	startEvent(startB, func() string { return "b one" })
-
-	get := func(jobID, query string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+jobID+"/live-output?"+query, http.NoBody)
-		req.SetPathValue("id", jobID)
-		w := httptest.NewRecorder()
-		server.handleLiveOutput(w, req)
-		return w
-	}
-	micro := func(at time.Time) string { return strconv.FormatInt(at.UnixMicro(), 10) }
-
-	t.Run("run in progress polls itself", func(t *testing.T) {
-		w := get(id, "start="+micro(startA))
-		require.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "refresh-inspector", w.Header().Get("HX-Trigger-After-Swap"), "a selection refreshes the runs list")
-		body := w.Body.String()
-		assert.Contains(t, body, "a one\na two")
-		assert.Contains(t, body, `id="live-out"`)
-		assert.Contains(t, body, `hx-trigger="every 5s"`)
-		assert.Contains(t, body, `hx-sync="#inspector:abort"`)
-		assert.Contains(t, body, `<input type="hidden" name="selected-run" value="live:`+micro(startA)+`">`)
-		assert.NotContains(t, body, "hx-swap-oob")
-	})
-
-	t.Run("poll does not refresh the runs list", func(t *testing.T) {
-		w := get(id, "start="+micro(startA)+"&poll=1")
-		require.Equal(t, http.StatusOK, w.Code)
-		assert.Empty(t, w.Header().Get("HX-Trigger-After-Swap"))
-	})
-
-	t.Run("finished run turns into its recorded output", func(t *testing.T) {
-		server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeCompleted,
-			StartedAt: startA, FinishedAt: startA.Add(3 * time.Second), Output: "a one\na two\na three"})
-		w := get(id, "start="+micro(startA)+"&poll=1")
-		require.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "refresh-inspector", w.Header().Get("HX-Trigger-After-Swap"))
-		body := w.Body.String()
-		assert.Contains(t, body, "a one\na two\na three")
-		assert.NotContains(t, body, "every 5s")
-		assert.NotContains(t, body, "b one", "the newer run in progress must not take the finished run's place")
-		runs, err := server.store.GetExecutions(id, 10)
-		require.NoError(t, err)
-		require.Len(t, runs, 1)
-		assert.Contains(t, body, `<input type="hidden" name="selected-run" value="`+strconv.Itoa(runs[0].ID)+`">`)
-	})
-
-	t.Run("output capture disabled", func(t *testing.T) {
-		startC := startB.Add(time.Second)
-		startEvent(startC, nil)
-		body := get(id, "start="+micro(startC)).Body.String()
-		assert.Contains(t, body, "Output capture is disabled.")
-		assert.Contains(t, body, `hx-trigger="every 5s"`, "it still polls to turn into the recorded run")
-	})
-
-	t.Run("unknown run", func(t *testing.T) {
-		w := get(id, "start=12345")
-		require.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), "no longer available")
-		assert.NotContains(t, w.Body.String(), "every 5s")
-	})
-
-	t.Run("bad requests", func(t *testing.T) {
-		assert.Equal(t, http.StatusBadRequest, get(id, "start=abc").Code)
-		assert.Equal(t, http.StatusNotFound, get("nope", "start="+micro(startB)).Code)
-	})
-
-	t.Run("store error", func(t *testing.T) {
-		store := server.store
-		server.store = &mocks.PersistenceMock{
-			GetExecutionByStartFunc: func(string, int64) (persistence.ExecutionInfo, error) {
-				return persistence.ExecutionInfo{}, errors.New("db is gone")
-			},
-			CloseFunc: store.Close,
-		}
-		assert.Equal(t, http.StatusInternalServerError, get(id, "start=12345").Code)
-	})
-}
-
-func TestServer_handleLiveOutputFindsRetainedRunBeyondListLimit(t *testing.T) {
-	tbl := []struct {
-		hist     int
-		wantGone bool
-	}{{hist: 0}, {hist: 80}, {hist: 50, wantGone: true}}
-	for _, tt := range tbl {
-		t.Run(fmt.Sprintf("exec-max-hist %d", tt.hist), func(t *testing.T) {
-			server := newHandlersTestServer(t, Config{ExecMaxLogLines: 100, LogExecMaxHist: tt.hist})
-			id := HashCommand("live cmd")
-			event := func(typ enums.EventType, at time.Time, output string) JobEvent {
-				return JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: typ, StartedAt: at,
-					FinishedAt: at.Add(time.Second), Output: output}
-			}
-			old := time.Now().Add(-2 * time.Hour)
-			server.handleJobEvent(event(enums.EventTypeStarted, old, ""))
-			for i := range 55 {
-				at := old.Add(time.Duration(i+1) * time.Minute)
-				server.handleJobEvent(event(enums.EventTypeStarted, at, ""))
-				server.handleJobEvent(event(enums.EventTypeCompleted, at, "newer run"))
-			}
-			server.handleJobEvent(event(enums.EventTypeCompleted, old, "old run done"))
-
-			req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-			req.SetPathValue("id", id)
-			req.Form = url.Values{"start": {strconv.FormatInt(old.UnixMicro(), 10)}, "poll": {"1"}}
-			w := httptest.NewRecorder()
-			server.handleLiveOutput(w, req)
-			require.Equal(t, http.StatusOK, w.Code)
-			if tt.wantGone {
-				assert.Contains(t, w.Body.String(), "no longer available", "the default retention prunes the old run")
-				return
-			}
-			assert.Contains(t, w.Body.String(), "old run done", "a retained run outside the newest 50 is still found")
-		})
-	}
-}
-
-func TestServer_handleInspectorFinishedRunListedOnce(t *testing.T) {
-	server := newHandlersTestServer(t, Config{})
-	id := HashCommand("live cmd")
-	start := time.Now().Add(-time.Minute)
-	server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
-		StartedAt: start, LiveOutput: func() string { return "partial" }})
-	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: id, StartedAt: start,
-		FinishedAt: start.Add(time.Second), Status: enums.JobStatusSuccess}))
-	runs, err := server.store.GetExecutions(id, 1)
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector", http.NoBody)
-	req.SetPathValue("id", id)
-	w := httptest.NewRecorder()
-	server.handleInspector(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	body := w.Body.String()
-	assert.NotContains(t, body, `id="live-`, "a run already recorded is not listed as in progress too")
-	assert.Contains(t, body, `<input type="hidden" name="selected-run" value="`+strconv.Itoa(runs[0].ID)+`">`)
-	_, sel, found := strings.Cut(body, `class="run sel"`)
-	require.True(t, found)
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(sel), `id="exec-`+strconv.Itoa(runs[0].ID)+`"`))
-}
-
-func TestServer_handleInspectorRunFinishingDuringHistoryRead(t *testing.T) {
-	// regression: a run finishing between the history read and the active snapshot was in neither
-	server := newHandlersTestServer(t, Config{})
-	id := HashCommand("live cmd")
-	older, start := time.Now().Add(-time.Hour), time.Now().Add(-time.Minute)
-	require.NoError(t, server.store.RecordExecution(request.RecordExecution{JobID: id, StartedAt: older,
-		FinishedAt: older.Add(time.Second), Status: enums.JobStatusSuccess, Output: "older run output"}))
-	server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
-		StartedAt: start, LiveOutput: func() string { return "run A output" }})
-
-	store := server.store
-	server.store = &mocks.PersistenceMock{
-		GetExecutionsFunc: func(jobID string, limit int) ([]persistence.ExecutionInfo, error) {
-			runs, err := store.GetExecutions(jobID, limit)
-			require.NoError(t, err)
-			server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeCompleted,
-				StartedAt: start, FinishedAt: time.Now(), Output: "run A output"})
-			return runs, nil
-		},
-		RecordExecutionFunc:      store.RecordExecution,
-		CleanupOldExecutionsFunc: store.CleanupOldExecutions,
-		CloseFunc:                store.Close,
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector", http.NoBody)
-	req.SetPathValue("id", id)
-	w := httptest.NewRecorder()
-	server.handleInspector(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	body := w.Body.String()
-	assert.Contains(t, body, "run A output")
-	assert.NotContains(t, body, "older run output")
-	token := "live:" + strconv.FormatInt(start.UnixMicro(), 10)
-	assert.Contains(t, body, `<input type="hidden" name="selected-run" value="`+token+`">`)
-}
-
-func TestServer_handleInspectorRunningJob(t *testing.T) {
-	server := newHandlersTestServer(t, Config{})
-	id := HashCommand("live cmd")
-	start := time.Now().Add(-47 * time.Second)
-	server.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted,
-		StartedAt: start, LiveOutput: func() string { return "tick 1\ntick 2" }})
-	token := "live:" + strconv.FormatInt(start.UnixMicro(), 10)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector", http.NoBody)
-	req.SetPathValue("id", id)
-	w := httptest.NewRecorder()
-	server.handleInspector(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	body := w.Body.String()
-	assert.Contains(t, body, "Running for 47s")
-	assert.Contains(t, body, "tick 1\ntick 2")
-	assert.Contains(t, body, `id="live-out"`)
-	assert.Contains(t, body, `<input type="hidden" name="selected-run" value="`+token+`">`)
-	assert.NotContains(t, body, `id="selected-run"`)
-	assert.NotContains(t, body, "No runs recorded yet.", "a run in progress is listed")
-	_, sel, found := strings.Cut(body, `class="run sel"`)
-	require.True(t, found)
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(sel), `id="live-`+strconv.FormatInt(start.UnixMicro(), 10)+`"`))
 }
 
 func TestServer_handleStopForm(t *testing.T) {
@@ -966,7 +796,7 @@ func TestServer_handleStopForm(t *testing.T) {
 		w := get(s, id, "")
 		require.Equal(t, http.StatusOK, w.Code)
 		body := w.Body.String()
-		assert.Contains(t, body, `<dialog class="run-dialog stop-dialog" data-job-id="`+id+`"`)
+		assert.Contains(t, body, `<dialog class="cf" id="stop-dialog" data-job-id="`+id+`"`)
 		assert.Contains(t, body, `<input type="hidden" name="start" value="`+startParam+`">`)
 		assert.Contains(t, body, "live cmd --edited")
 		assert.Contains(t, body, "Ends the run started at "+start.Format("15:04:05"))
@@ -1084,13 +914,6 @@ func TestServer_stopButtons(t *testing.T) {
 		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: start})
 		return s, HashCommand("live cmd")
 	}
-	inspector := func(s *Server, id string) string {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+id+"/inspector", http.NoBody)
-		req.SetPathValue("id", id)
-		w := httptest.NewRecorder()
-		s.handleInspector(w, req)
-		return w.Body.String()
-	}
 	jobs := func(s *Server) string {
 		w := httptest.NewRecorder()
 		s.handleJobsPartial(w, httptest.NewRequest(http.MethodGet, "/api/jobs", http.NoBody))
@@ -1104,21 +927,17 @@ func TestServer_stopButtons(t *testing.T) {
 		assert.NotContains(t, body, `id="run-`+id+`"`)
 		assert.Contains(t, body, `id="run-ok"`, "an idle job keeps Run")
 		assert.NotContains(t, body, `id="stop-ok"`)
-		assert.Contains(t, inspector(s, id), `hx-get="/api/jobs/`+id+`/stop-form?start=`+strconv.FormatInt(start.UnixMicro(), 10)+`"`)
 	})
 
 	t.Run("no Stop without a stopper", func(t *testing.T) {
 		s := newHandlersTestServer(t, Config{})
 		s.handleJobEvent(JobEvent{Command: "live cmd", Schedule: "* * * * *", EventType: enums.EventTypeStarted, StartedAt: start})
-		id := HashCommand("live cmd")
 		assert.NotContains(t, jobs(s), `id="stop-`)
-		assert.NotContains(t, inspector(s, id), "stop-form")
 	})
 
 	t.Run("no Stop when manual control is disabled", func(t *testing.T) {
-		s, id := newServer(t, Config{DisableManual: true})
+		s, _ := newServer(t, Config{DisableManual: true})
 		assert.NotContains(t, jobs(s), `id="stop-`)
-		assert.NotContains(t, inspector(s, id), "stop-form")
 	})
 }
 
@@ -1134,6 +953,7 @@ func TestServer_handleSettingsModal(t *testing.T) {
 	assert.Contains(t, body, "v1.0.0")
 	assert.Contains(t, body, ":8080")
 	assert.Contains(t, body, "test-crontab")
+	assert.Contains(t, body, `href="https://github.com/umputun/cronn"`)
 	assert.NotContains(t, body, "onclick")
 }
 
@@ -1148,8 +968,13 @@ func TestServer_Routes(t *testing.T) {
 	}{
 		{http.MethodGet, "/", http.StatusOK},
 		{http.MethodGet, "/api/jobs", http.StatusOK},
-		{http.MethodGet, "/api/jobs/ok/inspector", http.StatusOK},
-		{http.MethodGet, "/api/jobs/ok/run-form", http.StatusOK},
+		{http.MethodGet, "/jobs/ok", http.StatusOK},
+		{http.MethodGet, "/jobs/nope", http.StatusNotFound},
+		{http.MethodGet, "/api/jobs/ok/facts", http.StatusOK},
+		{http.MethodGet, "/api/jobs/ok/runs", http.StatusOK},
+		{http.MethodGet, "/api/jobs/jump?q=sync", http.StatusOK},
+		{http.MethodGet, "/api/jobs/ok/inspector", http.StatusNotFound},
+		{http.MethodGet, "/api/jobs/ok/run-form", http.StatusNotFound},
 		{http.MethodGet, "/nonexistent", http.StatusNotFound},
 		{http.MethodGet, "/api/jobs/ok/modal", http.StatusNotFound},
 		{http.MethodGet, "/api/jobs/ok/history", http.StatusNotFound},

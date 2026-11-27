@@ -3,7 +3,8 @@
 package e2e
 
 import (
-	"fmt"
+	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,41 +15,73 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func rowNames(t *testing.T, page playwright.Page) []string {
+// clickSort clicks a sort column header and waits for it to show the expected direction
+func clickSort(t *testing.T, page playwright.Page, mode, dir string) {
 	t.Helper()
-	names, err := page.Locator("tr.row .job-open").AllTextContents()
+	_, err := page.ExpectResponse(`**/api/sort-mode`, func() error { return page.Locator("#sort-" + mode).Click() })
 	require.NoError(t, err)
-	for i := range names {
-		names[i] = strings.TrimSpace(names[i])
-	}
-	return names
+	waitVisible(t, page.Locator("#sort-"+mode+`.on[data-dir="`+dir+`"]`))
 }
 
-func selectSort(t *testing.T, page playwright.Page, mode string) {
+// clickPill clicks a filter pill and waits for it to become the active one
+func clickPill(t *testing.T, page playwright.Page, mode string) {
 	t.Helper()
-	_, err := page.Evaluate(`() => { document.querySelector('select[name=sort]').dataset.stale = '1' }`)
+	_, err := page.ExpectResponse(`**/api/filter-mode`, func() error { return page.Locator("#pill-" + mode).Click() })
 	require.NoError(t, err)
-	_, err = page.ExpectResponse(`**/api/sort-mode`, func() error {
-		if _, e := page.Locator("select[name=sort]").SelectOption(playwright.SelectOptionValues{Values: &[]string{mode}}); e != nil {
-			return fmt.Errorf("select sort mode %s: %w", mode, e)
+	waitVisible(t, page.Locator("#pill-"+mode+".on"))
+}
+
+// stableRows returns the grid order and the job state it was rendered from. A scheduled run can
+// land between the render and the API read, so the read brackets a fresh poll and repeats when
+// the state moved inside it
+func stableRows(t *testing.T, page playwright.Page) ([]string, map[string]apiJob) {
+	t.Helper()
+	for range 3 {
+		before := allJobs(t)
+		_, err := page.Evaluate(`() => { document.querySelector('#rows .it').dataset.stale = '1' }`)
+		require.NoError(t, err)
+		_, err = page.WaitForFunction(`() => !document.querySelector('#rows [data-stale]')`, nil,
+			playwright.PageWaitForFunctionOptions{Timeout: new(8000.0)})
+		require.NoError(t, err)
+		ids := rowIDs(t, page)
+		after := allJobs(t)
+		if reflect.DeepEqual(before, after) {
+			return ids, after
 		}
-		return nil
-	})
-	require.NoError(t, err)
-	_, err = page.WaitForFunction(`() => {
-		const s = document.querySelector('select[name=sort]');
-		return !!s && !s.dataset.stale && !s.closest('.htmx-added');
-	}`, nil)
-	require.NoError(t, err, "the swapped-in select must be processed by htmx before the next change")
+	}
+	t.Fatal("job state kept changing during the read")
+	return nil, nil
 }
 
-func clickTab(t *testing.T, page playwright.Page, label string) {
+// assertSorted checks the grid order: jobs with a value first, ascending or descending, the rest
+// after them in either direction
+func assertSorted(t *testing.T, page playwright.Page, value func(apiJob) (time.Time, bool), desc bool) {
 	t.Helper()
-	tab := page.Locator(".tabs .tab").Filter(playwright.LocatorFilterOptions{HasText: label})
-	_, err := page.ExpectResponse(`**/api/filter-mode`, func() error { return tab.Click() })
-	require.NoError(t, err)
-	waitVisible(t, page.Locator(".tabs .tab.on").Filter(playwright.LocatorFilterOptions{HasText: label}))
+	ids, jobs := stableRows(t, page)
+	require.Len(t, ids, totalJobs)
+	var prev time.Time
+	seenEmpty := false
+	for i, id := range ids {
+		v, ok := value(jobs[id])
+		if !ok {
+			seenEmpty = true
+			continue
+		}
+		assert.False(t, seenEmpty, "row %d (%s) has a value after a row without one", i, id)
+		if !prev.IsZero() {
+			outOfOrder := v.Before(prev)
+			if desc {
+				outOfOrder = v.After(prev)
+			}
+			assert.False(t, outOfOrder, "row %d (%s) out of order", i, id)
+		}
+		prev = v
+	}
 }
+
+func lastRunOf(j apiJob) (time.Time, bool) { return j.LastRun, !j.LastRun.IsZero() }
+
+func nextRunOf(j apiJob) (time.Time, bool) { return j.NextRun, j.Enabled && !j.NextRun.IsZero() }
 
 func TestTheme_ToggleDarkLight(t *testing.T) {
 	page := newPage(t)
@@ -72,23 +105,23 @@ func TestTheme_ToggleReachableOnPhone(t *testing.T) {
 	clickThemeToggle(t, page, next)
 }
 
-func TestTheme_BothThemesRenderDashboardAndInspector(t *testing.T) {
+func TestTheme_BothThemesRenderIndexAndJobPage(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 	theme, err := page.Locator("html").GetAttribute("data-theme")
 	require.NoError(t, err)
 	initial := theme
+	id := jobID(t, page, jobHourly)
 
 	backgrounds := map[string]string{}
 	for range 2 {
-		waitForJobsLoaded(t, page)
-		insp := openInspector(t, page, jobHourly)
+		gotoJob(t, page, id, "")
 		bg, err := page.Evaluate(`() => getComputedStyle(document.body).backgroundColor`)
 		require.NoError(t, err)
 		backgrounds[theme] = bg.(string)
-		visible, err := insp.Locator(".cmdbox").IsVisible()
+		visible, err := page.Locator("#cmdin").IsVisible()
 		require.NoError(t, err)
-		assert.True(t, visible, "inspector should render in %s theme", theme)
+		assert.True(t, visible, "job page should render in %s theme", theme)
 		theme = clickThemeToggle(t, page, theme)
 	}
 	assert.Equal(t, initial, theme)
@@ -106,7 +139,7 @@ func TestTheme_PersistsAcrossReload(t *testing.T) {
 
 	_, err = page.Reload()
 	require.NoError(t, err)
-	waitVisible(t, page.Locator(".top"))
+	waitVisible(t, page.Locator(".tb"))
 	persisted, err := page.Locator("html").GetAttribute("data-theme")
 	require.NoError(t, err)
 	assert.Equal(t, newTheme, persisted, "theme should persist after reload")
@@ -117,72 +150,75 @@ func TestSort_DefaultIsCrontabOrder(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	value, err := page.Locator("select[name=sort]").InputValue()
-	require.NoError(t, err)
-	assert.Equal(t, "default", value)
+	waitVisible(t, page.Locator(`#sort-default.on[data-dir="down"]`))
 	names := rowNames(t, page)
 	require.Len(t, names, totalJobs)
 	assert.Equal(t, jobFiveMin, names[0])
 	assert.Equal(t, jobTemplated, names[totalJobs-1])
 }
 
-func TestSort_SelectChangesOrderAndPersists(t *testing.T) {
-	page := newPage(t)
+func TestSort_HeaderSortsEachColumnBothWays(t *testing.T) {
+	page := newPageSized(t, 1440, 900)
 	navigateToDashboard(t, page)
+	failing := jobID(t, page, jobFailing)
+	setEnabled(t, failing, true)
+	runJob(t, failing)
+	silent := jobID(t, page, jobSilent)
+	setEnabled(t, silent, false)
+	t.Cleanup(func() { setEnabled(t, silent, true) })
 
-	selectSort(t, page, "nextrun")
-	waitVisible(t, page.Locator("th.c-next.sorted"))
+	clickSort(t, page, "default", "up")
 	names := rowNames(t, page)
-	require.Len(t, names, totalJobs)
-	assert.Equal(t, jobFiveMin, names[0], "the */5 job runs next")
+	assert.Equal(t, jobTemplated, names[0], "crontab order flipped")
+	assert.Equal(t, jobFiveMin, names[totalJobs-1])
+
+	clickSort(t, page, "lastrun", "down")
+	assertSorted(t, page, lastRunOf, true)
+	assert.Equal(t, failing, rowIDs(t, page)[0], "the job that ran last is first")
+	clickSort(t, page, "lastrun", "up")
+	assertSorted(t, page, lastRunOf, false)
+
+	clickSort(t, page, "nextrun", "down")
+	assertSorted(t, page, nextRunOf, false)
+	ids := rowIDs(t, page)
+	assert.Equal(t, silent, ids[len(ids)-1], "a disabled job is last")
+	clickSort(t, page, "nextrun", "up")
+	assertSorted(t, page, nextRunOf, true)
+	ids = rowIDs(t, page)
+	assert.Equal(t, silent, ids[len(ids)-1], "a disabled job stays last when flipped")
 
 	_, err := page.Reload()
 	require.NoError(t, err)
 	waitForJobsLoaded(t, page)
-	value, err := page.Locator("select[name=sort]").InputValue()
-	require.NoError(t, err)
-	assert.Equal(t, "nextrun", value, "sort should persist across reload")
+	waitVisible(t, page.Locator(`#sort-nextrun.on[data-dir="up"]`))
 
-	selectSort(t, page, "lastrun")
-	selectSort(t, page, "default")
+	clickSort(t, page, "default", "down")
 	assert.Equal(t, jobFiveMin, rowNames(t, page)[0])
 }
 
-func TestSort_LastRunHeaderShowsDescendingArrow(t *testing.T) {
+func TestSort_NeverRanJobsStayLast(t *testing.T) {
 	page := newPageSized(t, 1440, 900)
 	navigateToDashboard(t, page)
-
-	selectSort(t, page, "lastrun")
-	require.Eventually(t, func() bool {
-		return evalBool(t, page, `() => document.querySelector('th.c-last').classList.contains('sorted')`)
-	}, 5*time.Second, 100*time.Millisecond, "the last run header is marked sorted")
-	arrow, err := page.Evaluate(`() => getComputedStyle(document.querySelector('th.c-last'), '::after').content`)
-	require.NoError(t, err)
-	assert.Equal(t, `" ↓"`, arrow, "most recent first is a descending sort")
-	assert.False(t, evalBool(t, page, `() => document.querySelector('th.c-next').classList.contains('sorted')`))
-
-	selectSort(t, page, "default")
-}
-
-func TestSort_OpenSelectSurvivesPoll(t *testing.T) {
-	page := newPage(t)
-	navigateToDashboard(t, page)
-	sel := page.Locator("select[name=sort]")
-	require.NoError(t, sel.Focus())
-
-	_, err := page.ExpectResponse(jobsRe, func() error { return nil }, playwright.PageExpectResponseOptions{Timeout: new(8000.0)})
-	require.NoError(t, err)
-	assert.True(t, activeElementIn(t, page, "#jobs-controls"), "a poll must not replace the focused sort select")
+	for _, dir := range []string{"down", "up"} {
+		clickSort(t, page, "lastrun", dir)
+		texts, err := page.Locator(".it .last").AllTextContents()
+		require.NoError(t, err)
+		seenNever := false
+		for _, txt := range texts {
+			never := strings.TrimSpace(txt) == "never ran"
+			assert.False(t, seenNever && !never, "%s: a job that ran is listed after one that never ran", dir)
+			seenNever = seenNever || never
+		}
+	}
+	clickSort(t, page, "default", "down")
 }
 
 func TestFilter_DefaultShowsAll(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)
 
-	active, err := page.Locator(".tabs .tab.on").TextContent()
-	require.NoError(t, err)
-	assert.Contains(t, active, "All")
-	count, err := page.Locator("tr.row").Count()
+	waitVisible(t, page.Locator("#pill-all.on"))
+	count, err := page.Locator(".it").Count()
 	require.NoError(t, err)
 	assert.Equal(t, totalJobs, count)
 }
@@ -194,22 +230,20 @@ func TestFilter_TabsFilterAndPersist(t *testing.T) {
 	setEnabled(t, id, true)
 	runJob(t, id)
 
-	clickTab(t, page, "Failed")
+	clickPill(t, page, "failed")
 	require.Eventually(t, func() bool {
 		return strings.Contains(strings.Join(rowNames(t, page), ","), jobFailing)
 	}, 5*time.Second, 100*time.Millisecond)
-	assert.True(t, evalBool(t, page, `() => [...document.querySelectorAll('tr.row')].every(r => r.dataset.state === 'fail')`),
-		"the Failed tab should list only failed jobs")
+	assert.True(t, evalBool(t, page, `() => [...document.querySelectorAll('.it')].every(r => r.dataset.state === 'fail')`),
+		"the Failing pill should list only failed jobs")
 
 	_, err := page.Reload()
 	require.NoError(t, err)
 	waitForJobsLoaded(t, page)
-	active, err := page.Locator(".tabs .tab.on").TextContent()
-	require.NoError(t, err)
-	assert.Contains(t, active, "Failed", "filter should persist across reload")
+	waitVisible(t, page.Locator("#pill-failed.on"))
 
-	clickTab(t, page, "All")
-	count, err := page.Locator("tr.row").Count()
+	clickPill(t, page, "all")
+	count, err := page.Locator(".it").Count()
 	require.NoError(t, err)
 	assert.Equal(t, totalJobs, count)
 }
@@ -224,15 +258,11 @@ func TestFilter_TabModesSurviveCookiesChangedElsewhere(t *testing.T) {
 	}))
 	waitForPoll(t, page)
 	assert.Len(t, rowNames(t, page), totalJobs, "a poll keeps this tab's All filter")
-	active, err := page.Locator(".tabs .tab.on").TextContent()
-	require.NoError(t, err)
-	assert.Contains(t, active, "All")
+	waitVisible(t, page.Locator("#pill-all.on"))
 
-	clickTab(t, page, "Succeeded")
-	value, err := page.Locator("select[name=sort]").InputValue()
-	require.NoError(t, err)
-	assert.Equal(t, "default", value, "a filter change keeps this tab's sort")
-	clickTab(t, page, "All")
+	clickPill(t, page, "success")
+	waitVisible(t, page.Locator(`#sort-default.on`))
+	clickPill(t, page, "all")
 }
 
 func TestFilter_MatchCountFollowsFilter(t *testing.T) {
@@ -246,12 +276,145 @@ func TestFilter_MatchCountFollowsFilter(t *testing.T) {
 	id := jobID(t, page, jobFailing)
 	setEnabled(t, id, true)
 	runJob(t, id)
-	clickTab(t, page, "Failed")
-	shown, err := page.Locator("tr.row").Count()
+	clickPill(t, page, "failed")
+	shown, err := page.Locator(".it").Count()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, shown, 1)
 	text, err = page.Locator("#match-count").TextContent()
 	require.NoError(t, err)
-	assert.Equal(t, strconv.Itoa(shown)+" of "+strconv.Itoa(totalJobs)+" jobs", strings.TrimSpace(text))
-	clickTab(t, page, "All")
+	assert.Equal(t, strconv.Itoa(shown)+" of "+strconv.Itoa(totalJobs), strings.TrimSpace(text))
+	clickPill(t, page, "all")
+}
+
+func TestList_StateSurvivesReloadAndThemeToggle(t *testing.T) {
+	// filter, sort and search changes never reached the address bar, so a reload brought back the old state
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	failing := jobID(t, page, jobFailing)
+	setEnabled(t, failing, true)
+	runJob(t, failing)
+	_, err := page.Goto(baseURL + "/?filter=all&rev=0&sort=default")
+	require.NoError(t, err)
+	waitForJobsLoaded(t, page)
+
+	clickPill(t, page, "failed")
+	_, err = page.ExpectResponse(jobsRe, func() error { return page.Locator("#search").Fill("vendor") })
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return strings.Contains(page.URL(), "filter=failed") && strings.Contains(page.URL(), "search=vendor")
+	}, 5*time.Second, 50*time.Millisecond, "the address carries the list state")
+	waitForPoll(t, page)
+	assert.True(t, evalBool(t, page, `() => localStorage.getItem('htmx-history-cache') === null`),
+		"no page snapshot with commands is kept in the browser")
+
+	_, err = page.Reload()
+	require.NoError(t, err)
+	waitForJobsLoaded(t, page)
+	assert.Equal(t, []string{jobFailing}, rowNames(t, page), "a reload keeps the filter and the search")
+	val, err := page.Locator("#search").InputValue()
+	require.NoError(t, err)
+	assert.Equal(t, "vendor", val)
+
+	require.NoError(t, page.Locator("#theme-toggle").Click())
+	require.NoError(t, page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{State: playwright.LoadStateLoad}))
+	waitForJobsLoaded(t, page)
+	assert.Equal(t, []string{jobFailing}, rowNames(t, page), "the theme reload keeps them too")
+	require.NoError(t, page.Locator("#theme-toggle").Click())
+	require.NoError(t, page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{State: playwright.LoadStateLoad}))
+}
+
+func TestMenu_FilterAndSortWhenPillsDoNotFit(t *testing.T) {
+	page := newPageSized(t, 820, 1180)
+	navigateToDashboard(t, page)
+
+	pillsVisible, err := page.Locator("#pills").IsVisible()
+	require.NoError(t, err)
+	assert.False(t, pillsVisible, "the pills fold into the menu")
+	menu := page.Locator("#fdd")
+	require.NoError(t, menu.Locator("summary").Click())
+	waitVisible(t, page.Locator("#menu-filter-idle"))
+	idle, err := page.Locator("#mcount-idle").TextContent()
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(countOf(t, page, "idle")), strings.TrimSpace(idle))
+
+	_, err = page.ExpectResponse(`**/api/filter-mode`, func() error { return page.Locator("#menu-filter-idle").Click() })
+	require.NoError(t, err)
+	assert.True(t, evalBool(t, page, `() => [...document.querySelectorAll('.it')].every(r => r.dataset.state === 'never')`))
+	assert.False(t, evalBool(t, page, `() => document.querySelector('#fdd').open`), "a choice closes the menu")
+	summary, err := menu.Locator("summary").TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, summary, "Never")
+
+	require.NoError(t, menu.Locator("summary").Click())
+	_, err = page.ExpectResponse(`**/api/sort-mode`, func() error { return page.Locator("#menu-sort-nextrun").Click() })
+	require.NoError(t, err)
+	require.NoError(t, menu.Locator("summary").Click())
+	waitVisible(t, page.Locator(`#menu-sort-nextrun.on [data-dir="down"]`))
+	_, err = page.ExpectResponse(`**/api/sort-mode`, func() error { return page.Locator("#menu-sort-nextrun").Click() })
+	require.NoError(t, err)
+	require.NoError(t, menu.Locator("summary").Click())
+	waitVisible(t, page.Locator(`#menu-sort-nextrun.on [data-dir="up"]`))
+
+	_, err = page.ExpectResponse(`**/api/filter-mode`, func() error { return page.Locator("#menu-filter-all").Click() })
+	require.NoError(t, err)
+	require.NoError(t, menu.Locator("summary").Click())
+	_, err = page.ExpectResponse(`**/api/sort-mode`, func() error { return page.Locator("#menu-sort-default").Click() })
+	require.NoError(t, err)
+	assert.Equal(t, jobFiveMin, rowNames(t, page)[0])
+}
+
+func TestMenu_SortsOnPhone(t *testing.T) {
+	page := newPageSized(t, 390, 844)
+	navigateToDashboard(t, page)
+
+	headVisible, err := page.Locator("#ihead").IsVisible()
+	require.NoError(t, err)
+	assert.False(t, headVisible, "the grid header is hidden on a phone")
+	require.NoError(t, page.Locator("#fdd summary").Click())
+	_, err = page.ExpectResponse(`**/api/sort-mode`, func() error { return page.Locator("#menu-sort-default").Click() })
+	require.NoError(t, err)
+	assert.Equal(t, jobTemplated, rowNames(t, page)[0], "a second click on the sorted column flips it")
+	require.NoError(t, page.Locator("#fdd summary").Click())
+	_, err = page.ExpectResponse(`**/api/sort-mode`, func() error { return page.Locator("#menu-sort-default").Click() })
+	require.NoError(t, err)
+	assert.Equal(t, jobFiveMin, rowNames(t, page)[0])
+}
+
+func TestMenu_ClosesOnOutsideClickAndEsc(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+
+	gear := page.Locator("#gear-menu")
+	require.NoError(t, gear.Locator("summary").Click())
+	waitVisible(t, page.Locator("#open-settings"))
+	require.NoError(t, page.Locator("#ilist").Click(playwright.LocatorClickOptions{Position: &playwright.Position{X: 5, Y: 5}}))
+	waitHidden(t, page.Locator("#open-settings"))
+
+	require.NoError(t, gear.Locator("summary").Click())
+	waitVisible(t, page.Locator("#open-settings"))
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#open-settings"))
+}
+
+func TestList_ClearSearchKeepsStateWhenPollLandsInFlight(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	require.NoError(t, page.Locator("#search").Fill("no-such-job-xyz"))
+	waitVisible(t, page.Locator("#clear-search"))
+
+	delayRoute(t, page, regexp.MustCompile(`reset-search=1`), 1500*time.Millisecond)
+	require.NoError(t, page.Locator("#clear-search").Click())
+	_, err := page.Evaluate(`() => htmx.trigger(document.body, 'refresh-jobs')`)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		n, cerr := page.Locator("#rows .it").Count()
+		return cerr == nil && n == totalJobs
+	}, 8*time.Second, 100*time.Millisecond, "the cleared list shows every job")
+	val, err := page.Locator("#search").InputValue()
+	require.NoError(t, err)
+	assert.Empty(t, val, "the search field is cleared with the list")
+	waitForPoll(t, page)
+	n, err := page.Locator("#rows .it").Count()
+	require.NoError(t, err)
+	assert.Equal(t, totalJobs, n, "the next poll keeps the cleared list")
 }

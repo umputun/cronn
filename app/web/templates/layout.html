@@ -11,7 +11,8 @@
     <link rel="stylesheet" href="{{url "/static/style.css"}}">
     <link rel="icon" href="{{url "/static/favicon.svg"}}" type="image/svg+xml">
 </head>
-<body>
+{{/* index polls replace the URL; without this htmx snapshots the page, commands included, into localStorage */}}
+<body hx-history="false">
 <div class="app">
     <header class="tb">
         <a class="tb-brand" href="{{.IndexLink}}" id="brand">{{template "icon-logo"}}<span>cronn</span></a>

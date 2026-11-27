@@ -67,7 +67,7 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 
 ### List State in the URL
 - The index's filter, sort, sort direction and search travel in the page URL (`filter`, `sort`, `rev`, `search`) and in hidden inputs `#filter-mode`, `#sort-mode`, `#sort-rev` (plus `#list-search` on the job page). `listQuery` reads them, falling back to the cookies, and `jobsQuery.values()` writes them into every link: rows, history bars, previous/next, the back link, the jump list and the run redirect
-- Each tab sends its own state with every request, so a change in one tab never leaks into another; the theme, sort-mode and filter-mode cookies (HTTPOnly, 1 year) only seed a fresh page. Every htmx answer of the index list sets `HX-Replace-Url` to the index URL with that state, so a reload, the theme toggle's refresh and a copied address all read it back
+- Each tab sends its own state with every request, so a change in one tab never leaks into another; the theme, sort-mode and filter-mode cookies (HTTPOnly, 1 year) only seed a fresh page. Every htmx answer of the index list sets `HX-Replace-Url` to the index URL with that state, so a reload, the theme toggle's refresh and a copied address all read it back. `<body hx-history="false">` keeps htmx from snapshotting the page (commands included) into localStorage on each of those URL replacements
 - **Sort**: header buttons (`#sort-default`, `#sort-lastrun`, `#sort-nextrun`) post `sort` and `rev`. The first click on a column sorts nearest to now first, a second click on the sorted column flips it; crontab order flips to reversed file order. Jobs without a value (never ran; disabled or no next run) stay last in both directions
 
 ### HTMX Integration Patterns
@@ -140,7 +140,7 @@ manualJobChan <- jobID
 ```
 
 ### Custom Date and EOD Interaction
-- The job page's command bar lets the user edit the command and enter an optional date (YYYYMMDD); a multi-line command gets a textarea, since a text input drops newlines from its value; the date field is shown only when the command contains `{{...}}` or `[[...]]` templates. The confirmation (`run-confirm` in `partials/runform.html`) shows both before the run starts
+- The job page's command bar lets the user edit the command and enter an optional date (YYYYMMDD); any command holding a newline gets a textarea, since a text input drops newlines from its value, and the template puts a newline right after the opening tag because the parser drops one there; the date field is shown only when the command contains `{{...}}` or `[[...]]` templates. The confirmation (`run-confirm` in `partials/runform.html`) shows both before the run starts
 - Empty date → `time.Now()` used for template resolution; custom date → that date is parsed at midnight via `ParseInLocation("20060102", ..., time.Local)` (hour 0)
 - With a positive `--eod-hour` (default: 17), midnight is before the cutoff, so a custom date of D resolves both EOD templates to the business day before D. With `--eod-hour=0`, they use D if it is a business day, otherwise the most recent business day before D
 

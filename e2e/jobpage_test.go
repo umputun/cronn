@@ -324,6 +324,24 @@ func TestJobPage_MultiLineCommandKeepsItsLines(t *testing.T) {
 	waitHidden(t, page.Locator("#run-dialog"))
 }
 
+func TestJobPage_OneLineBlockCommandIsNotAnEdit(t *testing.T) {
+	// a one-line command with a trailing newline went to a text input, which dropped the newline
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	gotoJob(t, page, jobID(t, page, jobOneLine), "")
+
+	assert.True(t, evalBool(t, page, `() => { const f = document.getElementById('cmdin'); return f.value === f.dataset.orig }`),
+		"the field holds the command as saved")
+	waitForFacts(t, page)
+	assert.Equal(t, "Run now", pageText(t, page, "#run-now .lbl"), "a poll does not mark it edited")
+	openConfirm(t, page, page.Locator("#run-now"))
+	count, err := page.Locator("#cf-edited").Count()
+	require.NoError(t, err)
+	assert.Zero(t, count, "an untouched command is not an edit")
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#run-dialog"))
+}
+
 func TestJobPage_TitleFollowsJobStatus(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

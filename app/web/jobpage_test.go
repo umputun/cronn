@@ -44,7 +44,9 @@ func TestServer_handleJobPage(t *testing.T) {
 	addJobs(server, append(sampleJobs(),
 		persistence.JobInfo{ID: "tpl", Name: "Templated", Command: "echo {{.YYYYMMDD}}", Schedule: "@daily", Enabled: true},
 		persistence.JobInfo{ID: "multi", Name: "Two step", Command: "echo one\necho two\n", Schedule: "@daily", Enabled: true},
-		persistence.JobInfo{ID: "long", Name: "Long script", Command: "a\nb\nc\nd\ne\nf\ng\nh", Schedule: "@daily", Enabled: true})...)
+		persistence.JobInfo{ID: "long", Name: "Long script", Command: "a\nb\nc\nd\ne\nf\ng\nh", Schedule: "@daily", Enabled: true},
+		persistence.JobInfo{ID: "trail", Name: "Block", Command: "echo once\n", Schedule: "@daily", Enabled: true},
+		persistence.JobInfo{ID: "lead", Name: "Blank first", Command: "\nfirst\nsecond", Schedule: "@daily", Enabled: true})...)
 	start := time.Date(2026, 9, 29, 16, 50, 0, 0, time.Local)
 	first := recordRun(t, server, request.RecordExecution{JobID: "fail", StartedAt: start, Status: enums.JobStatusFailed,
 		ExitCode: 3, Output: "fetching\nERROR boom\nfatal: gave up\n"})
@@ -81,9 +83,14 @@ func TestServer_handleJobPage(t *testing.T) {
 	t.Run("a multi-line command keeps its lines in a textarea", func(t *testing.T) {
 		body := page("multi", "").Body.String()
 		assert.Contains(t, body, "<textarea class=\"cmdin\" id=\"cmdin\" name=\"command\" rows=\"2\" data-orig=\"echo one\necho two\n\"")
-		assert.Contains(t, body, ">echo one\necho two\n</textarea>")
+		assert.Contains(t, body, ">\necho one\necho two\n</textarea>")
 		assert.Contains(t, page("long", "").Body.String(), `rows="6"`, "a long script stops growing at six rows")
 		assert.Contains(t, page("ok", "").Body.String(), `<input class="cmdin" id="cmdin" name="command" value="echo sync"`)
+		trail := page("trail", "").Body.String()
+		assert.Contains(t, trail, `<textarea class="cmdin" id="cmdin" name="command" rows="1"`, "a trailing newline needs a textarea too")
+		assert.Contains(t, trail, ">\necho once\n</textarea>")
+		assert.Contains(t, page("lead", "").Body.String(), ">\n\nfirst\nsecond</textarea>",
+			"the parser drops the newline after the tag, not the command's own")
 	})
 
 	t.Run("run= opens that run with numbered lines and error marks", func(t *testing.T) {

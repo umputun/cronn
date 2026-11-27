@@ -24,10 +24,12 @@
             {{template "list-state-fields" .}}
             <div class="cmdf">
                 {{if .CommandRows}}
+                {{/* the parser drops the newline after the opening tag, so a command starting with one keeps its own */}}
                 <textarea class="cmdin" id="cmdin" name="command" rows="{{.CommandRows}}" data-orig="{{.Job.Command}}"
                           spellcheck="false" autocomplete="off" aria-label="Command"
                           {{if or .ManualDisabled (not .CommandEditEnabled)}}readonly{{else}}title="Edits apply to this run only"{{end}}
-                          hx-on:input="uiMarkEdited()">{{.Job.Command}}</textarea>
+                          hx-on:input="uiMarkEdited()">
+{{.Job.Command}}</textarea>
                 {{else}}
                 <input class="cmdin" id="cmdin" name="command" value="{{.Job.Command}}" data-orig="{{.Job.Command}}"
                        spellcheck="false" autocomplete="off" aria-label="Command"

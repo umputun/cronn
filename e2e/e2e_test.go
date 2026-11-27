@@ -65,8 +65,9 @@ const (
 	jobLive      = "Live tail"
 	jobDated     = "Dated run"
 	jobTwoStep   = "Two step"
+	jobOneLine   = "One line block"
 	jobTemplated = "Templated job"
-	totalJobs    = 11
+	totalJobs    = 12
 )
 
 var (
@@ -207,6 +208,10 @@ func createTestCrontab() error {
       echo step one
       echo step two
     name: "Two step"
+  - spec: "0 0 1 1 *"
+    command: |
+      echo one line block
+    name: "One line block"
   - spec: "0 0 1 1 *"
     command: "echo run {{.YYYYMMDD}}"
     name: "Templated job"

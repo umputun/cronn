@@ -302,6 +302,9 @@ func TestList_StateSurvivesReloadAndThemeToggle(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return strings.Contains(page.URL(), "filter=failed") && strings.Contains(page.URL(), "search=vendor")
 	}, 5*time.Second, 50*time.Millisecond, "the address carries the list state")
+	waitForPoll(t, page)
+	assert.True(t, evalBool(t, page, `() => localStorage.getItem('htmx-history-cache') === null`),
+		"no page snapshot with commands is kept in the browser")
 
 	_, err = page.Reload()
 	require.NoError(t, err)

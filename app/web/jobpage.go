@@ -141,9 +141,10 @@ func (s *Server) handleJobPage(w http.ResponseWriter, r *http.Request) {
 		data.PageTitle = job.Command
 	}
 	data.HasTemplates = strings.Contains(job.Command, "{{") || strings.Contains(job.Command, "[[")
-	// a text input drops newlines from its value, so a multi-line command needs a textarea to run as written
-	if lines := strings.Count(strings.TrimRight(job.Command, "\n"), "\n") + 1; lines > 1 {
-		data.CommandRows = min(lines, maxCommandRows)
+	// a text input drops every newline from its value, a trailing one included, so any command holding
+	// one needs a textarea to run as written
+	if strings.Contains(job.Command, "\n") {
+		data.CommandRows = min(strings.Count(strings.TrimRight(job.Command, "\n"), "\n")+1, maxCommandRows)
 	}
 	data.jobPosition = s.jobPosition(job.ID, q)
 

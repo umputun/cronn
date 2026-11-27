@@ -285,6 +285,40 @@ func TestFilter_MatchCountFollowsFilter(t *testing.T) {
 	clickPill(t, page, "all")
 }
 
+func TestList_StateSurvivesReloadAndThemeToggle(t *testing.T) {
+	// filter, sort and search changes never reached the address bar, so a reload brought back the old state
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	failing := jobID(t, page, jobFailing)
+	setEnabled(t, failing, true)
+	runJob(t, failing)
+	_, err := page.Goto(baseURL + "/?filter=all&rev=0&sort=default")
+	require.NoError(t, err)
+	waitForJobsLoaded(t, page)
+
+	clickPill(t, page, "failed")
+	_, err = page.ExpectResponse(jobsRe, func() error { return page.Locator("#search").Fill("vendor") })
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return strings.Contains(page.URL(), "filter=failed") && strings.Contains(page.URL(), "search=vendor")
+	}, 5*time.Second, 50*time.Millisecond, "the address carries the list state")
+
+	_, err = page.Reload()
+	require.NoError(t, err)
+	waitForJobsLoaded(t, page)
+	assert.Equal(t, []string{jobFailing}, rowNames(t, page), "a reload keeps the filter and the search")
+	val, err := page.Locator("#search").InputValue()
+	require.NoError(t, err)
+	assert.Equal(t, "vendor", val)
+
+	require.NoError(t, page.Locator("#theme-toggle").Click())
+	require.NoError(t, page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{State: playwright.LoadStateLoad}))
+	waitForJobsLoaded(t, page)
+	assert.Equal(t, []string{jobFailing}, rowNames(t, page), "the theme reload keeps them too")
+	require.NoError(t, page.Locator("#theme-toggle").Click())
+	require.NoError(t, page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{State: playwright.LoadStateLoad}))
+}
+
 func TestMenu_FilterAndSortWhenPillsDoNotFit(t *testing.T) {
 	page := newPageSized(t, 820, 1180)
 	navigateToDashboard(t, page)

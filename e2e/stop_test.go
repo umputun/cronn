@@ -69,6 +69,24 @@ func stopRunFromBar(t *testing.T, page playwright.Page) {
 	waitVisible(t, page.Locator("#run-now"))
 }
 
+func TestStop_DisabledRunningJobKeepsStopOnJobPage(t *testing.T) {
+	// turning the schedule off hid Stop on the job page while the run went on
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := startLive(t, page)
+	started := time.Now()
+	gotoJob(t, page, id, "")
+	waitVisible(t, page.Locator("#stop-run"))
+
+	setEnabled(t, id, false)
+	t.Cleanup(func() { setEnabled(t, id, true) })
+	require.Eventually(t, func() bool { return pageText(t, page, "#job-badge") == "Disabled" }, 8*time.Second, 100*time.Millisecond)
+	waitVisible(t, page.Locator("#stop-run"))
+	clickAndAwait(t, page, page.Locator("#stop-run"), stopFormRe)
+	confirmStop(t, page)
+	requireStopped(t, id, started)
+}
+
 func requireStopped(t *testing.T, id string, started time.Time) {
 	t.Helper()
 	require.Eventually(t, func() bool { return !jobStatus(t, id).IsRunning }, 10*time.Second, 100*time.Millisecond)

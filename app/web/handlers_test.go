@@ -169,6 +169,18 @@ func TestServer_handleJobsPartial(t *testing.T) {
 		return w.Body.String()
 	}
 
+	t.Run("htmx answers keep the address in step with the list", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?filter=failed&sort=lastrun&rev=1&search=vendor", http.NoBody)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		server.handleJobsPartial(w, req)
+		assert.Equal(t, "/?filter=failed&rev=1&search=vendor&sort=lastrun", w.Header().Get("HX-Replace-Url"))
+
+		plain := httptest.NewRecorder()
+		server.handleJobsPartial(plain, httptest.NewRequest(http.MethodGet, "/api/jobs?filter=failed", http.NoBody))
+		assert.Empty(t, plain.Header().Get("HX-Replace-Url"), "a caller without htmx gets no address header")
+	})
+
 	t.Run("rows show name, readable schedule and last result", func(t *testing.T) {
 		body := get(t, "")
 		assert.Contains(t, body, "Quote sync")

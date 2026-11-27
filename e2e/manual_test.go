@@ -69,7 +69,7 @@ func TestManualRun_ConfirmShowsTheCommand(t *testing.T) {
 	assert.Zero(t, count, "a plain run has no edit or date note")
 	assert.True(t, evalBool(t, page, `() => document.querySelector('#run-dialog').matches(':modal')`))
 	assert.True(t, focusOn(t, page, "cf-run"), "focus moves to Run once")
-	assert.True(t, strings.HasSuffix(page.URL(), "/"), "a Run click does not open the job page")
+	assert.NotContains(t, page.URL(), "/jobs/", "a Run click does not open the job page")
 	require.NoError(t, page.Keyboard().Press("Escape"))
 }
 
@@ -146,6 +146,21 @@ func TestManualRun_EscReturnsFocusToAnUnfocusedOpener(t *testing.T) {
 	visible, err := page.Locator("#jdrop").IsVisible()
 	require.NoError(t, err)
 	assert.False(t, visible, "the jump list stays closed")
+}
+
+func TestManualRun_DoubleClickStartsOneRun(t *testing.T) {
+	// a second click on Run once while the accepted answer redirected posted a second run
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobHourly)
+	setEnabled(t, id, true)
+	posts := countRunPosts(page)
+
+	openConfirm(t, page, page.Locator("#run-"+id))
+	require.NoError(t, page.Locator("#cf-run").Dblclick())
+	waitJobPage(t, page, id)
+	assert.Never(t, func() bool { return posts.Load() > 1 }, time.Second, 50*time.Millisecond)
+	assert.Equal(t, int32(1), posts.Load(), "one confirmation starts one run")
 }
 
 func TestManualRun_BackdropClickKeepsDialogOpen(t *testing.T) {

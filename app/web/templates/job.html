@@ -23,10 +23,17 @@
               hx-target="#dialog-slot" hx-swap="innerHTML">
             {{template "list-state-fields" .}}
             <div class="cmdf">
+                {{if .CommandRows}}
+                <textarea class="cmdin" id="cmdin" name="command" rows="{{.CommandRows}}" data-orig="{{.Job.Command}}"
+                          spellcheck="false" autocomplete="off" aria-label="Command"
+                          {{if or .ManualDisabled (not .CommandEditEnabled)}}readonly{{else}}title="Edits apply to this run only"{{end}}
+                          hx-on:input="uiMarkEdited()">{{.Job.Command}}</textarea>
+                {{else}}
                 <input class="cmdin" id="cmdin" name="command" value="{{.Job.Command}}" data-orig="{{.Job.Command}}"
                        spellcheck="false" autocomplete="off" aria-label="Command"
                        {{if or .ManualDisabled (not .CommandEditEnabled)}}readonly{{else}}title="Edits apply to this run only"{{end}}
                        hx-on:input="uiMarkEdited()">
+                {{end}}
                 <button type="button" class="ibtn" id="copy-cmd" data-tip="Copy command" aria-label="Copy command"
                         hx-on:click="uiCopyCommand()">{{template "icon-copy"}}</button>
             </div>

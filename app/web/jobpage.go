@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	jobStripSize = 30               // runs in the job page's history strip
-	jobRunsLimit = 50               // runs in the job page's runs list
-	jumpLimit    = 10               // jobs in the jump list
-	startTimeout = 10 * time.Second // how long a started manual run may take to show up
+	jobStripSize   = 30               // runs in the job page's history strip
+	jobRunsLimit   = 50               // runs in the job page's runs list
+	jumpLimit      = 10               // jobs in the jump list
+	maxCommandRows = 6                // rows a multi-line command field grows to before it scrolls
+	startTimeout   = 10 * time.Second // how long a started manual run may take to show up
 )
 
 // errLine marks log lines shown as errors
@@ -114,6 +115,7 @@ type jobPageData struct {
 	StopStart    int64 // the run the Stop button stops: the selected run in progress, else the newest
 	BackLink     string
 	HasTemplates bool
+	CommandRows  int // rows of the command field for a multi-line command, 0 for a single line
 	Output       jobOutput
 }
 
@@ -139,6 +141,10 @@ func (s *Server) handleJobPage(w http.ResponseWriter, r *http.Request) {
 		data.PageTitle = job.Command
 	}
 	data.HasTemplates = strings.Contains(job.Command, "{{") || strings.Contains(job.Command, "[[")
+	// a text input drops newlines from its value, so a multi-line command needs a textarea to run as written
+	if lines := strings.Count(strings.TrimRight(job.Command, "\n"), "\n") + 1; lines > 1 {
+		data.CommandRows = min(lines, maxCommandRows)
+	}
 	data.jobPosition = s.jobPosition(job.ID, q)
 
 	active := s.activeRuns(job.ID)

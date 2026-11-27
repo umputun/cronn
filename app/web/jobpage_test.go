@@ -42,7 +42,9 @@ func recordRun(t *testing.T, s *Server, rec request.RecordExecution) int {
 func TestServer_handleJobPage(t *testing.T) {
 	server := newHandlersTestServer(t, Config{})
 	addJobs(server, append(sampleJobs(),
-		persistence.JobInfo{ID: "tpl", Name: "Templated", Command: "echo {{.YYYYMMDD}}", Schedule: "@daily", Enabled: true})...)
+		persistence.JobInfo{ID: "tpl", Name: "Templated", Command: "echo {{.YYYYMMDD}}", Schedule: "@daily", Enabled: true},
+		persistence.JobInfo{ID: "multi", Name: "Two step", Command: "echo one\necho two\n", Schedule: "@daily", Enabled: true},
+		persistence.JobInfo{ID: "long", Name: "Long script", Command: "a\nb\nc\nd\ne\nf\ng\nh", Schedule: "@daily", Enabled: true})...)
 	start := time.Date(2026, 9, 29, 16, 50, 0, 0, time.Local)
 	first := recordRun(t, server, request.RecordExecution{JobID: "fail", StartedAt: start, Status: enums.JobStatusFailed,
 		ExitCode: 3, Output: "fetching\nERROR boom\nfatal: gave up\n"})
@@ -74,6 +76,14 @@ func TestServer_handleJobPage(t *testing.T) {
 		assert.NotContains(t, body, `id="pill-all" aria-pressed`, "pills link back to the index on a job page")
 		assert.Contains(t, body, `class="off" id="pill-failed" href="/?filter=failed&amp;rev=0&amp;sort=default"`)
 		assert.NotContains(t, body, `id="datein"`, "no date without templates")
+	})
+
+	t.Run("a multi-line command keeps its lines in a textarea", func(t *testing.T) {
+		body := page("multi", "").Body.String()
+		assert.Contains(t, body, "<textarea class=\"cmdin\" id=\"cmdin\" name=\"command\" rows=\"2\" data-orig=\"echo one\necho two\n\"")
+		assert.Contains(t, body, ">echo one\necho two\n</textarea>")
+		assert.Contains(t, page("long", "").Body.String(), `rows="6"`, "a long script stops growing at six rows")
+		assert.Contains(t, page("ok", "").Body.String(), `<input class="cmdin" id="cmdin" name="command" value="echo sync"`)
 	})
 
 	t.Run("run= opens that run with numbered lines and error marks", func(t *testing.T) {
@@ -411,6 +421,14 @@ func TestServer_handleJobFacts(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("a disabled job keeps Stop for its run in progress", func(t *testing.T) {
+		s := newServer(t, Config{RunStopper: &mocks.RunStopperMock{}})
+		addJobs(s, persistence.JobInfo{ID: "offrun", Name: "Paused", Command: "sleep 100", Schedule: "@daily", IsRunning: true})
+		body := facts(s, "offrun", "").Body.String()
+		assert.Contains(t, body, `id="stop-run"`)
+		assert.NotContains(t, body, "Enable the schedule to run this job")
 	})
 
 	t.Run("stop follows the selected run in progress", func(t *testing.T) {

@@ -214,6 +214,7 @@ a.ji:hover, a.ji:focus, a.ji.cur { background: var(--sel); outline: none; }
 .cmdf { position: relative; min-width: 0; }
 .cmdin, .datein { font: 12.5px var(--mono); height: 32px; border: 1px solid var(--line2); border-radius: 4px; background: var(--sunk); padding: 0 10px; width: 100%; }
 .cmdin { padding-right: 36px; }
+textarea.cmdin { height: auto; padding-top: 7px; padding-bottom: 7px; line-height: 1.4; white-space: pre; overflow: auto; resize: vertical; display: block; }
 .cmdin[readonly] { color: var(--mut); }
 .cmdin.edited, .datein.edited { border-color: var(--warn); }
 .cmdin:focus, .datein:focus { outline: 2px solid var(--acc); outline-offset: -1px; }
@@ -266,7 +267,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 dialog.cf { border: 1px solid var(--line2); border-radius: 6px; background: var(--panel); padding: 0; width: min(440px, calc(100vw - 24px)); box-shadow: var(--shadow); }
 .cf h4 { padding: 16px 18px 4px; font-size: 15px; overflow-wrap: anywhere; }
 .cf p { padding: 0 18px 12px; color: var(--mut); }
-.cf .cmd { margin: 0 18px 14px; font: 12px var(--mono); background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; word-break: break-all; }
+.cf .cmd { margin: 0 18px 14px; font: 12px var(--mono); background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; word-break: break-all; white-space: pre-wrap; max-height: 40vh; overflow: auto; }
 .cf .cf-note { margin-top: -6px; }
 .cf form#run-form, .cf form#stop-form { padding: 0 18px; }
 .cf .f { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }

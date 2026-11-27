@@ -10,6 +10,7 @@
     <form id="run-form"
           hx-post="{{url (printf "/api/jobs/%s/run" .JobID)}}"
           hx-target="#dialog-slot" hx-swap="innerHTML"
+          hx-sync="this:drop" hx-disabled-elt="#cf-run" hx-indicator="#cf-run"
           hx-on::send-error="this.querySelector('.net-error').hidden = false"
           hx-on::timeout="this.querySelector('.net-error').hidden = false">
         <input type="hidden" name="command" value="{{.Command}}">

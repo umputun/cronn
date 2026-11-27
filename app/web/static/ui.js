@@ -9,8 +9,12 @@ document.addEventListener('pointerdown', function (evt) {
     if (evt.button === 0) window.uiHeld = true;
 }, true);
 // a release outside the window or after a context menu never reaches the page
-['pointerup', 'pointercancel', 'blur', 'contextmenu'].forEach(function (name) {
+['pointerup', 'pointercancel', 'contextmenu'].forEach(function (name) {
     window.addEventListener(name, function () { window.uiHeld = false; }, true);
+});
+// not captured: a press moves focus, and the blur of the field it leaves would end the hold
+window.addEventListener('blur', function (evt) {
+    if (evt.target === window) window.uiHeld = false;
 });
 
 // a CSS animation restarts on every swap, so running dots in freshly polled rows would blink out of phase

@@ -67,12 +67,12 @@ Functions return concrete `*SQLiteStore` while accepting `Persistence` interface
 
 ### List State in the URL
 - The index's filter, sort, sort direction and search travel in the page URL (`filter`, `sort`, `rev`, `search`) and in hidden inputs `#filter-mode`, `#sort-mode`, `#sort-rev` (plus `#list-search` on the job page). `listQuery` reads them, falling back to the cookies, and `jobsQuery.values()` writes them into every link: rows, history bars, previous/next, the back link, the jump list and the run redirect
-- Each tab sends its own state with every request, so a change in one tab never leaks into another; the theme, sort-mode and filter-mode cookies (HTTPOnly, 1 year) only seed a fresh page
+- Each tab sends its own state with every request, so a change in one tab never leaks into another; the theme, sort-mode and filter-mode cookies (HTTPOnly, 1 year) only seed a fresh page. Every htmx answer of the index list sets `HX-Replace-Url` to the index URL with that state, so a reload, the theme toggle's refresh and a copied address all read it back
 - **Sort**: header buttons (`#sort-default`, `#sort-lastrun`, `#sort-nextrun`) post `sort` and `rev`. The first click on a column sorts nearest to now first, a second click on the sorted column flips it; crontab order flips to reversed file order. Jobs without a value (never ran; disabled or no next run) stay last in both directions
 
 ### HTMX Integration Patterns
 - **Pollers are stable wrappers swapping `innerHTML`**: index `#rows` (`GET /api/jobs`, also answers `counts-oob`), job page `#facts` (`GET /api/jobs/{id}/facts`, with `job-title-oob`, `job-runact-oob` and pill counts out of band), and the live output `#live-out`. Each poll trigger is `every 5s [!uiHeld], refresh-jobs from:body` (the facts poll also on `run-selected`); `#jruns` reloads on `runs-changed` and `run-selected`
-- **Poll hold**: `window.uiHeld` is set on a primary-button `pointerdown` and cleared on `pointerup`, `pointercancel`, `blur`, `contextmenu`. Every `every 5s` filter reads it, so a poll never replaces a button between press and release (a click needs both on the same element, and htmx cannot defer a swap)
+- **Poll hold**: `window.uiHeld` is set on a primary-button `pointerdown` and cleared on `pointerup`, `pointercancel`, `contextmenu` and the window's own `blur` (not captured: an element's blur passes window in the capture phase, and a press moves focus). Every `every 5s` filter reads it, so a poll never replaces a button between press and release (a click needs both on the same element, and htmx cannot defer a swap)
 - **Selected run**: the run on screen is carried by the hidden `selected-run` input inside the output fragment (a recorded run's id, or `live:<start>` for a run in progress). Output answers send `HX-Trigger-After-Swap: run-selected`, so the facts and the runs list re-render with that selection; the facts and runs requests include it
 - **Newest run**: the runs list carries a hidden `newest` input; the facts response sends `HX-Trigger: runs-changed` when the newest run differs, so the list reloads only when a run was added
 - **Ending a poll**: an answer that turns a live or wait poll into something else (the recorded run, a found run) uses `HX-Retarget: #joutput` with `HX-Reswap: innerHTML`, replacing the polling wrapper. 286 (htmx stop-polling) is used only for the wait timeout and for the facts of a removed job
@@ -140,7 +140,7 @@ manualJobChan <- jobID
 ```
 
 ### Custom Date and EOD Interaction
-- The job page's command bar lets the user edit the command and enter an optional date (YYYYMMDD); the date field is shown only when the command contains `{{...}}` or `[[...]]` templates. The confirmation (`run-confirm` in `partials/runform.html`) shows both before the run starts
+- The job page's command bar lets the user edit the command and enter an optional date (YYYYMMDD); a multi-line command gets a textarea, since a text input drops newlines from its value; the date field is shown only when the command contains `{{...}}` or `[[...]]` templates. The confirmation (`run-confirm` in `partials/runform.html`) shows both before the run starts
 - Empty date → `time.Now()` used for template resolution; custom date → that date is parsed at midnight via `ParseInLocation("20060102", ..., time.Local)` (hour 0)
 - With a positive `--eod-hour` (default: 17), midnight is before the cutoff, so a custom date of D resolves both EOD templates to the business day before D. With `--eod-hour=0`, they use D if it is a business day, otherwise the most recent business day before D
 

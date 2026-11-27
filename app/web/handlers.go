@@ -257,6 +257,10 @@ func (s *Server) renderJobs(w http.ResponseWriter, r *http.Request, q jobsQuery)
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Header.Get("HX-Request") == "true" {
+		// a reload, the theme toggle's refresh and a copied link all read the list state from the address
+		w.Header().Set("HX-Replace-Url", s.indexLink(q))
+	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Printf("[WARN] failed to write jobs response: %v", err)

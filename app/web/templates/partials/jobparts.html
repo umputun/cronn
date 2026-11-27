@@ -15,14 +15,14 @@
 {{/* state that changes at runtime lives here only, so the command and date fields are never swapped */}}
 {{define "job-runact"}}
 {{if not .Found}}
-{{else if not .Job.Enabled}}
-<span class="runnote">Enable the schedule to run this job</span>
 {{else if .Job.IsRunning}}
 {{if .StopEnabled}}
 <button type="button" class="btn danger" id="stop-run"
         hx-get="{{url (printf "/api/jobs/%s/stop-form" .Job.ID)}}{{if .StopStart}}?start={{.StopStart}}{{end}}"
         hx-target="#dialog-slot" hx-swap="innerHTML">{{template "icon-stop"}} Stop</button>
 {{end}}
+{{else if not .Job.Enabled}}
+<span class="runnote">Enable the schedule to run this job</span>
 {{else if not .ManualDisabled}}
 <button type="submit" class="btn pri" id="run-now">{{template "icon-play"}} <span class="lbl">Run now</span></button>
 {{end}}

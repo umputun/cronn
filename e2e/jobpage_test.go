@@ -275,6 +275,55 @@ func TestJobPage_HeldBarClickActsAfterPoll(t *testing.T) {
 	}, 8*time.Second, 100*time.Millisecond, "polling resumes after the release")
 }
 
+func TestJobPage_HeldRunAfterTypingActsAfterPoll(t *testing.T) {
+	// leaving the command field cleared the press hold, so a poll replaced Run now under the pressed mouse
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobHourly)
+	setEnabled(t, id, true)
+	gotoJob(t, page, id, "")
+
+	require.NoError(t, page.Locator("#cmdin").Click())
+	btn := page.Locator("#run-now")
+	_, err := btn.Evaluate(`el => el.dataset.held = '1'`, nil)
+	require.NoError(t, err)
+	require.NoError(t, btn.Hover())
+	require.NoError(t, page.Mouse().Down())
+	assert.Never(t, func() bool {
+		count, e := page.Locator("#runact [data-held]").Count()
+		return e != nil || count == 0
+	}, 6*time.Second, 200*time.Millisecond, "no poll replaces Run now while it is pressed")
+	_, err = page.ExpectResponse(runConfirmRe, func() error { return page.Mouse().Up() })
+	require.NoError(t, err)
+	waitVisible(t, page.Locator("#run-dialog[open]"))
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#run-dialog"))
+}
+
+func TestJobPage_MultiLineCommandKeepsItsLines(t *testing.T) {
+	// a single-line input dropped the newlines, so Run now ran the lines glued together
+	page := newPageSized(t, 1440, 900)
+	navigateToDashboard(t, page)
+	id := jobID(t, page, jobTwoStep)
+	gotoJob(t, page, id, "")
+
+	val, err := page.Locator("#cmdin").InputValue()
+	require.NoError(t, err)
+	assert.Contains(t, val, "echo step one\necho step two")
+	waitForFacts(t, page)
+	assert.Equal(t, "Run now", pageText(t, page, "#run-now .lbl"), "a poll does not mark the command edited")
+
+	openConfirm(t, page, page.Locator("#run-now"))
+	shown, err := page.Locator("#cf-cmd").InnerText()
+	require.NoError(t, err)
+	assert.Contains(t, shown, "echo step one\necho step two", "the confirmation shows the lines apart")
+	count, err := page.Locator("#cf-edited").Count()
+	require.NoError(t, err)
+	assert.Zero(t, count, "an untouched multi-line command is not an edit")
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, page.Locator("#run-dialog"))
+}
+
 func TestJobPage_TitleFollowsJobStatus(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

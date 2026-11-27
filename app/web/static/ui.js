@@ -204,12 +204,15 @@ function uiMarkCursor() {
     uiRows().forEach(function (row) { row.classList.toggle('cur', row.dataset.jobId === uiCursor); });
 }
 
-// uiMoveCursor moves the index cursor by step rows, starting at either end
+// uiMoveCursor moves the index cursor by step rows, starting at either end; Infinity steps to an end. A
+// focused control keeps Enter for itself, so the move takes focus off it and Enter opens the cursor row
 function uiMoveCursor(step) {
     const rows = uiRows();
     if (!rows.length) return;
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     const at = rows.findIndex(function (row) { return row.dataset.jobId === uiCursor; });
-    const next = at < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, at + step));
+    const from = at < 0 && Number.isFinite(step) ? (step > 0 ? -1 : rows.length) : at;
+    const next = Math.max(0, Math.min(rows.length - 1, from + step));
     uiCursor = rows[next].dataset.jobId;
     uiMarkCursor();
     rows[next].scrollIntoView({block: 'nearest'});
@@ -291,6 +294,12 @@ function uiFieldKey(evt) {
         else item.click();
         return;
     }
+    if (field.id === 'search' && !jump && evt.key === 'ArrowDown') {
+        evt.preventDefault();
+        uiCursor = '';
+        uiMoveCursor(1);
+        return;
+    }
     if (field.id === 'search' && evt.key === 'Enter') {
         evt.preventDefault();
         uiOpenFirst = true;
@@ -301,10 +310,15 @@ function uiFieldKey(evt) {
     if (evt.key === 'Escape' && (jump || field.id !== 'search' || !field.value)) field.blur();
 }
 
+// a handler returning false leaves the key to the browser, so the arrows still scroll a job page
 const uiKeys = {
     '/': function () { uiClick(document.getElementById('search')); },
     j: function (onJob) { if (onJob) uiClick(document.getElementById('next-job')); else uiMoveCursor(1); },
     k: function (onJob) { if (onJob) uiClick(document.getElementById('prev-job')); else uiMoveCursor(-1); },
+    ArrowDown: function (onJob) { if (onJob) return false; uiMoveCursor(1); },
+    ArrowUp: function (onJob) { if (onJob) return false; uiMoveCursor(-1); },
+    Home: function (onJob) { if (onJob) return false; uiMoveCursor(-Infinity); },
+    End: function (onJob) { if (onJob) return false; uiMoveCursor(Infinity); },
     Enter: function (onJob) {
         const row = !onJob && uiCursorRow();
         if (row) row.querySelector('.nm').click();
@@ -344,6 +358,6 @@ document.addEventListener('keydown', function (evt) {
     const key = evt.key === 'E' && !evt.shiftKey ? '' : evt.key;
     const act = uiKeys[key];
     if (!act) return;
-    evt.preventDefault();
-    act(!!document.getElementById('jp'));
+    const onJob = !!document.getElementById('jp');
+    if (act(onJob) !== false) evt.preventDefault();
 }, true);

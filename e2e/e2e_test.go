@@ -605,6 +605,22 @@ func TestDashboard_ShowsReadableSchedule(t *testing.T) {
 	assert.Contains(t, text, "At 08:30, Monday through Friday")
 }
 
+func TestDashboard_RunningPillDotStaysStill(t *testing.T) {
+	page := newPage(t)
+	navigateToDashboard(t, page)
+	dot := page.Locator("#pill-running .dot")
+	waitVisible(t, dot)
+
+	res, err := page.Evaluate(`() => new Promise(done => {
+		const dot = document.querySelector('#pill-running .dot');
+		const seen = new Set();
+		const timer = setInterval(() => seen.add(getComputedStyle(dot).opacity), 50);
+		setTimeout(() => { clearInterval(timer); done([...seen]); }, 1600);
+	})`)
+	require.NoError(t, err)
+	assert.Equal(t, []any{"1"}, res, "the filter pill's running dot does not blink")
+}
+
 func TestDashboard_FilterTabCountsAddUp(t *testing.T) {
 	page := newPage(t)
 	navigateToDashboard(t, page)

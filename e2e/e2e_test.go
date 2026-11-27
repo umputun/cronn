@@ -216,13 +216,17 @@ func envOr(name, def string) string {
 	return def
 }
 
+// checkPortFree probes loopback too: on macOS a wildcard listen succeeds beside a process bound to
+// 127.0.0.1 only, which then answers the tests' localhost requests
 func checkPortFree(port string) error {
-	ln, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		return fmt.Errorf("listen on port %s: %w", port, err)
-	}
-	if err := ln.Close(); err != nil {
-		return fmt.Errorf("close listener on port %s: %w", port, err)
+	for _, addr := range []string{":" + port, "127.0.0.1:" + port} {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("listen on %s: %w", addr, err)
+		}
+		if err := ln.Close(); err != nil {
+			return fmt.Errorf("close listener on %s: %w", addr, err)
+		}
 	}
 	return nil
 }
